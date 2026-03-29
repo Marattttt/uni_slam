@@ -80,13 +80,13 @@ function (configureDependencies)
         "${fast_cpp_csv_parser_SOURCE_DIR}"
     )
 
-    FetchContent_Declare(
-        pangolin
-        GIT_REPOSITORY "https://github.com/stevenlovegrove/Pangolin"
-        GIT_TAG        v0.9.4
-        GIT_SHALLOW    TRUE
-    )
-    FetchContent_MakeAvailable(pangolin)
+    # FetchContent_Declare(
+    #     pangolin
+    #     GIT_REPOSITORY "https://github.com/stevenlovegrove/Pangolin"
+    #     GIT_TAG        v0.9.4
+    #     GIT_SHALLOW    TRUE
+    # )
+    # FetchContent_MakeAvailable(pangolin)
 
     # Dawn has a complex, multi-step build process with its own dependency
     # fetching (depot_tools/gclient). It is much more reliable to build it
@@ -94,12 +94,10 @@ function (configureDependencies)
     set(Dawn_DIR "${PROJECT_SOURCE_DIR}/vendor/dawn/install/Debug/lib/cmake/Dawn")
     find_package(Dawn REQUIRED)
 
-
-
-    # # Pangolin has many optional system dependencies (OpenGL, GLEW, libjpeg, etc.)
-    # # that are awkward to manage through FetchContent, and it doesn't always
-    # # install cleanly as a sub-project. Pre-building it is more predictable.
-    # set(Pangolin_DIR "${PROJECT_SOURCE_DIR}/vendor/Pangolin/build")
-    # find_package(Pangolin 0.8 REQUIRED)
-    # include_directories(${Pangolin_INCLUDE_DIRS})
+    # Pangolin has many optional system dependencies (OpenGL, GLEW, libjpeg, etc.)
+    # that are awkward to manage through FetchContent, and it doesn't always
+    # install cleanly as a sub-project. Pre-building it is more predictable.
+    set(Pangolin_DIR "${PROJECT_SOURCE_DIR}/vendor/pangolin/install/lib/cmake/Pangolin")
+    find_package(Pangolin 0.8 REQUIRED)
+    include_directories(${Pangolin_INCLUDE_DIRS})
 endfunction()

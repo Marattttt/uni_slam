@@ -4,22 +4,21 @@ PANGO_DIR="$PWD/vendor/pangolin"
 BUILD_DIR="$PANGO_DIR/build"
 INSTALL_DIR="$PANGO_DIR/install"
 
-# Install dependencies (as described above, or your preferred method)
-./scripts/install_prerequisites.sh recommended
+rm -r "$BUILD_DIR"
+rm -r "$INSTALL_DIR"
 
-# Configure and build
-cmake -B build
-cmake --build build
 
-# with Ninja for faster builds (sudo apt install ninja-build)
-cmake -B build -GNinja
-cmake --build build
+set -oue pipefail
 
-# GIVEME THE PYTHON STUFF!!!! (Check the output to verify selected python version)
-cmake --build build -t pypangolin_pip_install
-
-# Run me some tests! (Requires Catch2 which must be manually installed on Ubuntu.)
-cmake -B build -G Ninja -D BUILD_TESTS=ON
-cmake --build build
-cd build
-ctest
+cmake \
+	-B "$BUILD_DIR" \
+	-G Ninja \
+	-S "$PANGO_DIR" \
+	-D BUILD_TOOLS=OFF \
+	-D BUILD_EXAMPLES=OFF \
+	-D BUILD_ASAN=ON \
+	-D CMAKE_DISABLE_FIND_PACKAGE_TIFF=ON \
+	-D CMAKE_INSTALL_PREFIX="$INSTALL_DIR"
+	
+cmake --build "$BUILD_DIR" --parallel $(nproc)
+cmake --install "$BUILD_DIR"

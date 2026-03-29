@@ -1,0 +1,8 @@
+Checks: 'bugprone-*,modernize-*,performance-*,readability-*,-modernize-use-trailing-return-type,-readability-math-missing-parentheses,-readability-identifier-length'
+WarningsAsErrors: ''
+HeaderFilterRegex: '^vendor/.*'
+FormatStyle: none
+CheckOptions:
+  - key: modernize-use-around-move.AllowStdMove
+    value: '1'
+
