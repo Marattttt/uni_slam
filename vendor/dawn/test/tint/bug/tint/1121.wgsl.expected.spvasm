@@ -1,0 +1,703 @@
+; SPIR-V
+; Version: 1.3
+; Generator: Google Tint Compiler; 1
+; Bound: 511
+; Schema: 0
+               OpCapability Shader
+         %58 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main" %main_global_invocation_id_Input
+               OpExecutionMode %main LocalSize 64 1 1
+               OpMemberName %LightData 0 "position"
+               OpMemberName %LightData 1 "color"
+               OpMemberName %LightData 2 "radius"
+               OpName %LightData "LightData"
+               OpMemberName %LightsBuffer_tint_explicit_layout 0 "lights"
+               OpName %LightsBuffer_tint_explicit_layout "LightsBuffer_tint_explicit_layout"
+               OpName %lightsBuffer "lightsBuffer"
+               OpMemberName %TileLightIdData_tint_explicit_layout 0 "count"
+               OpMemberName %TileLightIdData_tint_explicit_layout 1 "lightId"
+               OpName %TileLightIdData_tint_explicit_layout "TileLightIdData_tint_explicit_layout"
+               OpMemberName %Tiles_tint_explicit_layout 0 "data"
+               OpName %Tiles_tint_explicit_layout "Tiles_tint_explicit_layout"
+               OpMemberName %tileLightId_block_tint_explicit_layout 0 "inner"
+               OpName %tileLightId_block_tint_explicit_layout "tileLightId_block_tint_explicit_layout"
+               OpMemberName %config_block_tint_explicit_layout 0 "inner"
+               OpName %config_block_tint_explicit_layout "config_block_tint_explicit_layout"
+               OpMemberName %uniforms_block_tint_explicit_layout 0 "inner"
+               OpName %uniforms_block_tint_explicit_layout "uniforms_block_tint_explicit_layout"
+               OpName %main_global_invocation_id_Input "main_global_invocation_id_Input"
+               OpName %main_inner "main_inner"
+               OpName %GlobalInvocationID "GlobalInvocationID"
+               OpName %index "index"
+               OpName %M "M"
+               OpName %viewNear "viewNear"
+               OpName %viewFar "viewFar"
+               OpName %lightPos "lightPos"
+               OpName %lightRadius "lightRadius"
+               OpName %boxMin "boxMin"
+               OpName %boxMax "boxMax"
+               OpName %frustumPlanes "frustumPlanes"
+               OpName %TILE_SIZE "TILE_SIZE"
+               OpName %TILE_COUNT_X "TILE_COUNT_X"
+               OpName %TILE_COUNT_X "TILE_COUNT_Y"
+               OpName %y "y"
+               OpName %x "x"
+               OpName %tilePixel0Idx "tilePixel0Idx"
+               OpName %floorCoord "floorCoord"
+               OpName %ceilCoord "ceilCoord"
+               OpName %viewFloorCoord "viewFloorCoord"
+               OpName %viewCeilCoord "viewCeilCoord"
+               OpName %dp "dp"
+               OpName %i "i"
+               OpName %p "p"
+               OpName %tileId "tileId"
+               OpName %offset "offset"
+               OpName %start_byte_offset "start_byte_offset"
+               OpName %main "main"
+               OpMemberDecorate %LightData 0 Offset 0
+               OpMemberDecorate %LightData 1 Offset 16
+               OpMemberDecorate %LightData 2 Offset 28
+               OpDecorate %_runtimearr_LightData ArrayStride 32
+               OpMemberDecorate %LightsBuffer_tint_explicit_layout 0 Offset 0
+               OpDecorate %LightsBuffer_tint_explicit_layout Block
+               OpDecorate %lightsBuffer DescriptorSet 0
+               OpDecorate %lightsBuffer Binding 0
+               OpDecorate %lightsBuffer Coherent
+               OpMemberDecorate %TileLightIdData_tint_explicit_layout 0 Offset 0
+               OpDecorate %_arr_uint_uint_64 ArrayStride 4
+               OpMemberDecorate %TileLightIdData_tint_explicit_layout 1 Offset 4
+               OpDecorate %_arr_TileLightIdData_tint_explicit_layout_uint_4 ArrayStride 260
+               OpMemberDecorate %Tiles_tint_explicit_layout 0 Offset 0
+               OpMemberDecorate %tileLightId_block_tint_explicit_layout 0 Offset 0
+               OpDecorate %tileLightId_block_tint_explicit_layout Block
+               OpDecorate %9 DescriptorSet 1
+               OpDecorate %9 Binding 0
+               OpDecorate %9 Coherent
+               OpDecorate %_arr_v4uint_uint_2 ArrayStride 16
+               OpMemberDecorate %config_block_tint_explicit_layout 0 Offset 0
+               OpDecorate %config_block_tint_explicit_layout Block
+               OpDecorate %19 DescriptorSet 2
+               OpDecorate %19 Binding 0
+               OpDecorate %19 NonWritable
+               OpDecorate %_arr_v4uint_uint_11 ArrayStride 16
+               OpMemberDecorate %uniforms_block_tint_explicit_layout 0 Offset 0
+               OpDecorate %uniforms_block_tint_explicit_layout Block
+               OpDecorate %25 DescriptorSet 3
+               OpDecorate %25 Binding 0
+               OpDecorate %25 NonWritable
+               OpDecorate %main_global_invocation_id_Input BuiltIn GlobalInvocationId
+      %float = OpTypeFloat 32
+    %v4float = OpTypeVector %float 4
+    %v3float = OpTypeVector %float 3
+  %LightData = OpTypeStruct %v4float %v3float %float
+%_runtimearr_LightData = OpTypeRuntimeArray %LightData
+%LightsBuffer_tint_explicit_layout = OpTypeStruct %_runtimearr_LightData
+%_ptr_StorageBuffer_LightsBuffer_tint_explicit_layout = OpTypePointer StorageBuffer %LightsBuffer_tint_explicit_layout
+%lightsBuffer = OpVariable %_ptr_StorageBuffer_LightsBuffer_tint_explicit_layout StorageBuffer
+       %uint = OpTypeInt 32 0
+    %uint_64 = OpConstant %uint 64
+%_arr_uint_uint_64 = OpTypeArray %uint %uint_64
+%TileLightIdData_tint_explicit_layout = OpTypeStruct %uint %_arr_uint_uint_64
+     %uint_4 = OpConstant %uint 4
+%_arr_TileLightIdData_tint_explicit_layout_uint_4 = OpTypeArray %TileLightIdData_tint_explicit_layout %uint_4
+%Tiles_tint_explicit_layout = OpTypeStruct %_arr_TileLightIdData_tint_explicit_layout_uint_4
+%tileLightId_block_tint_explicit_layout = OpTypeStruct %Tiles_tint_explicit_layout
+%_ptr_StorageBuffer_tileLightId_block_tint_explicit_layout = OpTypePointer StorageBuffer %tileLightId_block_tint_explicit_layout
+          %9 = OpVariable %_ptr_StorageBuffer_tileLightId_block_tint_explicit_layout StorageBuffer
+     %v4uint = OpTypeVector %uint 4
+     %uint_2 = OpConstant %uint 2
+%_arr_v4uint_uint_2 = OpTypeArray %v4uint %uint_2
+%config_block_tint_explicit_layout = OpTypeStruct %_arr_v4uint_uint_2
+%_ptr_Uniform_config_block_tint_explicit_layout = OpTypePointer Uniform %config_block_tint_explicit_layout
+         %19 = OpVariable %_ptr_Uniform_config_block_tint_explicit_layout Uniform
+    %uint_11 = OpConstant %uint 11
+%_arr_v4uint_uint_11 = OpTypeArray %v4uint %uint_11
+%uniforms_block_tint_explicit_layout = OpTypeStruct %_arr_v4uint_uint_11
+%_ptr_Uniform_uniforms_block_tint_explicit_layout = OpTypePointer Uniform %uniforms_block_tint_explicit_layout
+         %25 = OpVariable %_ptr_Uniform_uniforms_block_tint_explicit_layout Uniform
+     %v3uint = OpTypeVector %uint 3
+%_ptr_Input_v3uint = OpTypePointer Input %v3uint
+%main_global_invocation_id_Input = OpVariable %_ptr_Input_v3uint Input
+       %void = OpTypeVoid
+         %36 = OpTypeFunction %void %v3uint
+%_ptr_Function_uint = OpTypePointer Function %uint
+%_ptr_Uniform_v4uint = OpTypePointer Uniform %v4uint
+     %uint_0 = OpConstant %uint 0
+       %bool = OpTypeBool
+%_ptr_StorageBuffer__runtimearr_LightData = OpTypePointer StorageBuffer %_runtimearr_LightData
+     %uint_1 = OpConstant %uint 1
+%_ptr_StorageBuffer_v4float = OpTypePointer StorageBuffer %v4float
+%_ptr_StorageBuffer_float = OpTypePointer StorageBuffer %float
+%float_0_100000001 = OpConstant %float 0.100000001
+   %float_64 = OpConstant %float 64
+%float_0_00100000005 = OpConstant %float 0.00100000005
+%mat4v4float = OpTypeMatrix %v4float 4
+    %uint_96 = OpConstant %uint 96
+%_ptr_Function_mat4v4float = OpTypePointer Function %mat4v4float
+%_ptr_Function_v4float = OpTypePointer Function %v4float
+     %uint_3 = OpConstant %uint 3
+%_ptr_Function_float = OpTypePointer Function %float
+   %float_n1 = OpConstant %float -1
+    %float_1 = OpConstant %float 1
+    %uint_32 = OpConstant %uint 32
+    %float_0 = OpConstant %float 0
+     %uint_6 = OpConstant %uint 6
+%_arr_v4float_uint_6 = OpTypeArray %v4float %uint_6
+%_ptr_Function__arr_v4float_uint_6 = OpTypePointer Function %_arr_v4float_uint_6
+        %173 = OpConstantNull %_arr_v4float_uint_6
+     %uint_5 = OpConstant %uint 5
+        %int = OpTypeInt 32 1
+  %TILE_SIZE = OpConstant %int 16
+%TILE_COUNT_X = OpConstant %int 2
+%_ptr_Function_int = OpTypePointer Function %int
+      %int_0 = OpConstant %int 0
+      %int_1 = OpConstant %int 1
+      %v2int = OpTypeVector %int 2
+%_ptr_Function_v2int = OpTypePointer Function %v2int
+    %v2float = OpTypeVector %float 2
+    %float_2 = OpConstant %float 2
+    %uint_10 = OpConstant %uint 10
+        %250 = OpConstantComposite %v2float %float_1 %float_1
+%_ptr_Function_v2float = OpTypePointer Function %v2float
+     %v2uint = OpTypeVector %uint 2
+        %380 = OpConstantNull %v4float
+       %true = OpConstantTrue %bool
+%_ptr_StorageBuffer_uint = OpTypePointer StorageBuffer %uint
+    %uint_63 = OpConstant %uint 63
+%_ptr_StorageBuffer_uint_0 = OpTypePointer StorageBuffer %uint
+        %482 = OpTypeFunction %mat4v4float %uint
+    %uint_16 = OpConstant %uint 16
+    %uint_48 = OpConstant %uint 48
+        %507 = OpTypeFunction %void
+ %main_inner = OpFunction %void None %36
+%GlobalInvocationID = OpFunctionParameter %v3uint
+         %37 = OpLabel
+      %index = OpVariable %_ptr_Function_uint Function
+          %M = OpVariable %_ptr_Function_mat4v4float Function
+   %viewNear = OpVariable %_ptr_Function_float Function
+    %viewFar = OpVariable %_ptr_Function_float Function
+   %lightPos = OpVariable %_ptr_Function_v4float Function
+%lightRadius = OpVariable %_ptr_Function_float Function
+     %boxMin = OpVariable %_ptr_Function_v4float Function
+     %boxMax = OpVariable %_ptr_Function_v4float Function
+%frustumPlanes = OpVariable %_ptr_Function__arr_v4float_uint_6 Function %173
+          %y = OpVariable %_ptr_Function_int Function
+          %x = OpVariable %_ptr_Function_int Function
+%tilePixel0Idx = OpVariable %_ptr_Function_v2int Function
+ %floorCoord = OpVariable %_ptr_Function_v2float Function
+  %ceilCoord = OpVariable %_ptr_Function_v2float Function
+%viewFloorCoord = OpVariable %_ptr_Function_v2float Function
+%viewCeilCoord = OpVariable %_ptr_Function_v2float Function
+         %dp = OpVariable %_ptr_Function_float Function
+          %i = OpVariable %_ptr_Function_uint Function
+          %p = OpVariable %_ptr_Function_v4float Function %380
+     %tileId = OpVariable %_ptr_Function_uint Function
+     %offset = OpVariable %_ptr_Function_uint Function
+         %38 = OpCompositeExtract %uint %GlobalInvocationID 0
+               OpStore %index %38
+         %41 = OpLoad %uint %index None
+         %42 = OpAccessChain %_ptr_Uniform_v4uint %19 %uint_0 %uint_0
+         %45 = OpLoad %v4uint %42 None
+         %46 = OpCompositeExtract %uint %45 0
+         %47 = OpUGreaterThanEqual %bool %41 %46
+               OpSelectionMerge %49 None
+               OpBranchConditional %47 %50 %49
+         %50 = OpLabel
+               OpReturn
+         %49 = OpLabel
+         %51 = OpLoad %uint %index None
+         %52 = OpAccessChain %_ptr_StorageBuffer__runtimearr_LightData %lightsBuffer %uint_0
+         %54 = OpArrayLength %uint %lightsBuffer 0
+         %55 = OpISub %uint %54 %uint_1
+         %57 = OpExtInst %uint %58 UMin %51 %55
+         %59 = OpAccessChain %_ptr_StorageBuffer_v4float %lightsBuffer %uint_0 %57 %uint_0
+         %61 = OpLoad %uint %index None
+         %62 = OpAccessChain %_ptr_StorageBuffer__runtimearr_LightData %lightsBuffer %uint_0
+         %63 = OpArrayLength %uint %lightsBuffer 0
+         %64 = OpISub %uint %63 %uint_1
+         %65 = OpExtInst %uint %58 UMin %61 %64
+         %66 = OpAccessChain %_ptr_StorageBuffer_v4float %lightsBuffer %uint_0 %65 %uint_0
+         %67 = OpAccessChain %_ptr_StorageBuffer_float %66 %uint_1
+         %69 = OpLoad %float %67 None
+         %70 = OpFSub %float %69 %float_0_100000001
+         %72 = OpLoad %uint %index None
+         %73 = OpConvertUToF %float %72
+         %74 = OpLoad %uint %index None
+         %75 = OpConvertUToF %float %74
+         %76 = OpFDiv %float %75 %float_64
+         %78 = OpExtInst %float %58 Floor %76
+         %79 = OpFMul %float %float_64 %78
+         %80 = OpFSub %float %73 %79
+         %81 = OpFMul %float %float_0_00100000005 %80
+         %83 = OpFAdd %float %70 %81
+         %84 = OpAccessChain %_ptr_StorageBuffer_float %59 %uint_1
+               OpStore %84 %83 None
+         %85 = OpLoad %uint %index None
+         %86 = OpAccessChain %_ptr_StorageBuffer__runtimearr_LightData %lightsBuffer %uint_0
+         %87 = OpArrayLength %uint %lightsBuffer 0
+         %88 = OpISub %uint %87 %uint_1
+         %89 = OpExtInst %uint %58 UMin %85 %88
+         %90 = OpAccessChain %_ptr_StorageBuffer_v4float %lightsBuffer %uint_0 %89 %uint_0
+         %91 = OpAccessChain %_ptr_StorageBuffer_float %90 %uint_1
+         %92 = OpLoad %float %91 None
+         %93 = OpAccessChain %_ptr_Uniform_v4uint %25 %uint_0 %uint_0
+         %94 = OpLoad %v4uint %93 None
+         %95 = OpCompositeExtract %uint %94 1
+         %96 = OpBitcast %float %95
+         %97 = OpFOrdLessThan %bool %92 %96
+               OpSelectionMerge %98 None
+               OpBranchConditional %97 %99 %98
+         %99 = OpLabel
+        %190 = OpLoad %uint %index None
+        %191 = OpAccessChain %_ptr_StorageBuffer__runtimearr_LightData %lightsBuffer %uint_0
+        %192 = OpArrayLength %uint %lightsBuffer 0
+        %193 = OpISub %uint %192 %uint_1
+        %194 = OpExtInst %uint %58 UMin %190 %193
+        %195 = OpAccessChain %_ptr_StorageBuffer_v4float %lightsBuffer %uint_0 %194 %uint_0
+        %196 = OpAccessChain %_ptr_Uniform_v4uint %25 %uint_0 %uint_1
+        %197 = OpLoad %v4uint %196 None
+        %198 = OpCompositeExtract %uint %197 1
+        %199 = OpBitcast %float %198
+        %200 = OpAccessChain %_ptr_StorageBuffer_float %195 %uint_1
+               OpStore %200 %199 None
+               OpBranch %98
+         %98 = OpLabel
+        %100 = OpFunctionCall %mat4v4float %102 %uint_96
+               OpStore %M %100
+        %106 = OpAccessChain %_ptr_Function_v4float %M %uint_3
+        %109 = OpAccessChain %_ptr_Function_float %106 %uint_2
+        %111 = OpLoad %float %109 None
+        %112 = OpFNegate %float %111
+        %113 = OpAccessChain %_ptr_Function_v4float %M %uint_2
+        %114 = OpAccessChain %_ptr_Function_float %113 %uint_2
+        %115 = OpLoad %float %114 None
+        %116 = OpFAdd %float %float_n1 %115
+        %118 = OpFDiv %float %112 %116
+               OpStore %viewNear %118
+        %120 = OpAccessChain %_ptr_Function_v4float %M %uint_3
+        %121 = OpAccessChain %_ptr_Function_float %120 %uint_2
+        %122 = OpLoad %float %121 None
+        %123 = OpFNegate %float %122
+        %124 = OpAccessChain %_ptr_Function_v4float %M %uint_2
+        %125 = OpAccessChain %_ptr_Function_float %124 %uint_2
+        %126 = OpLoad %float %125 None
+        %127 = OpFAdd %float %float_1 %126
+        %129 = OpFDiv %float %123 %127
+               OpStore %viewFar %129
+        %131 = OpLoad %uint %index None
+        %132 = OpAccessChain %_ptr_StorageBuffer__runtimearr_LightData %lightsBuffer %uint_0
+        %133 = OpArrayLength %uint %lightsBuffer 0
+        %134 = OpISub %uint %133 %uint_1
+        %135 = OpExtInst %uint %58 UMin %131 %134
+        %136 = OpAccessChain %_ptr_StorageBuffer_v4float %lightsBuffer %uint_0 %135 %uint_0
+        %137 = OpLoad %v4float %136 None
+               OpStore %lightPos %137
+        %139 = OpFunctionCall %mat4v4float %102 %uint_32
+        %141 = OpLoad %v4float %lightPos None
+        %142 = OpMatrixTimesVector %v4float %139 %141
+               OpStore %lightPos %142 None
+        %143 = OpLoad %v4float %lightPos None
+        %144 = OpAccessChain %_ptr_Function_float %lightPos %uint_3
+        %145 = OpLoad %float %144 None
+        %146 = OpCompositeConstruct %v4float %145 %145 %145 %145
+        %147 = OpFDiv %v4float %143 %146
+               OpStore %lightPos %147 None
+        %148 = OpLoad %uint %index None
+        %149 = OpAccessChain %_ptr_StorageBuffer__runtimearr_LightData %lightsBuffer %uint_0
+        %150 = OpArrayLength %uint %lightsBuffer 0
+        %151 = OpISub %uint %150 %uint_1
+        %152 = OpExtInst %uint %58 UMin %148 %151
+        %153 = OpAccessChain %_ptr_StorageBuffer_float %lightsBuffer %uint_0 %152 %uint_2
+        %154 = OpLoad %float %153 None
+               OpStore %lightRadius %154
+        %156 = OpLoad %v4float %lightPos None
+        %157 = OpLoad %float %lightRadius None
+        %158 = OpCompositeConstruct %v3float %157 %157 %157
+        %159 = OpCompositeConstruct %v4float %158 %float_0
+        %161 = OpFSub %v4float %156 %159
+               OpStore %boxMin %161
+        %163 = OpLoad %v4float %lightPos None
+        %164 = OpLoad %float %lightRadius None
+        %165 = OpCompositeConstruct %v3float %164 %164 %164
+        %166 = OpCompositeConstruct %v4float %165 %float_0
+        %167 = OpFAdd %v4float %163 %166
+               OpStore %boxMax %167
+        %174 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %uint_4
+        %175 = OpLoad %float %viewNear None
+        %176 = OpCompositeConstruct %v4float %float_0 %float_0 %float_n1 %175
+               OpStore %174 %176 None
+        %177 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %uint_5
+        %179 = OpLoad %float %viewFar None
+        %180 = OpFNegate %float %179
+        %181 = OpCompositeConstruct %v4float %float_0 %float_0 %float_1 %180
+               OpStore %177 %181 None
+               OpBranch %185
+        %185 = OpLabel
+               OpStore %y %int_0
+               OpBranch %188
+        %188 = OpLabel
+               OpLoopMerge %189 %187 None
+               OpBranch %186
+        %186 = OpLabel
+        %204 = OpLoad %int %y None
+        %205 = OpSLessThan %bool %204 %TILE_COUNT_X
+               OpSelectionMerge %206 None
+               OpBranchConditional %205 %206 %207
+        %207 = OpLabel
+               OpBranch %189
+        %206 = OpLabel
+               OpBranch %208
+        %208 = OpLabel
+               OpStore %x %int_0
+               OpBranch %211
+        %211 = OpLabel
+               OpLoopMerge %212 %210 None
+               OpBranch %209
+        %209 = OpLabel
+        %220 = OpLoad %int %x None
+        %221 = OpSLessThan %bool %220 %TILE_COUNT_X
+               OpSelectionMerge %222 None
+               OpBranchConditional %221 %222 %223
+        %223 = OpLabel
+               OpBranch %212
+        %222 = OpLabel
+        %224 = OpLoad %int %x None
+        %225 = OpBitcast %uint %224
+        %226 = OpBitcast %uint %TILE_SIZE
+        %227 = OpIMul %uint %225 %226
+        %228 = OpBitcast %int %227
+        %229 = OpLoad %int %y None
+        %230 = OpBitcast %uint %229
+        %231 = OpBitcast %uint %TILE_SIZE
+        %232 = OpIMul %uint %230 %231
+        %233 = OpBitcast %int %232
+        %235 = OpCompositeConstruct %v2int %228 %233
+               OpStore %tilePixel0Idx %235
+        %238 = OpLoad %v2int %tilePixel0Idx None
+        %240 = OpConvertSToF %v2float %238
+        %241 = OpVectorTimesScalar %v2float %240 %float_2
+        %243 = OpAccessChain %_ptr_Uniform_v4uint %25 %uint_0 %uint_10
+        %245 = OpLoad %v4uint %243 None
+        %246 = OpBitcast %v4float %245
+        %247 = OpVectorShuffle %v2float %246 %246 0 1
+        %248 = OpFDiv %v2float %241 %247
+        %249 = OpFSub %v2float %248 %250
+               OpStore %floorCoord %249
+        %253 = OpLoad %v2int %tilePixel0Idx None
+        %254 = OpCompositeConstruct %v2int %TILE_SIZE %TILE_SIZE
+        %256 = OpBitcast %v2uint %253
+        %257 = OpBitcast %v2uint %254
+        %258 = OpIAdd %v2uint %256 %257
+        %259 = OpBitcast %v2int %258
+        %260 = OpConvertSToF %v2float %259
+        %261 = OpVectorTimesScalar %v2float %260 %float_2
+        %262 = OpAccessChain %_ptr_Uniform_v4uint %25 %uint_0 %uint_10
+        %263 = OpLoad %v4uint %262 None
+        %264 = OpBitcast %v4float %263
+        %265 = OpVectorShuffle %v2float %264 %264 0 1
+        %266 = OpFDiv %v2float %261 %265
+        %267 = OpFSub %v2float %266 %250
+               OpStore %ceilCoord %267
+        %269 = OpLoad %float %viewNear None
+        %270 = OpFNegate %float %269
+        %271 = OpAccessChain %_ptr_Function_float %floorCoord %uint_0
+        %272 = OpLoad %float %271 None
+        %273 = OpFMul %float %270 %272
+        %274 = OpAccessChain %_ptr_Function_v4float %M %uint_2
+        %275 = OpAccessChain %_ptr_Function_float %274 %uint_0
+        %276 = OpLoad %float %275 None
+        %277 = OpLoad %float %viewNear None
+        %278 = OpFMul %float %276 %277
+        %279 = OpFSub %float %273 %278
+        %280 = OpAccessChain %_ptr_Function_v4float %M %uint_0
+        %281 = OpAccessChain %_ptr_Function_float %280 %uint_0
+        %282 = OpLoad %float %281 None
+        %283 = OpFDiv %float %279 %282
+        %284 = OpLoad %float %viewNear None
+        %285 = OpFNegate %float %284
+        %286 = OpAccessChain %_ptr_Function_float %floorCoord %uint_1
+        %287 = OpLoad %float %286 None
+        %288 = OpFMul %float %285 %287
+        %289 = OpAccessChain %_ptr_Function_v4float %M %uint_2
+        %290 = OpAccessChain %_ptr_Function_float %289 %uint_1
+        %291 = OpLoad %float %290 None
+        %292 = OpLoad %float %viewNear None
+        %293 = OpFMul %float %291 %292
+        %294 = OpFSub %float %288 %293
+        %295 = OpAccessChain %_ptr_Function_v4float %M %uint_1
+        %296 = OpAccessChain %_ptr_Function_float %295 %uint_1
+        %297 = OpLoad %float %296 None
+        %298 = OpFDiv %float %294 %297
+        %299 = OpCompositeConstruct %v2float %283 %298
+               OpStore %viewFloorCoord %299
+        %301 = OpLoad %float %viewNear None
+        %302 = OpFNegate %float %301
+        %303 = OpAccessChain %_ptr_Function_float %ceilCoord %uint_0
+        %304 = OpLoad %float %303 None
+        %305 = OpFMul %float %302 %304
+        %306 = OpAccessChain %_ptr_Function_v4float %M %uint_2
+        %307 = OpAccessChain %_ptr_Function_float %306 %uint_0
+        %308 = OpLoad %float %307 None
+        %309 = OpLoad %float %viewNear None
+        %310 = OpFMul %float %308 %309
+        %311 = OpFSub %float %305 %310
+        %312 = OpAccessChain %_ptr_Function_v4float %M %uint_0
+        %313 = OpAccessChain %_ptr_Function_float %312 %uint_0
+        %314 = OpLoad %float %313 None
+        %315 = OpFDiv %float %311 %314
+        %316 = OpLoad %float %viewNear None
+        %317 = OpFNegate %float %316
+        %318 = OpAccessChain %_ptr_Function_float %ceilCoord %uint_1
+        %319 = OpLoad %float %318 None
+        %320 = OpFMul %float %317 %319
+        %321 = OpAccessChain %_ptr_Function_v4float %M %uint_2
+        %322 = OpAccessChain %_ptr_Function_float %321 %uint_1
+        %323 = OpLoad %float %322 None
+        %324 = OpLoad %float %viewNear None
+        %325 = OpFMul %float %323 %324
+        %326 = OpFSub %float %320 %325
+        %327 = OpAccessChain %_ptr_Function_v4float %M %uint_1
+        %328 = OpAccessChain %_ptr_Function_float %327 %uint_1
+        %329 = OpLoad %float %328 None
+        %330 = OpFDiv %float %326 %329
+        %331 = OpCompositeConstruct %v2float %315 %330
+               OpStore %viewCeilCoord %331
+        %333 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %uint_0
+        %334 = OpAccessChain %_ptr_Function_float %viewFloorCoord %uint_0
+        %335 = OpLoad %float %334 None
+        %336 = OpFNegate %float %335
+        %337 = OpLoad %float %viewNear None
+        %338 = OpFDiv %float %336 %337
+        %339 = OpCompositeConstruct %v4float %float_1 %float_0 %338 %float_0
+               OpStore %333 %339 None
+        %340 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %uint_1
+        %341 = OpAccessChain %_ptr_Function_float %viewCeilCoord %uint_0
+        %342 = OpLoad %float %341 None
+        %343 = OpLoad %float %viewNear None
+        %344 = OpFDiv %float %342 %343
+        %345 = OpCompositeConstruct %v4float %float_n1 %float_0 %344 %float_0
+               OpStore %340 %345 None
+        %346 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %uint_2
+        %347 = OpAccessChain %_ptr_Function_float %viewFloorCoord %uint_1
+        %348 = OpLoad %float %347 None
+        %349 = OpFNegate %float %348
+        %350 = OpLoad %float %viewNear None
+        %351 = OpFDiv %float %349 %350
+        %352 = OpCompositeConstruct %v4float %float_0 %float_1 %351 %float_0
+               OpStore %346 %352 None
+        %353 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %uint_3
+        %354 = OpAccessChain %_ptr_Function_float %viewCeilCoord %uint_1
+        %355 = OpLoad %float %354 None
+        %356 = OpLoad %float %viewNear None
+        %357 = OpFDiv %float %355 %356
+        %358 = OpCompositeConstruct %v4float %float_0 %float_n1 %357 %float_0
+               OpStore %353 %358 None
+               OpStore %dp %float_0
+               OpBranch %360
+        %360 = OpLabel
+               OpStore %i %uint_0
+               OpBranch %363
+        %363 = OpLabel
+               OpLoopMerge %364 %362 None
+               OpBranch %361
+        %361 = OpLabel
+        %375 = OpLoad %uint %i None
+        %376 = OpULessThan %bool %375 %uint_6
+               OpSelectionMerge %377 None
+               OpBranchConditional %376 %377 %378
+        %378 = OpLabel
+               OpBranch %364
+        %377 = OpLabel
+        %381 = OpLoad %uint %i None
+        %382 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %381
+        %383 = OpAccessChain %_ptr_Function_float %382 %uint_0
+        %384 = OpLoad %float %383 None
+        %385 = OpFOrdGreaterThan %bool %384 %float_0
+               OpSelectionMerge %386 None
+               OpBranchConditional %385 %387 %388
+        %387 = OpLabel
+        %459 = OpAccessChain %_ptr_Function_float %boxMax %uint_0
+        %460 = OpLoad %float %459 None
+        %461 = OpAccessChain %_ptr_Function_float %p %uint_0
+               OpStore %461 %460 None
+               OpBranch %386
+        %388 = OpLabel
+        %462 = OpAccessChain %_ptr_Function_float %boxMin %uint_0
+        %463 = OpLoad %float %462 None
+        %464 = OpAccessChain %_ptr_Function_float %p %uint_0
+               OpStore %464 %463 None
+               OpBranch %386
+        %386 = OpLabel
+        %389 = OpLoad %uint %i None
+        %390 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %389
+        %391 = OpAccessChain %_ptr_Function_float %390 %uint_1
+        %392 = OpLoad %float %391 None
+        %393 = OpFOrdGreaterThan %bool %392 %float_0
+               OpSelectionMerge %394 None
+               OpBranchConditional %393 %395 %396
+        %395 = OpLabel
+        %465 = OpAccessChain %_ptr_Function_float %boxMax %uint_1
+        %466 = OpLoad %float %465 None
+        %467 = OpAccessChain %_ptr_Function_float %p %uint_1
+               OpStore %467 %466 None
+               OpBranch %394
+        %396 = OpLabel
+        %468 = OpAccessChain %_ptr_Function_float %boxMin %uint_1
+        %469 = OpLoad %float %468 None
+        %470 = OpAccessChain %_ptr_Function_float %p %uint_1
+               OpStore %470 %469 None
+               OpBranch %394
+        %394 = OpLabel
+        %397 = OpLoad %uint %i None
+        %398 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %397
+        %399 = OpAccessChain %_ptr_Function_float %398 %uint_2
+        %400 = OpLoad %float %399 None
+        %401 = OpFOrdGreaterThan %bool %400 %float_0
+               OpSelectionMerge %402 None
+               OpBranchConditional %401 %403 %404
+        %403 = OpLabel
+        %471 = OpAccessChain %_ptr_Function_float %boxMax %uint_2
+        %472 = OpLoad %float %471 None
+        %473 = OpAccessChain %_ptr_Function_float %p %uint_2
+               OpStore %473 %472 None
+               OpBranch %402
+        %404 = OpLabel
+        %474 = OpAccessChain %_ptr_Function_float %boxMin %uint_2
+        %475 = OpLoad %float %474 None
+        %476 = OpAccessChain %_ptr_Function_float %p %uint_2
+               OpStore %476 %475 None
+               OpBranch %402
+        %402 = OpLabel
+        %405 = OpAccessChain %_ptr_Function_float %p %uint_3
+               OpStore %405 %float_1 None
+        %406 = OpLoad %float %dp None
+        %407 = OpLoad %v4float %p None
+        %408 = OpLoad %uint %i None
+        %409 = OpAccessChain %_ptr_Function_v4float %frustumPlanes %408
+        %410 = OpLoad %v4float %409 None
+        %411 = OpDot %float %407 %410
+        %412 = OpExtInst %float %58 NMin %float_0 %411
+        %413 = OpFAdd %float %406 %412
+               OpStore %dp %413 None
+               OpBranch %362
+        %362 = OpLabel
+        %414 = OpLoad %uint %i None
+        %415 = OpIAdd %uint %414 %uint_1
+               OpStore %i %415 None
+               OpBranch %363
+        %364 = OpLabel
+        %365 = OpLoad %float %dp None
+        %366 = OpFOrdGreaterThanEqual %bool %365 %float_0
+               OpSelectionMerge %367 None
+               OpBranchConditional %366 %368 %367
+        %368 = OpLabel
+        %416 = OpLoad %int %x None
+        %417 = OpLoad %int %y None
+        %418 = OpBitcast %uint %417
+        %419 = OpBitcast %uint %TILE_COUNT_X
+        %420 = OpIMul %uint %418 %419
+        %421 = OpBitcast %int %420
+        %422 = OpBitcast %uint %416
+        %423 = OpBitcast %uint %421
+        %424 = OpIAdd %uint %422 %423
+        %425 = OpBitcast %int %424
+        %426 = OpBitcast %uint %425
+               OpStore %tileId %426
+        %428 = OpLoad %uint %tileId None
+        %429 = OpULessThan %bool %428 %uint_0
+               OpSelectionMerge %430 None
+               OpBranchConditional %429 %431 %432
+        %431 = OpLabel
+               OpBranch %430
+        %432 = OpLabel
+        %477 = OpLoad %uint %tileId None
+        %478 = OpAccessChain %_ptr_Uniform_v4uint %19 %uint_0 %uint_0
+        %479 = OpLoad %v4uint %478 None
+        %480 = OpCompositeExtract %uint %479 1
+        %435 = OpUGreaterThanEqual %bool %477 %480
+               OpBranch %430
+        %430 = OpLabel
+        %433 = OpPhi %bool %true %431 %435 %432
+               OpSelectionMerge %436 None
+               OpBranchConditional %433 %437 %436
+        %437 = OpLabel
+               OpBranch %210
+        %436 = OpLabel
+        %438 = OpLoad %uint %tileId None
+        %439 = OpExtInst %uint %58 UMin %438 %uint_3
+        %440 = OpAccessChain %_ptr_StorageBuffer_uint %9 %uint_0 %uint_0 %439 %uint_0
+        %442 = OpAtomicIAdd %uint %440 %uint_1 %uint_0 %uint_1
+               OpStore %offset %442
+        %444 = OpLoad %uint %offset None
+        %445 = OpAccessChain %_ptr_Uniform_v4uint %19 %uint_0 %uint_1
+        %446 = OpLoad %v4uint %445 None
+        %447 = OpCompositeExtract %uint %446 0
+        %448 = OpUGreaterThanEqual %bool %444 %447
+               OpSelectionMerge %449 None
+               OpBranchConditional %448 %450 %449
+        %450 = OpLabel
+               OpBranch %210
+        %449 = OpLabel
+        %451 = OpLoad %uint %tileId None
+        %452 = OpLoad %uint %offset None
+        %453 = OpExtInst %uint %58 UMin %451 %uint_3
+        %454 = OpExtInst %uint %58 UMin %452 %uint_63
+        %456 = OpAccessChain %_ptr_StorageBuffer_uint_0 %9 %uint_0 %uint_0 %453 %uint_1 %454
+        %458 = OpCompositeExtract %uint %GlobalInvocationID 0
+               OpStore %456 %458 None
+               OpBranch %367
+        %367 = OpLabel
+               OpBranch %210
+        %210 = OpLabel
+        %369 = OpLoad %int %x None
+        %370 = OpBitcast %uint %369
+        %371 = OpBitcast %uint %int_1
+        %372 = OpIAdd %uint %370 %371
+        %373 = OpBitcast %int %372
+               OpStore %x %373 None
+               OpBranch %211
+        %212 = OpLabel
+               OpBranch %187
+        %187 = OpLabel
+        %213 = OpLoad %int %y None
+        %214 = OpBitcast %uint %213
+        %215 = OpBitcast %uint %int_1
+        %217 = OpIAdd %uint %214 %215
+        %218 = OpBitcast %int %217
+               OpStore %y %218 None
+               OpBranch %188
+        %189 = OpLabel
+               OpReturn
+               OpFunctionEnd
+        %102 = OpFunction %mat4v4float None %482
+%start_byte_offset = OpFunctionParameter %uint
+        %483 = OpLabel
+        %484 = OpUDiv %uint %start_byte_offset %uint_16
+        %486 = OpAccessChain %_ptr_Uniform_v4uint %25 %uint_0 %484
+        %487 = OpLoad %v4uint %486 None
+        %488 = OpBitcast %v4float %487
+        %489 = OpIAdd %uint %uint_16 %start_byte_offset
+        %490 = OpUDiv %uint %489 %uint_16
+        %491 = OpAccessChain %_ptr_Uniform_v4uint %25 %uint_0 %490
+        %492 = OpLoad %v4uint %491 None
+        %493 = OpBitcast %v4float %492
+        %494 = OpIAdd %uint %uint_32 %start_byte_offset
+        %495 = OpUDiv %uint %494 %uint_16
+        %496 = OpAccessChain %_ptr_Uniform_v4uint %25 %uint_0 %495
+        %497 = OpLoad %v4uint %496 None
+        %498 = OpBitcast %v4float %497
+        %499 = OpIAdd %uint %uint_48 %start_byte_offset
+        %501 = OpUDiv %uint %499 %uint_16
+        %502 = OpAccessChain %_ptr_Uniform_v4uint %25 %uint_0 %501
+        %503 = OpLoad %v4uint %502 None
+        %504 = OpBitcast %v4float %503
+        %505 = OpCompositeConstruct %mat4v4float %488 %493 %498 %504
+               OpReturnValue %505
+               OpFunctionEnd
+       %main = OpFunction %void None %507
+        %508 = OpLabel
+        %509 = OpLoad %v3uint %main_global_invocation_id_Input None
+        %510 = OpFunctionCall %void %main_inner %509
+               OpReturn
+               OpFunctionEnd
