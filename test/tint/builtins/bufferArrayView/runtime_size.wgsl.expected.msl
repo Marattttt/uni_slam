@@ -1,0 +1,21 @@
+SKIP: FAILED
+
+$B1: {  # root
+  %v:ptr<storage, buffer, read> = var undef @binding_point(0, 0)
+  %out:ptr<storage, vec4<u32>, read_write> = var undef @binding_point(0, 1)
+}
+
+%main = @fragment func():void {
+  $B2: {
+    %size:u32 = let 16u
+    %5:ptr<storage, array<vec4<u32>>, read> = bufferArrayView<array<vec4<u32>>> %v, 0i, %size
+    %p:ptr<storage, array<vec4<u32>>, read> = let %5
+    %7:ptr<storage, vec4<u32>, read> = access %p, 0i
+    %8:vec4<u32> = load %7
+    store %out, %8
+    ret
+  }
+}
+Failed to generate: buffers are not supported by the MSL backend
+
+tint executable returned error: exit status 1
