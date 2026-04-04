@@ -4,14 +4,20 @@
 
 #include <memory>
 
+#include "anybag.hpp"
 #include "gpu.hpp"
 #include "pass.hpp"
 
 namespace wslam {
 namespace compute {
+
+class Compute;
+
 class Stage {
+    friend class Compute;
+
    public:
-    Stage(std::string type, std::shared_ptr<GPU> gpu);
+    Stage(std::string id, std::shared_ptr<GPU> gpu);
     std::optional<std::string> initialize();
     std::optional<std::string> execute();
 
@@ -21,9 +27,11 @@ class Stage {
     [[nodiscard]] std::string getId() const;
 
    private:
+    AnyBag* storage_;
+
     std::vector<std::unique_ptr<Pass>> passes_;
     std::shared_ptr<GPU> gpu_;
-    std::string stage_type_;
+    std::string id_;
 };
 
 Stage CreateHelloWgslStage(const std::shared_ptr<GPU>& gpu);

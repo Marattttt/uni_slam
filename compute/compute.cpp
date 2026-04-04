@@ -32,6 +32,11 @@ void impl::print_device_captured_error(const wgpu::Device& device,
         static_cast<uint32_t>(errtype), std::string_view(msg));
 }
 
+void Compute::addStage(Stage stage) {
+    stage.storage_ = &storage_;
+    stages_.emplace_back(std::move(stage));
+}
+
 PreinitOpts wslam::compute::createPreInitializeOpts(DefinedWorkflow workflow) {
     const char* shader_dir = std::getenv(WSLAM_SHADER_SRC_DIR_ENV);
     if (shader_dir == nullptr) {
@@ -103,7 +108,3 @@ std::optional<std::string> Compute::execute() {
 
     return std::nullopt;
 }
-
-void Compute::addStage(Stage stage) { stages_.emplace_back(std::move(stage)); }
-GPU& Compute::getGPU() { return *gpu_; }
-std::shared_ptr<GPU> Compute::getGPUPtr() { return gpu_; };

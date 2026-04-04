@@ -2,12 +2,14 @@
 
 #include <webgpu/webgpu_cpp.h>
 
+#include <any>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
 
+#include "anybag.hpp"
 #include "gpu.hpp"
 #include "stage.hpp"
 
@@ -38,6 +40,9 @@ PreinitOpts createPreInitializeOpts(DefinedWorkflow = DefinedWorkflow::None);
 
 class Compute {
    public:
+    using StorageKeyType = std::string;
+    using StorageItemType = std::any;
+
     void print_adapter_info() const;
 
     [[nodiscard]] std::optional<std::string> preInitialize(
@@ -46,14 +51,20 @@ class Compute {
     [[nodiscard]] std::optional<std::string> execute();
 
     void addStage(Stage stage);
-    GPU& getGPU();
-    std::shared_ptr<GPU> getGPUPtr();
+
+    constexpr AnyBag& getStorage() { return storage_; }
+    constexpr const AnyBag& getStorage() const { return storage_; }
+    constexpr GPU& getGPU() { return *gpu_; }
+    constexpr GPU& getGPU() const { return *gpu_; }
+    constexpr std::shared_ptr<GPU> getGPUPtr() { return gpu_; }
+    constexpr std::shared_ptr<GPU> getGPUPtr() const { return gpu_; }
 
    private:
     void createStages(DefinedWorkflow workflow);
 
     std::shared_ptr<GPU> gpu_;
     std::vector<Stage> stages_;
+    AnyBag storage_;
 };
 };  // namespace compute
 };  // namespace wslam

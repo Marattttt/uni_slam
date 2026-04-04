@@ -10,7 +10,7 @@
 using namespace wslam::compute;
 
 Stage::Stage(std::string type, std::shared_ptr<GPU> gpu)
-    : gpu_(std::move(gpu)), stage_type_("[" + std::move(type) + "]") {}
+    : gpu_(std::move(gpu)), id_("[" + std::move(type) + "]") {}
 
 std::optional<std::string> Stage::initialize() {
     spdlog::info("[Stage] Initializing stage {}", getId());
@@ -49,7 +49,7 @@ void Stage::add_pass(std::vector<std::unique_ptr<Pass>> passes) {
     std::ranges::move(passes, std::back_inserter(passes_));
 }
 
-std::string Stage::getId() const { return stage_type_; }
+std::string Stage::getId() const { return id_; }
 
 Stage wslam::compute::CreateHelloWgslStage(const std::shared_ptr<GPU>& gpu) {
     Stage stage{"Hello wgsl", gpu};
