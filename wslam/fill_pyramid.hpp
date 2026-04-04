@@ -23,25 +23,42 @@ class FillPyramidPass : public compute::GPUPass {
                     GpuSharedBindings& shared_bindings,
                     PassFillPyramidOpts opts)
         : GPUPass(std::move(gpu)),
-          shared_bindings_(shared_bindings),
-          image_getter_(std::move(opts.image_getter)) {}
+          image_getter_(std::move(opts.image_getter)),
+          shared_bindings_(shared_bindings) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
 
    private:
-    GpuSharedBindings& shared_bindings_;
     ImageProvider image_getter_;
+
+    GpuSharedBindings& shared_bindings_;
     wgpu::Sampler sampler_;
+
+    // Two per texture view pair, one per bind group, one per compute pass
+    static constexpr auto kTotalLabels = GPUConst::levels_of_detail * 3;
+
+    // Has initial size of kTotalLabels
+    std::vector<std::string> labels_ = std::invoke([]() {
+        std::vector<std::string> v;
+        v.reserve(kTotalLabels);
+        return v;
+    });
+
+    std::array<std::pair<wgpu::TextureView, wgpu::TextureView>,
+               GPUConst::levels_of_detail>
+        texture_views_;
+    std::array<wgpu::BindGroup, GPUConst::levels_of_detail - 1> bind_groups_;
 
     [[nodiscard]] std::optional<std::string> initBindGroupLayout();
     [[nodiscard]] std::optional<std::string> initSampler();
-    [[nodiscard]] std::optional<std::string> initBindGroup();
+    [[nodiscard]] std::optional<std::string> initBindGroups();
+    [[nodiscard]] std::optional<std::string> initTextureViews();
     [[nodiscard]] std::optional<std::string> initComputePipeline();
 
-    [[nodiscard]] std::optional<std::string> writeBaseMip();
-    [[nodiscard]] std::optional<std::string> writePyramidMips();
+    [[nodiscard]] std::optional<std::string> writeBaseLayer();
+    [[nodiscard]] std::optional<std::string> writeNonBaseLayers();
 };
 
 };  // namespace wslam

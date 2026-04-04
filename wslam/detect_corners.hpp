@@ -23,7 +23,7 @@ class PassDetectCorners : public compute::GPUPass {
    private:
     const uint16_t kFrameW = GPUConst::frame_width;
     const uint16_t kFrameH = GPUConst::frame_height;
-    const uint8_t kPyramidLevels = GPUConst::pyr_levels;
+    const uint8_t kPyramidLevels = GPUConst::levels_of_detail;
     const uint64_t kImageBufSize
         = static_cast<uint64_t>(kFrameW) * kFrameH * sizeof(uint8_t);
 

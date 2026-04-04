@@ -17,72 +17,63 @@
 namespace wslam {
 class FillPyramidPass;
 
-struct GPUConst {
-    inline static const uint32_t frame_width = WSLAM_FRAME_WIDTH;
-    inline static const uint32_t frame_height = WSLAM_FRAME_HEIGHT;
-    inline static const uint32_t pyr_levels = 6;
-    inline static const uint32_t pixel_size = sizeof(float);
+namespace GPUConst {
+constexpr uint32_t frame_width = WSLAM_FRAME_WIDTH;
+constexpr uint32_t frame_height = WSLAM_FRAME_HEIGHT;
+constexpr uint32_t pixel_size = sizeof(float);
+constexpr uint32_t levels_of_detail = 6;
+constexpr double lod_scale_factor = 1.2;
+};  // namespace GPUConst
 
-    uint32_t frame_width_ = frame_width;
-    uint32_t frame_height_ = frame_height;
-    uint32_t pyr_levels_ = pyr_levels;
-};
+namespace GPUBindingSize {
+consteval size_t getPyramidLayerSize(const uint32_t lod) {
+    if (lod >= GPUConst::levels_of_detail) {
+        throw std::out_of_range("LoD out of range");
+    }
 
-struct GPUBindingSize {
-   public:
-    inline static const size_t constants = sizeof(GPUConst);
-    inline static const size_t source_frame
-        = static_cast<size_t>(GPUConst::frame_width) * GPUConst::frame_height
-          * GPUConst::pixel_size;
-    inline static const size_t pyramid = []() consteval {
-        uint32_t total = 0;
+    double scale = 1.0;
 
-        uint32_t width = GPUConst::frame_width;
-        uint32_t height = GPUConst::frame_height;
+    for (size_t i = 0; i < lod; ++i) {
+        scale *= GPUConst::lod_scale_factor;
+    }
 
-        for (uint32_t i = 0;
-             i < GPUConst::pyr_levels && width != 1 && height != 1; i++) {
-            total += width * height;
-            width /= 2;
-            height /= 2;
-        }
+    const auto width = static_cast<size_t>(GPUConst::frame_width / scale);
+    const auto height = static_cast<size_t>(GPUConst::frame_height / scale);
 
-        total *= sizeof(float);
+    return width * height * GPUConst::pixel_size;
+}
 
-        return total;
-    }();
-};
+// Size (int bytes) of the initial frame
+constexpr size_t source_frame = static_cast<size_t>(GPUConst::frame_width)
+                                * GPUConst::frame_height * GPUConst::pixel_size;
+
+// Maximum space a LoD pyramid can take up
+constexpr size_t max_pyramid_size = std::invoke([]() consteval {
+    size_t total = 0;
+    for (uint32_t i = 0; i < GPUConst::levels_of_detail; ++i) {
+        total += getPyramidLayerSize(i);
+    }
+    return total;
+});
+
+}  // namespace GPUBindingSize
 
 class GpuSharedBindings {
    public:
-    wgpu::BindGroup group;
-    wgpu::BindGroupLayout layout;
+    GpuSharedBindings(const std::shared_ptr<compute::GPU>& gpu) : gpu_(gpu) {}
 
-    // Called only once
-    std::optional<std::string> initialize(
-        compute::GPU& gpu,
-        std::span<const std::byte, sizeof(GPUConst)> constant_data);
-
-    [[nodiscard]] const compute::BufferBinding& getConstantsBinding() const;
-    [[nodiscard]] const wgpu::Texture& getPyramid() const;
+    std::optional<std::string> initialize();
+    const wgpu::Texture& getTexture(uint32_t lod) const;
 
    private:
     friend FillPyramidPass;
 
-    std::optional<std::string> initBindGroupLayout(const compute::GPU& gpu);
-    std::optional<std::string> initBindGroup(compute::GPU& gpu);
-    std::optional<std::string> initTexture(const compute::GPU& gpu);
+    std::shared_ptr<compute::GPU> gpu_;
 
-    std::optional<std::string> writeConstants(
-        compute::GPU& gpu,
-        std::span<const std::byte, GPUBindingSize::constants> constant_data);
+    std::optional<std::string> initTextures();
+    std::optional<std::string> initSrcTexture(compute::Awaiter& awaiter);
+    void initTexture(compute::Awaiter& awaiter, uint32_t lod);
 
-    std::vector<wgpu::BindGroupLayoutEntry> layout_entries_{1};
-    std::vector<wgpu::BindGroupEntry> group_entries_{1};
-    std::vector<std::string> labels_for_stuff_;
-
-    wgpu::Texture frame_;
-
-    compute::GPU::BufferBindingMap buf_bindings_;
+    std::array<wgpu::Texture, GPUConst::levels_of_detail> textures_;
 };
 };  // namespace wslam

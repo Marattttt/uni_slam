@@ -292,13 +292,16 @@ std::optional<std::string> GPU::initDevice() {
 
     spdlog::info("[GPU] Creating device");
 
-    wgpu::Limits limits;
-    limits.maxBufferSize = gigabyte;
+    const wgpu::Limits limits{.maxBufferSize = gigabyte};
+
+    const std::array<wgpu::FeatureName, 1> features{
+        wgpu::FeatureName::Float32Filterable};
 
     wgpu::DeviceDescriptor descriptor{};
     descriptor.nextInChain = nullptr;
     descriptor.label = "First device";
-    descriptor.requiredFeatureCount = 0;
+    descriptor.requiredFeatureCount = features.size();
+    descriptor.requiredFeatures = features.data();
     descriptor.requiredLimits = &limits;
     descriptor.defaultQueue.nextInChain = nullptr;
     descriptor.defaultQueue.label = "Default queue";

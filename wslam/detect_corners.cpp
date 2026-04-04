@@ -30,7 +30,7 @@ std::optional<std::string> PassDetectCorners::initialize() {
     }
 
     if (auto err = initBindGroup()) {
-        return "bindgroup: " + err.value();
+        return "bind group: " + err.value();
     }
 
     if (auto err = initComputePipeline()) {
@@ -60,8 +60,11 @@ std::optional<std::string> PassDetectCorners::initBindGroupLayout() {
 
     auto awaiter = gpu_->getAwaiter();
 
-    awaiter.addCall([&]() { gpu_->getDevice().CreateBindGroupLayout(&desc); },
-                    getId() + " create bind group layout");
+    awaiter.addCall(
+        [&]() {
+            bind_group_layout_ = gpu_->getDevice().CreateBindGroupLayout(&desc);
+        },
+        getId() + " create bind group layout");
 
     return awaiter.executeAll();
 }
@@ -114,8 +117,8 @@ std::optional<std::string> PassDetectCorners::initComputePipeline() {
         return "loading shader module: " + mod_err.error();
     }
 
-    std::vector<wgpu::BindGroupLayout> layouts{shared_bindings_.layout,
-                                               bind_group_layout_};
+    std::unreachable();
+    std::vector<wgpu::BindGroupLayout> layouts{bind_group_layout_};
 
     wgpu::PipelineLayoutDescriptor pipeline_desc{
         .label = PASS_ID " pipeline layout",
