@@ -32,7 +32,7 @@ void impl::print_device_captured_error(const wgpu::Device& device,
         static_cast<uint32_t>(errtype), std::string_view(msg));
 }
 
-InitializeOpts wslam::compute::createInitializeOpts(DefinedWorkflow workflow) {
+PreinitOpts wslam::compute::createPreInitializeOpts(DefinedWorkflow workflow) {
     const char* shader_dir = std::getenv(WSLAM_SHADER_SRC_DIR_ENV);
     if (shader_dir == nullptr) {
         shader_dir = "";
@@ -46,7 +46,7 @@ InitializeOpts wslam::compute::createInitializeOpts(DefinedWorkflow workflow) {
     };
 }
 
-std::optional<std::string> Compute::initizalize(const InitializeOpts& opts) {
+std::optional<std::string> Compute::preInitialize(const PreinitOpts& opts) {
     gpu_ = std::make_shared<GPU>(
         std::make_shared<GPU::DeviceCb>(opts.deviceLostCallback_),
         std::make_shared<GPU::ErrorCb>(opts.errorCallback_),
@@ -61,11 +61,6 @@ std::optional<std::string> Compute::initizalize(const InitializeOpts& opts) {
 
     spdlog::debug("[Compute] initializing for hello wslam");
     createStages(DefinedWorkflow::HelloWGSL);
-
-    err = initizalizeAllStages();
-    if (err.has_value()) {
-        return std::format("initizalizing stages: {}", err.value());
-    }
 
     return std::nullopt;
 }

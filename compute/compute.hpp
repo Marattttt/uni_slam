@@ -27,21 +27,22 @@ void print_device_captured_error(const wgpu::Device& device,
 
 enum class DefinedWorkflow : uint8_t { None, HelloWGSL };
 
-struct InitializeOpts {
+struct PreinitOpts {
     const std::function<wgpu::DeviceLostCallback<void>> deviceLostCallback_;
     const std::function<wgpu::UncapturedErrorCallback<void>> errorCallback_;
     const std::filesystem::path shader_module_path_prefix_;
     DefinedWorkflow workflow;
 };
 
-InitializeOpts createInitializeOpts(DefinedWorkflow = DefinedWorkflow::None);
+PreinitOpts createPreInitializeOpts(DefinedWorkflow = DefinedWorkflow::None);
 
 class Compute {
    public:
     void print_adapter_info() const;
 
-    [[nodiscard]] std::optional<std::string> initizalize(
-        const InitializeOpts& opts = createInitializeOpts());
+    [[nodiscard]] std::optional<std::string> preInitialize(
+        const PreinitOpts& opts = createPreInitializeOpts());
+    [[nodiscard]] std::optional<std::string> initizalizeAllStages();
     [[nodiscard]] std::optional<std::string> execute();
 
     void addStage(Stage stage);
@@ -49,7 +50,6 @@ class Compute {
     std::shared_ptr<GPU> getGPUPtr();
 
    private:
-    [[nodiscard]] std::optional<std::string> initizalizeAllStages();
     void createStages(DefinedWorkflow workflow);
 
     std::shared_ptr<GPU> gpu_;
