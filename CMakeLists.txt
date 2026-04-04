@@ -29,20 +29,24 @@ add_executable(pc_wslam
     data/stb.cpp
 
     wslam/common.cpp
-    # wslam/feature_detect.cpp
+    wslam/feature_detect.cpp
     wslam/detect_corners.cpp
     wslam/fill_pyramid.cpp
-    wslam/presentable.cpp
+
+    base/assert.hpp
  )
 
 target_include_directories(pc_wslam PRIVATE 
     compute
     data
+    base
 )
 
 target_compile_options(pc_wslam PRIVATE
     -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
 )
+
+option(ENABLE_SANITIZERS TRUE)
 
 if (ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(pc_wslam PRIVATE
@@ -64,6 +68,5 @@ target_link_libraries(pc_wslam
     Eigen3::Eigen
     yaml-cpp::yaml-cpp
     nlohmann_json::nlohmann_json
-    # fkYAML
     fast_cpp_csv_parser
 )
