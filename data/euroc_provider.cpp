@@ -7,18 +7,18 @@
 #include <Eigen/Core>
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <functional>
-#include <string_view>
 
 #include "provider_base.hpp"
 #include "yaml-cpp/exceptions.h"
 
 using namespace wslam::data;
 namespace fs = std::filesystem;
+
+#define LOG_ID "[EuRoC provider]"
 
 namespace {
 Eigen::Matrix4d parse4x4(const YAML::Node& node) noexcept(false) {
@@ -263,9 +263,9 @@ std::expected<std::vector<IMUReading>, std::string> loadIMUReadings(
 };  // namespace
 
 namespace {
-std::expected<std::vector<std::pair<uint64_t, fs::path>>, std::string>
-getFramePaths(const fs::path& dir) {
-    std::vector<std::pair<uint64_t, fs::path>> results;
+std::expected<std::vector<EurocProvider::FrameInfo>, std::string> getFramePaths(
+    const fs::path& dir) {
+    std::vector<EurocProvider::FrameInfo> results;
 
     uint64_t ts_ns;
     std::string filename;
@@ -281,55 +281,15 @@ getFramePaths(const fs::path& dir) {
         results.emplace_back(ts_ns, filepath);
     }
 
-    std::ranges::sort(results);
+    std::ranges::sort(results, std::less{},
+                      &EurocProvider::FrameInfo::timestamp);
 
     spdlog::info("[Euroc provider] found {} frames in directory {}",
                  results.size(), dir.string());
 
     return results;
 }
-const std::string kErrNotFound = "requested item not found";
-bool isErrNotFound(std::string_view err) { return err.contains(kErrNotFound); }
-};  // namespace
-
-std::expected<std::array<FrameBW, 2>, std::string> EurocProvider::getFramesByTs(
-    uint64_t timestamp) const {
-    auto get_one = [&](const decltype(cam0_paths_)& cam)
-        -> std::expected<FrameBW, std::string> {
-        auto found = std::ranges::lower_bound(
-            cam, timestamp, std::less{}, &std::pair<uint64_t, fs::path>::first);
-
-        if (found == cam.end()) {
-            auto largest = std::ranges::max(
-                cam, std::less{}, &std::pair<uint64_t, fs::path>::first);
-
-            auto smallest = std::ranges::min(
-                cam, std::less{}, &std::pair<uint64_t, fs::path>::first);
-
-            spdlog::debug(
-                "[Euroc provider] Could not find a frame for timestamp {}, max "
-                "timestamp: {}, min timestamp: {}, total frames: {}",
-                timestamp, largest.first, smallest.first, cam.size());
-
-            return std::unexpected(kErrNotFound);
-        }
-
-        return getLocalFrame(found->second, found->first);
-    };
-
-    auto frame0 = get_one(cam0_paths_);
-    if (!frame0) {
-        return std::unexpected("cam0: " + frame0.error());
-    }
-
-    auto frame1 = get_one(cam0_paths_);
-    if (!frame1) {
-        return std::unexpected("cam1: " + frame1.error());
-    }
-
-    return std::array<FrameBW, 2>{std::move(frame0.value()),
-                                  std::move(frame1.value())};
-}
+}  // namespace
 
 std::optional<std::string> EurocProvider::collectFramePaths() {
     auto cam0 = getFramePaths(kCam0Dir);
@@ -373,46 +333,78 @@ std::optional<std::string> EurocProvider::initialize() {
     return std::nullopt;
 }
 
-std::expected<Reading<2>, std::string> EurocProvider::getReading(size_t idx) {
-    spdlog::debug("[Euroc provider] getting reading at [{}]", idx);
-
-    try {
-        const IMUReading& imu = imu_readings_.at(idx);
-        const auto timestamp = cam0_paths_.at(idx).first;
-
-        auto frames = getFramesByTs(timestamp);
-
-        if (!frames) {
-            return std::unexpected(std::format("frames: {}", frames.error()));
-        }
-
-        return Reading<2>{.frame = frames.value(), .imu = imu};
-    } catch (std::exception& err) {
-        return std::unexpected(err.what());
-    }
-}
-
 std::generator<std::expected<Reading<2>, std::string>>
-EurocProvider::getReadingsSynchronized() {
+EurocProvider::getReadings() {
     if (auto err = initialize()) {
         co_yield std::unexpected(
             std::format("initializing: {}", std::move(err.value())));
         co_return;
     }
 
-    for (size_t i = 0; i < imu_readings_.size(); i++) {
-        auto reading = getReading(i);
-        bool good = reading.has_value();
+    if (last_timestamp_ == 0) {
+        const auto first_timestamp = std::min({imu_readings_.front().timestamp,
+                                               cam0_paths_.front().timestamp,
+                                               cam1_paths_.front().timestamp});
+        last_timestamp_ = first_timestamp;
+    }
 
-        if (good) {
-            co_yield std::move(reading);
-        } else {
-            if (isErrNotFound(reading.error())) {
-                co_return;
-            }
+    auto curr_imu = imu_readings_.cbegin();
+    auto curr_cam0 = cam0_paths_.cbegin();
+    auto curr_cam1 = cam1_paths_.cbegin();
 
-            co_yield std::move(reading);
+    constexpr auto end = std::numeric_limits<size_t>::max();
+
+    while (true) {
+        const size_t imu_ts
+            = curr_imu == imu_readings_.end() ? end : curr_imu->timestamp;
+        const size_t cam0_ts
+            = curr_cam0 == cam0_paths_.end() ? end : curr_cam0->timestamp;
+        const size_t cam1_ts
+            = curr_cam1 == cam1_paths_.end() ? end : curr_cam1->timestamp;
+
+        const auto min = std::min({imu_ts, cam0_ts, cam1_ts});
+
+        if (min == end) {
             co_return;
         }
+
+        ReadingType reading;
+
+        if (imu_ts == min) {
+            reading->imu = *curr_imu;
+            curr_imu++;
+        }
+
+        if (cam0_ts == min) {
+            auto frame = getLocalFrame(curr_cam0->path, curr_cam0->timestamp);
+            if (!frame) {
+                spdlog::error(
+                    LOG_ID " could not get frame for cam0 at ts:{}, path:{}",
+                    curr_cam0->timestamp, std::string(curr_cam0->path));
+
+                co_yield std::unexpected("getting cam0 frame: "
+                                         + frame.error());
+            }
+
+            reading->frame[0] = frame.value();
+            curr_cam0++;
+        }
+
+        if (cam1_ts == min) {
+            auto frame = getLocalFrame(curr_cam1->path, curr_cam1->timestamp);
+            if (!frame) {
+                spdlog::error(
+                    LOG_ID " could not get frame for cam1 at ts:{}, path:{}",
+                    curr_cam1->timestamp, std::string(curr_cam1->path));
+
+                co_yield std::unexpected("getting cam1 frame: "
+                                         + frame.error());
+            }
+
+            reading->frame[1] = frame.value();
+            curr_cam1++;
+        }
+
+        co_yield reading;
     }
 }

@@ -12,6 +12,34 @@ using VectorX8u = Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>;
 };
 
 namespace wslam::data {
+struct IMUSensorParams {
+    Eigen::Matrix4d T_BS;
+
+    uint32_t rate_hz;
+
+    double gyroscope_noise_density;
+    double gyroscope_random_walk;
+    double accelerometer_noise_density;
+    double accelerometer_random_walk;
+};
+
+struct CamSensorParams {
+    Eigen::Matrix4d T_BS;
+
+    uint32_t rate_hz;
+    std::array<int, 2> resolution;  // [width, height]
+
+    std::string camera_model;
+    Eigen::Vector4d intrinsics;  // [fu, fv, cu, cv]
+
+    std::string distortion_model;
+    Eigen::Vector4d distortion_coefficients;
+};
+
+struct SensorParams {
+    IMUSensorParams imu;
+    std::vector<CamSensorParams> cams;
+};
 
 enum class FrameColor : uint8_t { BW, RGB };
 
@@ -62,35 +90,6 @@ struct Reading {
     IMUReading imu;
 };
 
-struct IMUSensorParams {
-    Eigen::Matrix4d T_BS;
-
-    uint32_t rate_hz;
-
-    double gyroscope_noise_density;
-    double gyroscope_random_walk;
-    double accelerometer_noise_density;
-    double accelerometer_random_walk;
-};
-
-struct CamSensorParams {
-    Eigen::Matrix4d T_BS;
-
-    uint32_t rate_hz;
-    std::array<int, 2> resolution;  // [width, height]
-
-    std::string camera_model;
-    Eigen::Vector4d intrinsics;  // [fu, fv, cu, cv]
-
-    std::string distortion_model;
-    Eigen::Vector4d distortion_coefficients;
-};
-
-struct SensorParams {
-    IMUSensorParams imu;
-    std::vector<CamSensorParams> cams;
-};
-
 /**
  * Summarizes IMU readings by interpolating them to match the
  * specific timestamp of an image frame.
@@ -113,13 +112,34 @@ std::expected<FrameBW, std::string> getLocalFrame(
 template <uint8_t CamCnt>
 class ProviderBase {
    public:
-    virtual std::generator<std::expected<Reading<CamCnt>, std::string>>
-    getReadingsSynchronized() = 0;
+    using ReadingType = std::expected<Reading<CamCnt>, std::string>;
+
+    virtual std::generator<ReadingType> getReadings() = 0;
 
     virtual std::expected<SensorParams, std::string> getSensorParams() = 0;
 
     virtual ~ProviderBase() = default;
 };
+
+template <size_t Requested, size_t Available>
+std::generator<std::expected<Reading<Requested>, std::string>> AdaptProvider(
+    std::generator<std::expected<Reading<Available>, std::string>> src_gen) {
+    for (auto&& src : src_gen) {
+        if (!src) {
+            co_yield std::unexpected(src.error());
+            continue;
+        }
+
+        // Take first N frames
+        Reading<Requested> dest;
+        for (size_t i = 0; i < Requested; ++i) {
+            dest.frame[i] = std::move(src->frame[i]);
+        }
+        dest.imu = src->imu;
+
+        co_yield dest;
+    }
+}
 };  // namespace wslam::data
 
 namespace std {

@@ -17,6 +17,11 @@ EurocProviderOpts CreateEurocProviderOpts();
 
 class EurocProvider : public ProviderBase<2> {
    public:
+    struct FrameInfo {
+        size_t timestamp;
+        std::filesystem::path path;
+    };
+
     EurocProvider(const EurocProviderOpts& opts)
         : kImuDir(opts.path / "imu0"),
           kCam0Dir(opts.path / "cam0"),
@@ -24,8 +29,8 @@ class EurocProvider : public ProviderBase<2> {
 
     ~EurocProvider() override = default;
 
-    std::generator<std::expected<Reading<2>, std::string>>
-    getReadingsSynchronized() override;
+    std::generator<std::expected<Reading<2>, std::string>> getReadings()
+        override;
 
     [[nodiscard]] std::expected<SensorParams, std::string> getSensorParams()
         override;
@@ -41,7 +46,6 @@ class EurocProvider : public ProviderBase<2> {
     getFramesByTs(uint64_t timestamp) const;
 
     [[nodiscard]] std::optional<std::string> initialize();
-    [[nodiscard]] std::expected<Reading<2>, std::string> getReading(size_t idx);
 
     std::optional<std::string> updateIMUSensorParams();
     std::optional<std::string> updateCamSensorParams();
@@ -51,8 +55,8 @@ class EurocProvider : public ProviderBase<2> {
     std::unique_ptr<IMUSensorParams> imu_params_ = nullptr;
     std::unique_ptr<std::array<CamSensorParams, 2>> cam_params_ = nullptr;
 
-    std::vector<std::pair<uint64_t, std::filesystem::path>> cam0_paths_;
-    std::vector<std::pair<uint64_t, std::filesystem::path>> cam1_paths_;
+    std::vector<FrameInfo> cam0_paths_;
+    std::vector<FrameInfo> cam1_paths_;
     std::vector<uint8_t> frame_buf_;
     std::vector<IMUReading> imu_readings_;
 };
