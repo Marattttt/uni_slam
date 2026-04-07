@@ -2,15 +2,52 @@
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 
-#include <ranges>
-
 #include "compute.hpp"
 #include "euroc_provider.hpp"
 #include "provider_base.hpp"
-#include "wslam/presentable.hpp"
+#include "wslam/common.hpp"
+#include "wslam/feature_detect.hpp"
 
 using namespace wslam;
 using namespace std::chrono_literals;
+
+int main_test() {
+    compute::Compute comp;
+    if (auto err = comp.preInitialize(compute::createPreInitializeOpts())) {
+        spdlog::error("initializing: {}", err.value());
+        std::terminate();
+    }
+
+    wslam::GpuSharedBindings shared(comp.getGPUPtr());
+    if (auto err = shared.initialize()) {
+        spdlog::error("shared: {}", err.value());
+        std::terminate();
+    }
+
+    std::unique_ptr<data::ProviderBase<2U>> euroc_data
+        = std::make_unique<data::EurocProvider>(
+            data::CreateEurocProviderOpts());
+
+    auto euroc_generator = euroc_data->getReadings();
+
+    auto data_provider = data::AdaptProvider<1UL, 2UL>(euroc_generator);
+
+    comp.addStage(wslam::CreateFeatureDetectStage(comp, shared,
+                                                  std::move(data_provider)));
+    if (auto err = comp.initizalizeAllStages()) {
+        spdlog::error("initializing stages: {}", err.value());
+        std::terminate();
+    }
+
+    if (auto err = comp.execute()) {
+        spdlog::error("executing: {}", err.value());
+        std::terminate();
+    }
+
+    return 0;
+}
+
+int main() { return main_test(); }
 
 // wslam::Viz create_viz(bool* is_next_requested);
 
@@ -60,75 +97,6 @@ using namespace std::chrono_literals;
 //     return 0;
 // }
 //
-int main_test() {
-    compute::Compute comp;
-    if (auto err = comp.initizalize(compute::createInitializeOpts(
-            compute::DefinedWorkflow::HelloWGSL))) {
-        spdlog::error("initializing: {}", err.value());
-        std::terminate();
-    }
-
-    if (auto err = comp.execute()) {
-        spdlog::error("executing: {}", err.value());
-    }
-
-    return 0;
-}
-
-int main_feature_detect() {
-    compute::Compute compute;
-    if (auto err = compute.initizalize(compute::createInitializeOpts())) {
-        spdlog::error("{}", err.value());
-        std::terminate();
-    };
-
-    data::EurocProvider euroc(data::CreateEurocProviderOpts());
-
-    auto generator = euroc.getReadingsSynchronized();
-    auto iter = generator.begin();
-    std::vector<std::byte> frame_storage;
-
-    ImageProvider img_provider
-        = [&]() -> std::optional<std::span<const std::byte>> {
-        if (iter == generator.end()) {
-            return std::nullopt;
-        }
-        auto res = *iter;
-        if (!res) {
-            spdlog::error("[Image provider] could not get data reading: {}",
-                          res.error());
-            return std::nullopt;
-        }
-
-        auto frame = res.value().frame.front();
-        std::span<std::uint8_t> frame_span{
-            frame.pixels.data(), frame.pixels.data() + frame.pixels.size()};
-
-        frame_storage = std::as_bytes(frame_span)
-                        | std::ranges::to<std::vector<std::byte>>();
-
-        return std::span(frame_storage);
-    };
-
-    wslam::Presentation pres{compute.getGPUPtr(), std::move(img_provider)};
-
-    if (auto err = pres.initialize()) {
-        spdlog::error("init presentation: {}", err.value());
-        std::terminate();
-    }
-
-    while (true) {
-        auto err = pres.execute();
-        if (err) {
-            spdlog::error("presentation execute: {}", err.value());
-            break;
-        }
-    }
-
-    return 0;
-}
-
-int main() { return main_feature_detect(); }
 //
 // wslam::Viz create_viz(bool* is_next_requested) {
 //     auto viz_err = wslam::Viz::initialize({});

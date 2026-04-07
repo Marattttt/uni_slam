@@ -55,7 +55,7 @@ struct FrameRGB {
 };
 struct FrameBW {
     uint64_t timestamp;
-    Eigen::VectorX8u pixels;
+    std::vector<float> pixels;
     uint16_t width;
     uint16_t height;
 };
@@ -74,20 +74,10 @@ struct IMUReading {
     // NOLINTEND(readability-magic-numbers)
 };
 
-struct GroundTruth {
-    uint64_t timestamp;
-    float tx;
-    float ty;
-    float tz;
-    float qx;
-    float qy;
-    float qz;
-};
-
 template <int FrameCnt>
 struct Reading {
-    std::array<FrameBW, FrameCnt> frame;
-    IMUReading imu;
+    std::array<std::optional<FrameBW>, FrameCnt> frames;
+    std::optional<IMUReading> imu;
 };
 
 /**
@@ -109,7 +99,7 @@ FrameRGB FrameBWToRGB(const FrameBW& frame);
 std::expected<FrameBW, std::string> getLocalFrame(
     const std::filesystem::path& path, uint64_t timestamp);
 
-template <uint8_t CamCnt>
+template <size_t CamCnt>
 class ProviderBase {
    public:
     using ReadingType = std::expected<Reading<CamCnt>, std::string>;
@@ -123,8 +113,8 @@ class ProviderBase {
 
 template <size_t Requested, size_t Available>
 std::generator<std::expected<Reading<Requested>, std::string>> AdaptProvider(
-    std::generator<std::expected<Reading<Available>, std::string>> src_gen) {
-    for (auto&& src : src_gen) {
+    std::generator<std::expected<Reading<Available>, std::string>>& src_gen) {
+    for (auto src : src_gen) {
         if (!src) {
             co_yield std::unexpected(src.error());
             continue;
@@ -133,7 +123,7 @@ std::generator<std::expected<Reading<Requested>, std::string>> AdaptProvider(
         // Take first N frames
         Reading<Requested> dest;
         for (size_t i = 0; i < Requested; ++i) {
-            dest.frame[i] = std::move(src->frame[i]);
+            dest.frames[i] = std::move(src->frames[i]);
         }
         dest.imu = src->imu;
 
@@ -141,6 +131,16 @@ std::generator<std::expected<Reading<Requested>, std::string>> AdaptProvider(
     }
 }
 };  // namespace wslam::data
+
+struct GroundTruth {
+    uint64_t timestamp;
+    float tx;
+    float ty;
+    float tz;
+    float qx;
+    float qy;
+    float qz;
+};
 
 namespace std {
 using namespace wslam::data;

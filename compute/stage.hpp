@@ -26,9 +26,9 @@ class Stage {
 
     [[nodiscard]] std::string getId() const;
 
-   private:
     AnyBag* storage_;
 
+   private:
     std::vector<std::unique_ptr<Pass>> passes_;
     std::shared_ptr<GPU> gpu_;
     std::string id_;

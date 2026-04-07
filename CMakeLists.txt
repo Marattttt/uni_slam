@@ -29,6 +29,7 @@ add_executable(pc_wslam
     data/stb.cpp
 
     wslam/common.cpp
+    wslam/sensor_loader.cpp
     wslam/feature_detect.cpp
     wslam/detect_corners.cpp
     wslam/fill_pyramid.cpp

@@ -58,6 +58,13 @@ constexpr size_t max_pyramid_size = std::invoke([]() consteval {
 
 }  // namespace GPUBindingSize
 
+namespace ResourceIdentifier {
+constexpr std::string GetFrameName(uint32_t frame_idx) {
+    return "resource:frame:" + std::to_string(frame_idx);
+};
+constexpr std::string GetImuVecName() { return "resource:imu:vec"; }
+}  // namespace ResourceIdentifier
+
 class GpuSharedBindings {
    public:
     GpuSharedBindings(const std::shared_ptr<compute::GPU>& gpu) : gpu_(gpu) {}

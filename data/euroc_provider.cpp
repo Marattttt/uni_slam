@@ -386,7 +386,7 @@ EurocProvider::getReadings() {
                                          + frame.error());
             }
 
-            reading->frame[0] = frame.value();
+            reading->frames[0] = frame.value();
             curr_cam0++;
         }
 
@@ -401,7 +401,7 @@ EurocProvider::getReadings() {
                                          + frame.error());
             }
 
-            reading->frame[1] = frame.value();
+            reading->frames[1] = frame.value();
             curr_cam1++;
         }
 

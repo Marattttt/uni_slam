@@ -29,8 +29,7 @@ class EurocProvider : public ProviderBase<2> {
 
     ~EurocProvider() override = default;
 
-    std::generator<std::expected<Reading<2>, std::string>> getReadings()
-        override;
+    std::generator<ReadingType> getReadings() override;
 
     [[nodiscard]] std::expected<SensorParams, std::string> getSensorParams()
         override;

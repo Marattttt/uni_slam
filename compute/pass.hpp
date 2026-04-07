@@ -45,15 +45,18 @@ class CustomPass : public Pass {
    public:
     using Callback = std::function<std::optional<std::string>(CustomPass*)>;
 
-    CustomPass(std::shared_ptr<GPU> gpu, Callback callback)
-        : Pass(std::move(gpu)), callback_(std::move(callback)) {}
+    CustomPass(std::shared_ptr<GPU> gpu, std::string id, Callback callback)
+        : Pass(std::move(gpu)),
+          callback_(std::move(callback)),
+          id_(std::move(id)) {}
 
-    std::optional<std::string> initialize() override;
-
-    std::optional<std::string> execute() override;
+    [[nodiscard]] std::optional<std::string> initialize() override;
+    [[nodiscard]] std::optional<std::string> execute() override;
+    [[nodiscard]] std::string getId() const override;
 
    protected:
     Callback callback_;
+    const std::string id_;
 };
 }  // namespace wslam::compute
 ;  // namespace wslam

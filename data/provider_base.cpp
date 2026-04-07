@@ -49,14 +49,15 @@ FrameBW frameRGBToBW(const FrameRGB& frame) {
 
     // Resize Eigen vector to match the number of pixels
     size_t num_pixels = frame.pixels.size();
-    bw_frame.pixels.resize(static_cast<Eigen::Index>(num_pixels));
+    bw_frame.pixels.resize(num_pixels);
 
     for (size_t i = 0; i < num_pixels; ++i) {
         const auto& pix = frame.pixels[i];
 
         // NOLINTBEGIN(readability-magic-numbers)
-        bw_frame.pixels[static_cast<Eigen::Index>(i)]
-            = ((pix.r * 61U) + (pix.g * 174) + (pix.b * 21)) >> 8;
+        bw_frame.pixels[i] = 0.2126F * static_cast<float>(pix.r)
+                             + 0.7152F * static_cast<float>(pix.g)
+                             + 0.0722F * static_cast<float>(pix.b);
         // NOLINTEND(readability-magic-numbers)
     }
 
@@ -70,11 +71,13 @@ FrameRGB FrameBWToRGB(const FrameBW& frame) {
     rgb_frame.height = frame.height;
 
     // Resize std::vector to match the number of pixels in the Eigen vector
-    auto num_pixels = static_cast<size_t>(frame.pixels.size());
+    const auto num_pixels = static_cast<size_t>(frame.pixels.size());
     rgb_frame.pixels.resize(num_pixels);
 
     for (size_t i = 0; i < num_pixels; ++i) {
-        uint8_t val = frame.pixels[static_cast<int64_t>(i)];
+        const auto val = static_cast<uint8_t>(
+            frame.pixels[i] * std::numeric_limits<uint8_t>::max());
+
         rgb_frame.pixels[i] = {.r = val, .g = val, .b = val};
     }
 
@@ -104,12 +107,17 @@ std::expected<FrameBW, std::string> getLocalFrame(
             std::format("loading image: {}", stbi_failure_reason()));
     }
 
-    // Create a copy
-    frame.pixels = Eigen::Map<Eigen::VectorX8u>(
-        imgdata, static_cast<Eigen::Index>(width * height));
     frame.height = static_cast<uint16_t>(height);
     frame.width = static_cast<uint16_t>(width);
     frame.timestamp = timestamp;
+
+    const std::span img_span{imgdata, static_cast<size_t>(width * height)};
+
+    frame.pixels = img_span | std::views::transform([](uint8_t pix) {
+                       return static_cast<float>(pix)
+                              / std::numeric_limits<uint8_t>::max();
+                   })
+                   | std::ranges::to<std::vector<float>>();
 
     stbi_image_free(static_cast<void*>(imgdata));
 
