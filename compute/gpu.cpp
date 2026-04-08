@@ -50,7 +50,7 @@ BufferBinding::~BufferBinding() noexcept {
     gpu_ = nullptr;
 }
 
-constexpr std::string_view wslam::compute::to_string(BufferType t) {
+std::string_view wslam::compute::to_string(BufferType t) {
     switch (t) {
         case BufferType::Input:
             return "Input";

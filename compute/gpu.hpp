@@ -43,7 +43,7 @@ enum class BufferType : uint8_t {
     SharedStorage,
     COUNT
 };
-constexpr std::string_view to_string(BufferType t);
+std::string_view to_string(BufferType t);
 
 class GPU;
 
@@ -184,3 +184,33 @@ class GPU {
 };
 };  // namespace compute
 };  // namespace wslam
+
+template <>
+struct std::formatter<wslam::compute::GPU::BgBinding> {
+    static constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+
+    static auto format(const wslam::compute::GPU::BgBinding& b,
+                       std::format_context& ctx) {
+        return std::format_to(
+            ctx.out(),
+            "BgBinding {{ buf_type:{}, binding:{}, offset:{}, size:{} }}",
+            to_string(b.buf_type), b.bg_entry.binding, b.bg_entry.offset,
+            b.bg_entry.size);
+    }
+};
+
+template <>
+struct std::formatter<wslam::compute::BufferBinding> {
+    static constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+    static auto format(const wslam::compute::BufferBinding& b,
+                       std::format_context& ctx) {
+        return std::format_to(
+            ctx.out(), "BufferBinding {{ buf_type: {}, offset: {}, size: {} }}",
+            wslam::compute::to_string(b.getBuffertype()), b.getOffset(),
+            b.getSize());
+    }
+};

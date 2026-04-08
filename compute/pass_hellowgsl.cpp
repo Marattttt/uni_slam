@@ -202,7 +202,7 @@ std::optional<std::string> HelloWGSLPass::execute() {
     const wgpu::CommandBuffer commands = encoder.Finish(&descriptor);
     queue.Submit(1, &commands);
 
-    Awaiter awaiter(gpu_->getInstance(), gpu_->getDevice());
+    auto awaiter = gpu_->getAwaiter();
 
     awaiter.addFuture(queue.OnSubmittedWorkDone(
                           wgpu::CallbackMode::WaitAnyOnly,

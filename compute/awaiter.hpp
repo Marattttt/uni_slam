@@ -57,12 +57,13 @@ class Awaiter {
     template <typename T>
         requires std::is_same_v<std::invoke_result_t<T>, wgpu::Future>
                  || std::is_same_v<std::invoke_result_t<T>, void>
-    void addCall(const T&& callback, std::string error_label,
-                 bool catch_errors = true) {
+    Awaiter& addCall(const T&& callback, std::string error_label,
+                     bool catch_errors = true) {
         if constexpr (std::is_same_v<std::invoke_result_t<T>, wgpu::Future>) {
-            addCallFuture(std::move(callback), error_label, catch_errors);
+            return addCallFuture(std::move(callback), error_label,
+                                 catch_errors);
         } else if constexpr (std::is_same_v<std::invoke_result_t<T>, void>) {
-            addCallVoid(std::move(callback), error_label, catch_errors);
+            return addCallVoid(std::move(callback), error_label, catch_errors);
         } else {
             static_assert(false, "Could not determine callback type");
         }
@@ -80,11 +81,11 @@ class Awaiter {
         = std::chrono::seconds(kDefaultTimeoutSeconds));
 
    private:
-    void addCallFuture(std::function<wgpu::Future()>&& factory,
-                       std::string error_label, bool catch_errors = true);
+    Awaiter& addCallFuture(std::function<wgpu::Future()>&& factory,
+                           std::string error_label, bool catch_errors = true);
 
-    void addCallVoid(const std::function<void()>& callback,
-                     std::string error_label, bool catch_errors = true);
+    Awaiter& addCallVoid(const std::function<void()>& callback,
+                         std::string error_label, bool catch_errors = true);
 
     void addErrorHandlers(std::string error_label);
 

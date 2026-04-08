@@ -94,12 +94,12 @@ void AwaiterTasks::clear() {
     is_completion_logged_.clear();
 }
 
-void Awaiter::addCallVoid(const std::function<void()>& callback,
-                          std::string error_label, bool catch_errors) {
+Awaiter& Awaiter::addCallVoid(const std::function<void()>& callback,
+                              std::string error_label, bool catch_errors) {
     // If we already have a hard error we still need to drain cleanly,
     // but we skip invoking new factories to avoid compounding side-effects.
     if (pending_error_) {
-        return;
+        return *this;
     }
 
     if (error_label.length() == 0) {
@@ -116,10 +116,12 @@ void Awaiter::addCallVoid(const std::function<void()>& callback,
     if (catch_errors) {
         addErrorHandlers(std::move(error_label));
     }
+
+    return *this;
 }
 
-void Awaiter::addCallFuture(std::function<wgpu::Future()>&& factory,
-                            std::string error_label, bool catch_errors) {
+Awaiter& Awaiter::addCallFuture(std::function<wgpu::Future()>&& factory,
+                                std::string error_label, bool catch_errors) {
     addCallVoid(
         [&, this]() {
             tasks_.add(FutureInfo{
@@ -128,6 +130,7 @@ void Awaiter::addCallFuture(std::function<wgpu::Future()>&& factory,
             });
         },
         std::string(error_label), catch_errors);
+    return *this;
 }
 
 void Awaiter::addFuture(wgpu::Future&& future, std::string error_label,
