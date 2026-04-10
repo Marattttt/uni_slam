@@ -47,7 +47,13 @@ int main_test() {
     return 0;
 }
 
-int main() { return main_test(); }
+int main() {
+#ifndef NDEBUG
+    spdlog::set_level(spdlog::level::debug);
+#endif
+
+    return main_test();
+}
 
 // wslam::Viz create_viz(bool* is_next_requested);
 
