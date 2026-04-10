@@ -10,7 +10,7 @@ namespace c = wslam::compute;
 
 #define LOG_ID "[Shared Bindings]"
 
-const wgpu::Texture& GpuSharedBindings::getTexture(uint32_t lod) const {
+const wgpu::Texture& GpuSharedBindings::getTexture(size_t lod) const {
     return textures_.at(lod);
 }
 

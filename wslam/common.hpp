@@ -69,8 +69,8 @@ class GpuSharedBindings {
    public:
     GpuSharedBindings(const std::shared_ptr<compute::GPU>& gpu) : gpu_(gpu) {}
 
-    std::optional<std::string> initialize();
-    const wgpu::Texture& getTexture(uint32_t lod) const;
+    [[nodiscard]] std::optional<std::string> initialize();
+    [[nodiscard]] const wgpu::Texture& getTexture(size_t lod) const;
 
    private:
     friend FillPyramidPass;

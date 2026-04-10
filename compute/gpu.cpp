@@ -71,13 +71,36 @@ std::string_view wslam::compute::to_string(BufferType t) {
 
 const wgpu::Device& GPU::getDevice() const { return device_; }
 const wgpu::Instance& GPU::getInstance() const { return instance_; }
+const wgpu::Limits& GPU::getLimits() const { return limits_; }
 Awaiter GPU::getAwaiter() const { return {instance_, device_}; }
+
+size_t GPU::getMinBufferAlignment(BufferType buftype) const {
+    using BT = BufferType;
+
+    constexpr auto kMinMappedAlignment = 4;
+
+    switch (buftype) {
+        case BT::StorageA:
+        case BT::StorageB:
+        case BT::SharedStorage:
+            return limits_.minStorageBufferOffsetAlignment;
+        case BT::Uniform:
+            return limits_.minUniformBufferOffsetAlignment;
+        case BT::Input:
+        case BT::Output:
+            return kMinMappedAlignment;
+        case BT::COUNT:
+            std::unreachable();
+    }
+
+    std::unreachable();
+}
 
 std::expected<GPU::BufferBindingMap, std::string> GPU::assignBuffersAndOffsets(
     BindGroupBindings bindings) {
     std::expected<GPU::BufferBindingMap, std::string> result{};
 
-    auto handle = [&](GPU::BindingKey key, wgpu::BindGroupEntry& entry,
+    auto handle = [&](const GPU::BindingKey& key, wgpu::BindGroupEntry& entry,
                       BufferType buf_type) -> bool {
         entry.buffer = getBuffer(buf_type);
         auto res = assignBufferRegion(entry, buf_type);
@@ -154,16 +177,26 @@ std::expected<BufferBinding, std::string> GPU::assignBufferRegion(
         return result;
     }
 
+    // Always a multiple of the minimum alignment
+    const size_t region_size = std::invoke([&]() {
+        const auto alignment = getMinBufferAlignment(buftype);
+        const auto remainder = entry.size % alignment;
+        if (remainder == 0) {
+            return entry.size;
+        }
+        return entry.size + alignment - remainder;
+    });
+
     BufferRegion taken{
         .is_free = false,
         .offset = region->offset,
-        .size = entry.size,
+        .size = region_size,
     };
 
     BufferRegion free{
         .is_free = true,
-        .offset = region->offset + entry.size,
-        .size = region->size - entry.size,
+        .offset = region->offset + region_size,
+        .size = region->size - region_size,
     };
 
     region = regions.erase(region);
@@ -176,7 +209,7 @@ std::expected<BufferBinding, std::string> GPU::assignBufferRegion(
         BufferBinding::Params{
             .gpu = *this,
             .buf_type = buftype,
-            .size = entry.size,
+            .size = region_size,
             .offset = entry.offset,
         },
     };
@@ -191,31 +224,28 @@ std::expected<BufferBinding, std::string> GPU::assignBufferRegion(
 std::optional<std::string> GPU::initialize() {
     spdlog::info("[GPU] Initializing");
 
-    std::optional<std::string> err;
-
-    err = initInstance();
-    if (err.has_value()) {
-        return std::format("instance: {}", err.value());
+    if (auto err = initInstance()) {
+        return "instance: " + err.value();
     }
 
-    err = initAdapter();
-    if (err.has_value()) {
-        return std::format("adapter: {}", err.value());
+    if (auto err = initAdapter()) {
+        return "adapter: " + err.value();
     }
 
-    err = initDevice();
-    if (err.has_value()) {
-        return std::format("device: {}", err.value());
+    if (auto err = initDevice()) {
+        return "device: " + err.value();
     }
 
-    err = initBuffers();
-    if (err.has_value()) {
-        return std::format("buffers: {}", err.value());
+    if (auto err = initLimits()) {
+        return "limits: " + err.value();
     }
 
-    err = initBufferRegions();
-    if (err.has_value()) {
-        return std::format("buffer regions: {}", err.value());
+    if (auto err = initBuffers()) {
+        return "buffers: " + err.value();
+    }
+
+    if (auto err = initBufferRegions()) {
+        return "buffer regions: " + err.value();
     }
 
     return std::nullopt;
@@ -352,6 +382,14 @@ std::optional<std::string> GPU::initDevice() {
     }
 
     device_ = std::move(userData.device);
+
+    return std::nullopt;
+}
+
+std::optional<std::string> GPU::initLimits() {
+    spdlog::info(LOG_ID " Getting device limits");
+
+    device_.GetLimits(&limits_);
 
     return std::nullopt;
 }

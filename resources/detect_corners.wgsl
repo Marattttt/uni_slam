@@ -1,22 +1,17 @@
 struct Params {
-    src_image_w: u32,
-    src_image_h: u32,
     lod: u32,
 };
 
-struct CornersHeader {
-    offset_per_lod: u32,
-    corners: array<u32>,
-};
-
-@group(0) @binding(0) var image: texture_2d<f32>;
-@group(0) @binding(1) var<uniform> params: Params;
-@group(1) @binding(0) var<storage, read_write> corners: array<u32>;
-
 override SCALE_FACTOR: f32;
+override SRC_IMAGE_W: u32;
+override SRC_IMAGE_H: u32;
 override THRESHOLD: f32 = 0.3;
 override N_SIMILLAR_MIN: u32 = 9;
 override WORKGROUP_SIZE: u32 = 16;
+
+@group(0) @binding(0) var<storage, read_write> corners: array<u32>;
+@group(1) @binding(0) var image: texture_2d<f32>;
+@group(1) @binding(1) var<uniform> params: Params;
 
 // Bresenham circle offsets for radius 3 (16 pixels, clockwise from top)
 const CIRCLE_X = array<i32, 16>(0, 1, 2, 3, 3, 3, 2, 1, 0, -1, -2, -3, -3, -3, -2, -1);
@@ -37,7 +32,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let lod = params.lod;
 
-    storeCornerResponse(response, gid.xy, lod);
+    storeCornerResponse(response, gid.xy);
 }
 
 fn getCornerStrength(coord: vec2<u32>) -> u32 {
@@ -63,11 +58,12 @@ fn getCornerStrength(coord: vec2<u32>) -> u32 {
     return max(9u, streak);
 }
 
-fn storeCornerResponse(response: u32, xy: vec2<u32>, lod: u32) {
-    let w = textureDimensions(image).x;
+fn storeCornerResponse(response: u32, xy: vec2<u32>) {
+    let dimensions = textureDimensions(image);
+    let lod = params.lod;
 
-    let lod_offset = lod * (params.src_image_w * params.src_image_h);
-    let pixel_offset = xy.x + xy.y * w;
+    let lod_offset = lod * (SRC_IMAGE_W * SRC_IMAGE_H);
+    let pixel_offset = xy.x + xy.y * dimensions.x;
 
     let corner_idx: u32 = lod_offset + pixel_offset;
 

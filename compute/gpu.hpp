@@ -111,15 +111,16 @@ class GPU {
     [[nodiscard]] virtual std::expected<wgpu::ShaderModule, std::string>
     loadShaderModule(const std::filesystem::path& path, std::string_view label);
 
-    std::optional<std::string> initialize();
+    [[nodiscard]] std::optional<std::string> initialize();
     [[nodiscard]] const wgpu::Device& getDevice() const;
     [[nodiscard]] const wgpu::Instance& getInstance() const;
+    [[nodiscard]] const wgpu::Limits& getLimits() const;
 
     struct BgBinding {
         BufferType buf_type;
         wgpu::BindGroupEntry& bg_entry;
     };
-    using BindingKey = std::string_view;
+    using BindingKey = std::string;
     using BindGroupBindings = std::unordered_map<BindingKey, BgBinding>;
     using BufferBindingMap = std::unordered_map<BindingKey, BufferBinding>;
 
@@ -144,9 +145,11 @@ class GPU {
     [[nodiscard]] std::optional<std::string> initInstance();
     [[nodiscard]] std::optional<std::string> initDevice();
     [[nodiscard]] std::optional<std::string> initAdapter();
+    std::optional<std::string> initLimits();
     [[nodiscard]] std::optional<std::string> initBuffers();
     [[nodiscard]] std::optional<std::string> initBufferRegions();
 
+    [[nodiscard]] size_t getMinBufferAlignment(BufferType buftype) const;
     [[nodiscard]] static std::optional<std::string> checkShaderModule(
         std::string_view module);
     [[nodiscard]] std::expected<BufferBinding, std::string> assignBufferRegion(
@@ -164,6 +167,7 @@ class GPU {
     wgpu::Instance instance_;
     wgpu::Device device_;
     wgpu::Adapter adapter_;
+    wgpu::Limits limits_;
     const DeviceCbPtr device_lost_callback_;
     const ErrorCbPtr uncaptured_error_callback_;
 
@@ -195,7 +199,7 @@ struct std::formatter<wslam::compute::GPU::BgBinding> {
                        std::format_context& ctx) {
         return std::format_to(
             ctx.out(),
-            "BgBinding {{ buf_type:{}, binding:{}, offset:{}, size:{} }}",
+            "{{BgBinding  buf_type:{}, binding:{}, offset:{}, size:{} }}",
             to_string(b.buf_type), b.bg_entry.binding, b.bg_entry.offset,
             b.bg_entry.size);
     }
@@ -209,7 +213,7 @@ struct std::formatter<wslam::compute::BufferBinding> {
     static auto format(const wslam::compute::BufferBinding& b,
                        std::format_context& ctx) {
         return std::format_to(
-            ctx.out(), "BufferBinding {{ buf_type: {}, offset: {}, size: {} }}",
+            ctx.out(), "{{BufferBinding  buf_type: {}, offset: {}, size: {} }}",
             wslam::compute::to_string(b.getBuffertype()), b.getOffset(),
             b.getSize());
     }
