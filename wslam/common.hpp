@@ -60,9 +60,9 @@ constexpr size_t max_pyramid_size = std::invoke([]() consteval {
 
 namespace ResourceIdentifier {
 constexpr std::string GetFrameName(uint32_t frame_idx) {
-    return "resource:frame:" + std::to_string(frame_idx);
+    return "res:frame:" + std::to_string(frame_idx);
 };
-constexpr std::string GetImuVecName() { return "resource:imu:vec"; }
+constexpr std::string GetImuVecName() { return "res:imu:vec"; }
 }  // namespace ResourceIdentifier
 
 class GpuSharedBindings {

@@ -9,14 +9,19 @@
 
 using namespace wslam;
 
+#define LOG_ID "[Feature Detect stage]"
+
 class StorageImageProvider {
    public:
     StorageImageProvider(AnyBag& storage) : storage_(storage) {}
 
     std::optional<std::span<const std::byte>> operator()() {
-        auto frame
-            = storage_.get<data::FrameBW>(ResourceIdentifier::GetFrameName(0));
+        const auto name = ResourceIdentifier::GetFrameName(0);
+
+        auto frame = storage_.get<data::FrameBW>(name);
         if (!frame) {
+            spdlog::warn(
+                LOG_ID " could not get frame from storage by name:'{}'", name);
             return std::nullopt;
         }
 

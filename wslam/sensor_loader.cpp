@@ -35,8 +35,16 @@ std::optional<std::string> SensorLoaderPass::execute() {
 
     std::vector<data::IMUReading> temp_imu{};
 
+    const int kMaxIterations = 1000;
+    int iterLimit = kMaxIterations;
+
+    ReadingType reading;
     for (; iter_ != generator_.end(); (*iter_)++) {
-        const auto& reading = *iter_.value();
+        assert(iterLimit > 0
+               && "Up to a thousand IMU readings without a frame");
+        iterLimit--;
+
+        reading = std::move(*iter_.value());
 
         if (!reading) {
             return "getting reading: " + reading.error();
@@ -49,41 +57,45 @@ std::optional<std::string> SensorLoaderPass::execute() {
         const auto is_empty
             = [](const auto& frame) { return !frame.has_value(); };
 
-        // NO CAMERA DATA -> CONTINUE
-        if (std::ranges::all_of(reading->frames, is_empty)) {
+        // If there is a frame, that means wer're done with collecting imu
+        // readings
+        if (std::ranges::none_of(reading->frames, is_empty)) {
+            break;
+        }
+    }
+
+    spdlog::debug(LOG_ID
+                  " found frame for inserting. temporary imu readings:{} "
+                  "imu:last_ts:{} frame0:ts:{}",
+                  temp_imu.size(), temp_imu.back().timestamp,
+                  reading->frames.front()->timestamp);
+
+    // SET IMU DATA
+    auto imu_vec = storage_.get<std::vector<data::IMUReading>>(
+        ResourceIdentifier::GetImuVecName());
+
+    if (!imu_vec.has_value()) {
+        imu_vec = std::vector<data::IMUReading>{};
+    }
+
+    std::ranges::move(temp_imu, std::back_inserter(imu_vec.value()));
+
+    storage_.set(ResourceIdentifier::GetImuVecName(), imu_vec.value());
+
+    // SET FRAMES DATA
+    for (size_t i = 0; i < reading->frames.size(); i++) {
+        const auto& frame = reading->frames[i];
+
+        if (!frame.has_value()) {
             continue;
         }
 
-        spdlog::debug(LOG_ID
-                      " found frame for inserting. temporary imu readings:{} "
-                      "imu:ts:{} frame0:ts:{}",
-                      temp_imu.size(), temp_imu.back().timestamp,
-                      reading->frames.front()->timestamp);
+        const auto name
+            = ResourceIdentifier::GetFrameName(static_cast<uint32_t>(i));
 
-        // SET IMU DATA
-        auto imu_vec = storage_.get<std::vector<data::IMUReading>>(
-            ResourceIdentifier::GetImuVecName());
-
-        if (!imu_vec.has_value()) {
-            imu_vec = std::vector<data::IMUReading>{};
-        }
-
-        std::ranges::move(temp_imu, std::back_inserter(imu_vec.value()));
-
-        storage_.set(ResourceIdentifier::GetImuVecName(), imu_vec.value());
-
-        // SET FRAMES DATA
-        for (size_t i = 0; i < reading->frames.size(); i++) {
-            const auto& frame = reading->frames[i];
-
-            if (!frame.has_value()) {
-                continue;
-            }
-
-            storage_.set(
-                ResourceIdentifier::GetFrameName(static_cast<uint32_t>(i)),
-                frame);
-        }
+        spdlog::debug(LOG_ID " Added new frame. name:'{}', size:{}x{}", name,
+                      frame->width, frame->height);
+        storage_.set(name, frame.value());
     }
 
     return std::nullopt;
