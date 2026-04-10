@@ -181,7 +181,7 @@ std::optional<std::string> FillPyramidPass::initComputePipeline() {
 
 std::optional<std::string> FillPyramidPass::execute() {
     if (auto err = writeBaseLayer()) {
-        return "writing base mip level (source frame): " + err.value();
+        return "writing base level (source frame): " + err.value();
     }
 
     if (auto err = writeNonBaseLayers()) {
@@ -200,11 +200,9 @@ std::optional<std::string> FillPyramidPass::writeBaseLayer() {
         .aspect = wgpu::TextureAspect::All,
     };
 
-    const uint32_t u8max = std::numeric_limits<uint8_t>::max();
-
     wgpu::TexelCopyBufferLayout copy_layout{
         .offset = 0,
-        .bytesPerRow = (GPUConst::frame_width * 1 + u8max) & ~u8max,
+        .bytesPerRow = GPUConst::pixel_size * (GPUConst::frame_width),
         .rowsPerImage = GPUConst::frame_height,
     };
 
