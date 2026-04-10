@@ -11,7 +11,7 @@ function (configureDependencies)
     )
     # Use the header only version
     set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-    set(SPDLOG_HEADER_ONLY  ON  CACHE BOOL "" FORCE)
+    set(SPDLOG_USE_STD_FORMAT ON  CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(spdlog)
 
     # Remove compiler warnings 
