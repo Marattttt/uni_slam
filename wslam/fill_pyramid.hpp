@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <span>
 
+#include "awaiter.hpp"
 #include "common.hpp"
 #include "gpu.hpp"
 #include "pass.hpp"
@@ -59,6 +60,8 @@ class FillPyramidPass : public compute::GPUPass {
 
     [[nodiscard]] std::optional<std::string> writeBaseLayer();
     [[nodiscard]] std::optional<std::string> writeNonBaseLayers();
+    void writeLayerN(compute::Awaiter& awaiter, wgpu::CommandEncoder& encoder,
+                     size_t lod);
 };
 
 };  // namespace wslam
