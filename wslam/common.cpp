@@ -3,6 +3,8 @@
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>
 
+#include <cmath>
+
 #include "awaiter.hpp"
 
 using namespace wslam;
@@ -40,8 +42,9 @@ std::optional<std::string> GpuSharedBindings::initTextures() {
 void GpuSharedBindings::initTexture(compute::Awaiter& awaiter, uint32_t lod) {
     const auto device = gpu_->getDevice();
 
-    const double factor
-        = lod == 0 ? 1 : GPUConst::lod_scale_factor * static_cast<double>(lod);
+    const double factor = lod == 0 ? 1
+                                   : std::pow(GPUConst::lod_scale_factor,
+                                              static_cast<double>(lod));
     const auto width = static_cast<uint32_t>(GPUConst::frame_width / factor);
     const auto height = static_cast<uint32_t>(GPUConst::frame_height / factor);
 
