@@ -345,6 +345,8 @@ std::optional<std::string> PassDetectCorners::initComputePipeline() {
 }
 
 std::optional<std::string> PassDetectCorners::execute() {
+    spdlog::info(LOG_ID " Executing");
+
     const wgpu::Device device = gpu_->getDevice();
     const wgpu::Queue queue = device.GetQueue();
 
@@ -363,6 +365,8 @@ std::optional<std::string> PassDetectCorners::execute() {
 
     // LAUNCH MAIN PASSES
     const auto compute_encoder = device.CreateCommandEncoder();
+
+    spdlog::debug(LOG_ID " Writing commands for LoDs");
 
     for (size_t i = 0; i < GPUConst::levels_of_detail; i++) {
         const wgpu::ComputePassDescriptor pass_desc{
@@ -414,6 +418,8 @@ std::optional<std::string> PassDetectCorners::execute() {
 
 std::optional<std::string> PassDetectCorners::writeGPUPassParams(
     const wgpu::CommandEncoder& encoder) {
+    spdlog::debug(LOG_ID " Writing parameters for all passes");
+
     const auto data = std::as_bytes(std::span(pass_params_));
     auto err = gpu_->fillNonInputBuffer(encoder, data,
                                         buf_bindings_.at(kPassParamsBinding));

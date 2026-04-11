@@ -161,6 +161,8 @@ std::optional<std::string> FillPyramidPass::initBindGroups() {
 }
 
 std::optional<std::string> FillPyramidPass::initComputePipeline() {
+    spdlog::debug(LOG_ID " Initializing compute pipeline");
+
     auto mod = gpu_->loadShaderModule("create_pyramid.wgsl", "create pyramid");
 
     if (!mod) {
@@ -182,6 +184,8 @@ std::optional<std::string> FillPyramidPass::initComputePipeline() {
 }
 
 std::optional<std::string> FillPyramidPass::execute() {
+    spdlog::info(LOG_ID " Executing");
+
     if (auto err = writeBaseLayer()) {
         return "writing base level (source frame): " + err.value();
     }
@@ -193,6 +197,7 @@ std::optional<std::string> FillPyramidPass::execute() {
 }
 
 std::optional<std::string> FillPyramidPass::writeBaseLayer() {
+    spdlog::info(LOG_ID " Writing source texture");
     wgpu::Queue queue = gpu_->getDevice().GetQueue();
 
     wgpu::TexelCopyTextureInfo copy_info{
@@ -234,6 +239,8 @@ std::optional<std::string> FillPyramidPass::writeBaseLayer() {
 }
 
 std::optional<std::string> FillPyramidPass::writeNonBaseLayers() {
+    spdlog::info(LOG_ID " Writing LoDs");
+
     auto device = gpu_->getDevice();
     auto queue = device.GetQueue();
     wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
@@ -267,6 +274,8 @@ std::optional<std::string> FillPyramidPass::writeNonBaseLayers() {
 
 void FillPyramidPass::writeLayerN(compute::Awaiter& awaiter,
                                   wgpu::CommandEncoder& encoder, size_t lod) {
+    spdlog::info(LOG_ID " Preparing to write LoD {}", lod);
+
     const auto width = GPUConst::frame_width;
     const auto height = GPUConst::frame_height;
     const auto workgroup_size = 16;

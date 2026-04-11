@@ -496,7 +496,8 @@ std::expected<wgpu::ShaderModule, std::string> GPU::loadShaderModule(
     const std::filesystem::path& path, std::string_view label) {
     const auto full_path = path_prefix_ / path;
 
-    spdlog::info("[GPU] loading shader source at {}", full_path.string());
+    spdlog::info("[GPU] loading shader source {} at {}", label,
+                 full_path.string());
 
     std::ifstream file(full_path);
     if (!file.is_open()) {
