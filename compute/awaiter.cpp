@@ -208,6 +208,8 @@ std::optional<std::string> Awaiter::executeAll(
     std::optional<std::string> error;
 
     do {
+        instance_.ProcessEvents();
+
         auto res = waitAny();
 
         if (!res) {
@@ -222,7 +224,7 @@ std::optional<std::string> Awaiter::executeAll(
             break;
         }
 
-        instance_.ProcessEvents();
+        std::this_thread::sleep_for(10ms);
     } while (!is_timeout_exceeded());
 
     if (pending_error_) {
