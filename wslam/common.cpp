@@ -48,11 +48,13 @@ void GpuSharedBindings::initTexture(compute::Awaiter& awaiter, uint32_t lod) {
     const auto width = static_cast<uint32_t>(GPUConst::frame_width / factor);
     const auto height = static_cast<uint32_t>(GPUConst::frame_height / factor);
 
+    const std::string label = std::format("Frame texture for lod {}", lod);
     const wgpu::TextureDescriptor texture_desc{
-        .label = std::format("Frame texture for lod {}", lod).c_str(),
+        .label = label.c_str(),
         .usage = wgpu::TextureUsage::TextureBinding
                  | wgpu::TextureUsage::StorageBinding
-                 | wgpu::TextureUsage::CopyDst,
+                 | wgpu::TextureUsage::CopyDst
+                 | wgpu::TextureUsage::CopySrc,
         .dimension = wgpu::TextureDimension::e2D,
         .size = {.width = width, .height = height, .depthOrArrayLayers = 1,},
         .format = wgpu::TextureFormat::R32Float,

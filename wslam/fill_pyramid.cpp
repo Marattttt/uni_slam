@@ -8,6 +8,7 @@
 #include "common.hpp"
 
 using namespace wslam;
+using namespace std::chrono_literals;
 namespace c = wslam::compute;
 
 #define LOG_ID "[Fill Pyramid pass]"
@@ -74,15 +75,17 @@ std::optional<std::string> FillPyramidPass::initBindGroupLayout() {
 }
 
 std::optional<std::string> FillPyramidPass::initSampler() {
-    wgpu::SamplerDescriptor sampler_desc{};
-    sampler_desc.minFilter = wgpu::FilterMode::Linear;
-    sampler_desc.magFilter = wgpu::FilterMode::Linear;
-    sampler_desc.mipmapFilter = wgpu::MipmapFilterMode::Nearest;
-    sampler_desc.addressModeU = wgpu::AddressMode::ClampToEdge;
-    sampler_desc.addressModeV = wgpu::AddressMode::ClampToEdge;
+    wgpu::SamplerDescriptor sampler_desc{
+        .addressModeU = wgpu::AddressMode::ClampToEdge,
+        .addressModeV = wgpu::AddressMode::ClampToEdge,
+        .magFilter = wgpu::FilterMode::Linear,
+        .minFilter = wgpu::FilterMode::Linear,
+        .mipmapFilter = wgpu::MipmapFilterMode::Nearest,
+    };
 
     auto callback
         = [&]() { sampler_ = gpu_->getDevice().CreateSampler(&sampler_desc); };
+
     auto awaiter = gpu_->getAwaiter();
     awaiter.addCall(std::move(callback), LOG_ID " creating sampler");
 
@@ -117,7 +120,7 @@ std::optional<std::string> FillPyramidPass::initTextureViews() {
         auto callback = [&]() {
             texture_views_[i] = std::make_pair(
                 shared_bindings_.getTexture(0).CreateView(&src_desc),
-                shared_bindings_.getTexture(0).CreateView(&dest_desc));
+                shared_bindings_.getTexture(i).CreateView(&dest_desc));
         };
 
         awaiter.addCall(std::move(callback),
@@ -151,7 +154,7 @@ std::optional<std::string> FillPyramidPass::initBindGroups() {
         };
 
         auto callback = [&]() {
-            bind_groups_.at(lod) = gpu_->getDevice().CreateBindGroup(&desc);
+            bind_groups_.at(lod - 1) = gpu_->getDevice().CreateBindGroup(&desc);
         };
 
         awaiter.addCall(std::move(callback), LOG_ID " creating bind group");
@@ -169,11 +172,26 @@ std::optional<std::string> FillPyramidPass::initComputePipeline() {
         return "creating shader module: " + mod.error();
     }
 
+    auto awaiter = gpu_->getAwaiter();
+
+    wgpu::PipelineLayoutDescriptor layout_desc{
+        .label = LOG_ID " pipeline layout",
+        .bindGroupLayoutCount = 1,
+        .bindGroupLayouts = &bind_group_layout_,
+    };
+
+    auto create_pipeline_layout = [&]() {
+        compute_pipeline_layout_
+            = gpu_->getDevice().CreatePipelineLayout(&layout_desc);
+    };
+
+    awaiter.addCall(std::move(create_pipeline_layout), "crate pipeline layout");
+
     wgpu::ComputePipelineDescriptor desc{
+        .layout = compute_pipeline_layout_,
         .compute = {.module = mod.value(), .entryPoint = "main"},
     };
 
-    auto awaiter = gpu_->getAwaiter();
     awaiter.addCall(
         [&]() {
             compute_pipeline_ = gpu_->getDevice().CreateComputePipeline(&desc);
@@ -198,6 +216,7 @@ std::optional<std::string> FillPyramidPass::execute() {
 
 std::optional<std::string> FillPyramidPass::writeBaseLayer() {
     spdlog::info(LOG_ID " Writing source texture");
+
     wgpu::Queue queue = gpu_->getDevice().GetQueue();
 
     wgpu::TexelCopyTextureInfo copy_info{
@@ -241,46 +260,43 @@ std::optional<std::string> FillPyramidPass::writeBaseLayer() {
 std::optional<std::string> FillPyramidPass::writeNonBaseLayers() {
     spdlog::info(LOG_ID " Writing LoDs");
 
-    auto device = gpu_->getDevice();
-    auto queue = device.GetQueue();
-    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    const auto device = gpu_->getDevice();
+    const auto queue = device.GetQueue();
+    const wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
 
-    auto awaiter = gpu_->getAwaiter();
-
-    for (uint32_t lod = 1; lod < GPUConst::levels_of_detail; lod++) {
-        writeLayerN(awaiter, encoder, lod);
+    for (uint32_t lod = 1; lod < GPUConst::levels_of_detail; ++lod) {
+        if (auto err = writeLayerN(encoder, lod)) {
+            return std::format("preparing lod {}: {}", lod, err.value());
+        }
     }
 
     auto commands = encoder.Finish();
 
-    auto submit_commands = [&]() { queue.Submit(1, &commands); };
-    awaiter.addCall(std::move(submit_commands), "submit commands to gpu");
+    queue.Submit(1, &commands);
 
-    awaiter.addFuture(queue.OnSubmittedWorkDone(
-                          wgpu::CallbackMode::WaitAnyOnly,
-                          [](wgpu::QueueWorkDoneStatus status,
-                             wgpu::StringView msg, decltype(this)) {
-                              spdlog::info(
-                                  LOG_ID
-                                  " Submitted work done for writing "
-                                  "pyramid levels; status: {}, msg: {}",
-                                  int(status), std::string(msg));
-                          },
-                          this),
-                      "Execute compute pass", false);
-    return awaiter.executeAll().transform(
-        [](const std::string& s) { return "exeuting: " + s; });
+    auto wait_for_queue = [&]() -> wgpu::Future {
+        return queue.OnSubmittedWorkDone(
+            wgpu::CallbackMode::WaitAnyOnly,
+            [](wgpu::QueueWorkDoneStatus st, wgpu::StringView m) {
+                spdlog::info(LOG_ID
+                             " Done writing all LoDs. status={} msg = '{}'",
+                             int(st), std::string(m));
+            });
+    };
+
+    return gpu_->getAwaiter()
+        .addCall(std::move(wait_for_queue), "Wait for all LoDs", false)
+        .executeAll()
+        .transform([](const auto& err) { return "waiting: " + err; });
 }
 
-void FillPyramidPass::writeLayerN(compute::Awaiter& awaiter,
-                                  wgpu::CommandEncoder& encoder, size_t lod) {
+std::optional<std::string> FillPyramidPass::writeLayerN(
+    const wgpu::CommandEncoder& encoder, size_t lod) {
     spdlog::info(LOG_ID " Preparing to write LoD {}", lod);
 
     const auto width = GPUConst::frame_width;
     const auto height = GPUConst::frame_height;
     const auto workgroup_size = 16;
-
-    labels_.emplace_back(std::format(LOG_ID "fill lod {}", lod));
 
     auto write_lod = [&]() {
         wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
@@ -296,5 +312,8 @@ void FillPyramidPass::writeLayerN(compute::Awaiter& awaiter,
         pass.End();
     };
 
-    awaiter.addCall(std::move(write_lod), labels_.back());
+    return gpu_->getAwaiter()
+        .addCall(std::move(write_lod), std::format(LOG_ID "fill lod {}", lod))
+        .executeAll()
+        .transform([](const auto& err) { return "awaiter: " + err; });
 }
