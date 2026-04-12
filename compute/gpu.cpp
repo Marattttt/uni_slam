@@ -50,25 +50,6 @@ BufferBinding::~BufferBinding() noexcept {
     gpu_ = nullptr;
 }
 
-std::string_view wslam::compute::to_string(BufferType t) {
-    switch (t) {
-        case BufferType::Input:
-            return "Input";
-        case BufferType::Uniform:
-            return "Uniform";
-        case BufferType::Output:
-            return "Output";
-        case BufferType::StorageA:
-            return "Storage A";
-        case BufferType::StorageB:
-            return "Storage B";
-        case BufferType::SharedStorage:
-            return "Shared storage";
-        case BufferType::COUNT:
-            assert(false && "invalid buffer type COUNT");
-    }
-}
-
 const wgpu::Device& GPU::getDevice() const { return device_; }
 const wgpu::Instance& GPU::getInstance() const { return instance_; }
 const wgpu::Limits& GPU::getLimits() const { return limits_; }
@@ -106,8 +87,7 @@ std::expected<GPU::BufferBindingMap, std::string> GPU::assignBuffersAndOffsets(
         auto res = assignBufferRegion(entry, buf_type);
 
         if (!res) {
-            result = std::unexpected(std::string(to_string(buf_type))
-                                     + res.error());
+            result = std::unexpected(std::format("{}", buf_type) + res.error());
             return false;
         }
 
@@ -693,10 +673,9 @@ std::optional<std::string> GPU::initBufferRegions() {
 }
 
 void GPU::unAssignBuffer(BufferBinding& binding) {
-    spdlog::debug(LOG_ID
-                  " unassigning buffer: [Binding offset:{}, size:{}, type:{}",
-                  binding.getOffset(), binding.getSize(),
-                  static_cast<int>(binding.getBuffertype()));
+    spdlog::debug(
+        LOG_ID " unassigning buffer: [Binding offset:{}, size:{}, type:{}",
+        binding.getOffset(), binding.getSize(), binding.getBuffertype());
 
     const wgpu::Buffer& buffer = getBuffer(binding.getBuffertype());
     if (buffer == nullptr) {

@@ -43,7 +43,6 @@ enum class BufferType : uint8_t {
     SharedStorage,
     COUNT
 };
-std::string_view to_string(BufferType t);
 
 class GPU;
 
@@ -190,18 +189,56 @@ class GPU {
 };  // namespace wslam
 
 template <>
+struct std::formatter<wslam::compute::BufferType> {
+    using BufferType = wslam::compute::BufferType;
+
+    static constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+
+    static constexpr auto format(const BufferType& buf_type,
+                                 std::format_context& ctx) {
+        const char* str = nullptr;
+
+        switch (buf_type) {
+            case BufferType::Input:
+                str = "Input";
+                break;
+            case BufferType::Uniform:
+                str = "Uniform";
+                break;
+            case BufferType::Output:
+                str = "Output";
+                break;
+            case BufferType::StorageA:
+                str = "Storage A";
+                break;
+            case BufferType::StorageB:
+                str = "Storage B";
+                break;
+            case BufferType::SharedStorage:
+                str = "Shared storage";
+                break;
+            case BufferType::COUNT:
+                assert(false && "invalid buffer type COUNT");
+        }
+
+        return std::format_to(ctx.out(), "{}", str);
+    }
+};
+
+template <>
 struct std::formatter<wslam::compute::GPU::BgBinding> {
     static constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
 
-    static auto format(const wslam::compute::GPU::BgBinding& b,
-                       std::format_context& ctx) {
+    static constexpr auto format(const wslam::compute::GPU::BgBinding& b,
+                                 std::format_context& ctx) {
         return std::format_to(
             ctx.out(),
             "{{BgBinding  buf_type:{}, binding:{}, offset:{}, size:{} }}",
-            to_string(b.buf_type), b.bg_entry.binding, b.bg_entry.offset,
-            b.bg_entry.size);
+            b.buf_type, b.bg_entry.binding, b.bg_entry.offset, b.bg_entry.size);
     }
 };
 
@@ -210,11 +247,10 @@ struct std::formatter<wslam::compute::BufferBinding> {
     static constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
     }
-    static auto format(const wslam::compute::BufferBinding& b,
-                       std::format_context& ctx) {
+    static constexpr auto format(const wslam::compute::BufferBinding& b,
+                                 std::format_context& ctx) {
         return std::format_to(
             ctx.out(), "{{BufferBinding  buf_type: {}, offset: {}, size: {} }}",
-            wslam::compute::to_string(b.getBuffertype()), b.getOffset(),
-            b.getSize());
+            b.getBuffertype(), b.getOffset(), b.getSize());
     }
 };
