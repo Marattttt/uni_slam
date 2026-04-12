@@ -15,8 +15,12 @@ namespace c = wslam::compute;
 #define LOG_ID "[Pass Detect Corners]"
 
 namespace {
-const std::string kCornersBindings = "corners";
-const std::string kPassParamsBinding = "pass_params";
+inline constexpr std::string kCornersBindings = "corners";
+inline constexpr std::string kPassParamsBinding = "pass_params";
+
+inline constexpr std::string addLodBinding(const std::string& src, size_t lod) {
+    return src + ":lod:" + std::to_string(lod);
+}
 };  // namespace
 
 std::string PassDetectCorners::getId() const { return LOG_ID; }
@@ -420,9 +424,15 @@ std::optional<std::string> PassDetectCorners::writeGPUPassParams(
     const wgpu::CommandEncoder& encoder) {
     spdlog::debug(LOG_ID " Writing parameters for all passes");
 
-    const auto data = std::as_bytes(std::span(pass_params_));
-    auto err = gpu_->fillNonInputBuffer(encoder, data,
-                                        buf_bindings_.at(kPassParamsBinding));
+    for (size_t i = 0; i < per_pass_bind_groups_.size(); i++) {
+        const auto binding = addLodBinding(kPassParamsBinding, i);
+        const auto data = std::as_bytes(std::span(pass_params_).subspan(i, 1));
 
-    return err;
+        if (auto err = gpu_->fillNonInputBuffer(encoder, data,
+                                                buf_bindings_.at(binding))) {
+            return std::format("lod {}: {}", i, err.value());
+        }
+    }
+
+    return std::nullopt;
 }
