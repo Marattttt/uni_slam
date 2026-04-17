@@ -1,9 +1,6 @@
 """Setup file to install the GTSAM package."""
 
-try:
-    from setuptools import setup, find_packages
-except ImportError:
-    from distutils.core import setup, find_packages
+from setuptools import Distribution, find_packages, setup
 
 packages = find_packages(where=".")
 print("PACKAGES: ", packages)
@@ -12,13 +9,21 @@ package_data = {
     '': [
         "./*.so",
         "./*.dll",
-        "Data/*"  # Add the data files to the package
-        "Data/**/*"  # Add the data files in subdirectories
+        "./*.pyd",
+        "Data/*",  # Add the data files to the package
+        "Data/**/*",  # Add the data files in subdirectories
     ]
 }
 
 # Cleaner to read in the contents rather than copy them over.
 readme_contents = open("${GTSAM_SOURCE_DIR}/README.md").read()
+
+
+class BinaryDistribution(Distribution):
+    """Mark the wheel as platform-dependent even though extensions are prebuilt."""
+
+    def has_ext_modules(self):
+        return True
 
 setup(
     name='gtsam',
@@ -47,6 +52,7 @@ setup(
     packages=packages,
     include_package_data=True,
     package_data=package_data,
+    distclass=BinaryDistribution,
     test_suite="gtsam.tests",
     install_requires=open("${GTSAM_SOURCE_DIR}/python/requirements.txt").readlines(),
     zip_safe=False,
