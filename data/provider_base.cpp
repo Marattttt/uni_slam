@@ -1,5 +1,7 @@
 #include "provider_base.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <Eigen/Core>
 #include <algorithm>
 #include <cstdio>
@@ -88,8 +90,8 @@ std::expected<FrameBW, std::string> getLocalFrame(
     const std::filesystem::path& path, uint64_t timestamp) {
     FrameBW frame;
 
-    std::unique_ptr<FILE, decltype(fclose)*> file{
-        fopen(path.string().c_str(), "r"), &fclose};
+    std::unique_ptr<FILE, std::function<void(FILE*)>> file{
+        fopen(path.string().c_str(), "r"), [](FILE* file) { fclose(file); }};
 
     if (file == nullptr) {
         return std::unexpected("could not open file");
@@ -99,8 +101,9 @@ std::expected<FrameBW, std::string> getLocalFrame(
     int height;
     int channels;
 
-    uint8_t* imgdata
-        = stbi_load_from_file(file.get(), &width, &height, &channels, 1);
+    std::unique_ptr<uint8_t, decltype(stbi_image_free)*> imgdata{
+        stbi_load_from_file(file.get(), &width, &height, &channels, 1),
+        &stbi_image_free};
 
     if (imgdata == nullptr) {
         return std::unexpected(
@@ -111,15 +114,14 @@ std::expected<FrameBW, std::string> getLocalFrame(
     frame.width = static_cast<uint16_t>(width);
     frame.timestamp = timestamp;
 
-    const std::span img_span{imgdata, static_cast<size_t>(width * height)};
+    const std::span img_span{imgdata.get(),
+                             static_cast<size_t>(width * height)};
 
     frame.pixels = img_span | std::views::transform([](uint8_t pix) {
                        return static_cast<float>(pix)
                               / std::numeric_limits<uint8_t>::max();
                    })
                    | std::ranges::to<std::vector<float>>();
-
-    stbi_image_free(static_cast<void*>(imgdata));
 
     return frame;
 }

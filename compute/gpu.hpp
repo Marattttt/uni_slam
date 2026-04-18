@@ -44,6 +44,13 @@ enum class BufferType : uint8_t {
     COUNT
 };
 
+// Stores RGB data of an image
+struct TextureData {
+    uint32_t width;
+    uint32_t height;
+    std::vector<std::byte> pixel_data;
+};
+
 class GPU;
 
 // Created by the GPU class as a binding to a buffer region
@@ -130,12 +137,16 @@ class GPU {
 
     [[nodiscard]] const wgpu::Buffer& getBuffer(BufferType buftype) const;
     [[nodiscard]] Awaiter getAwaiter() const;
-    [[nodiscard]] std::expected<std::vector<uint8_t>, std::string>
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string>
     readOutputbuffer(size_t size, size_t offset);
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string> readBuffer(
+        const BufferBinding& binding);
+    [[nodiscard]] std::expected<TextureData, std::string> readTexture(
+        const wgpu::Texture& texture, uint32_t bytes_per_pixel, bool is_bw);
 
     [[nodiscard]] std::optional<std::string> fillInputBuffer(
         std::span<const std::byte> data, size_t offset = 0);
-
     [[nodiscard]] std::optional<std::string> fillNonInputBuffer(
         const wgpu::CommandEncoder& encoder, std::span<const std::byte> data,
         const BufferBinding& binding) const;
@@ -153,6 +164,9 @@ class GPU {
         std::string_view module);
     [[nodiscard]] std::expected<BufferBinding, std::string> assignBufferRegion(
         wgpu::BindGroupEntry& entry, BufferType buftype);
+
+    [[nodiscard]] std::optional<std::string> copyDataToOutput(
+        const BufferBinding& binding);
 
     // Allow buffer binding to call this in its destructor
     friend BufferBinding::~BufferBinding() noexcept;

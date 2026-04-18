@@ -15,7 +15,11 @@
 #endif
 
 namespace wslam {
-class FillPyramidPass;
+
+struct LOD {
+    uint8_t v;
+    operator uint8_t() const { return v; }
+};
 
 namespace GPUConst {
 constexpr uint32_t frame_width = WSLAM_FRAME_WIDTH;
@@ -26,44 +30,53 @@ constexpr double lod_scale_factor = 1.2;
 };  // namespace GPUConst
 
 namespace GPUBindingSize {
-consteval size_t getPyramidLayerSize(const uint32_t lod) {
-    if (lod >= GPUConst::levels_of_detail) {
+constexpr std::pair<size_t, size_t> getPyramidLayerDimensions(const LOD lod) {
+    if (lod.v >= GPUConst::levels_of_detail) {
         throw std::out_of_range("LoD out of range");
     }
 
     double scale = 1.0;
 
-    for (size_t i = 0; i < lod; ++i) {
+    for (uint8_t i = 0; i < lod.v; ++i) {
         scale *= GPUConst::lod_scale_factor;
     }
 
     const auto width = static_cast<size_t>(GPUConst::frame_width / scale);
     const auto height = static_cast<size_t>(GPUConst::frame_height / scale);
+    return {width, height};
+}
 
+constexpr size_t getPyramidLayerSize(const LOD lod) {
+    const auto [width, height] = getPyramidLayerDimensions(lod);
     return width * height * GPUConst::pixel_size;
 }
 
-// Size (int bytes) of the initial frame
+// Size (in bytes) of the initial frame
 constexpr size_t source_frame = static_cast<size_t>(GPUConst::frame_width)
                                 * GPUConst::frame_height * GPUConst::pixel_size;
 
 // Maximum space a LoD pyramid can take up
 constexpr size_t max_pyramid_size = std::invoke([]() consteval {
     size_t total = 0;
-    for (uint32_t i = 0; i < GPUConst::levels_of_detail; ++i) {
-        total += getPyramidLayerSize(i);
+    for (uint8_t i = 0; i < GPUConst::levels_of_detail; ++i) {
+        total += getPyramidLayerSize(LOD{i});
     }
     return total;
 });
-
 }  // namespace GPUBindingSize
 
 namespace ResourceIdentifier {
+constexpr std::string GetFrameName(std::pair<uint32_t, LOD> info) {
+    return std::format("res:frame:{}:lod:{}", info.first, info.second.v);
+}
 constexpr std::string GetFrameName(uint32_t frame_idx) {
-    return "res:frame:" + std::to_string(frame_idx);
+    return GetFrameName({frame_idx, {0}});
 };
 constexpr std::string GetImuVecName() { return "res:imu:vec"; }
+constexpr std::string GetVizResourceName() { return "res:viz"; }
 }  // namespace ResourceIdentifier
+
+class FillPyramidPass;
 
 class GpuSharedBindings {
    public:

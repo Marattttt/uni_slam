@@ -409,7 +409,7 @@ std::optional<std::string> PassDetectCorners::execute() {
     auto awaiter = gpu_->getAwaiter();
     awaiter.addCall(std::move(on_work_done), "execute gpu compute pass");
 
-    if (auto err = awaiter.executeAll()) {
+    if (auto err = awaiter.executeAll(true, 30s)) {
         return "awaiter: " + err.value();
     }
 

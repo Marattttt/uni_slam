@@ -14,6 +14,7 @@
 #include <print>
 #include <ranges>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -577,14 +578,135 @@ std::optional<std::string> GPU::checkShaderModule(std::string_view module) {
     return std::nullopt;
 }
 
-std::expected<std::vector<uint8_t>, std::string> GPU::readOutputbuffer(
+namespace {
+[[nodiscard]] std::vector<std::byte> FloatBwTextureToRGB(
+    std::span<std::byte> data) {
+    assert(data.size() % sizeof(float) == 0
+           && "Data size must be a multiple of sizeof(float)");
+
+    auto floats
+        = std::span<const float>(reinterpret_cast<const float*>(data.data()),
+                                 data.size() / sizeof(float));
+
+    std::vector<std::byte> result;
+    result.reserve(floats.size() * 3);
+
+    for (const float val : floats) {
+        const auto channel = static_cast<std::byte>(
+            static_cast<uint8_t>(std::clamp(val, 0.0F, 1.0F) * 255.0F));
+        result.emplace_back(channel);
+        result.emplace_back(channel);
+        result.emplace_back(channel);
+    }
+
+    return result;
+}
+};  // namespace
+
+std::expected<TextureData, std::string> GPU::readTexture(
+    const wgpu::Texture& texture, uint32_t bytes_per_pixel, bool is_bw) {
+    assert(is_bw && "colored is not supported");
+    assert(texture.GetFormat() == wgpu::TextureFormat::R32Float
+           && "r32float is the only supported format");
+
+    const auto width = texture.GetWidth();
+    const auto height = texture.GetHeight();
+
+    constexpr uint32_t kBytesPerRowAlignment = 256;
+    const uint32_t unpadded_bytes_per_row = width * bytes_per_pixel;
+    const uint32_t padded_bytes_per_row
+        = (unpadded_bytes_per_row + kBytesPerRowAlignment - 1)
+          & ~(kBytesPerRowAlignment - 1);
+
+    const auto queue = device_.GetQueue();
+    const auto encoder = device_.CreateCommandEncoder();
+    const wgpu::TexelCopyTextureInfo texture_src{
+        .texture = texture,
+        .aspect = wgpu::TextureAspect::All,
+    };
+    const wgpu::TexelCopyBufferInfo buffer_dst{
+        .layout = wgpu::TexelCopyBufferLayout{
+            .offset = 0,
+            .bytesPerRow = padded_bytes_per_row,   // <-- padded
+            .rowsPerImage = height,
+        },
+        .buffer = output_buf_,
+    };
+    const wgpu::Extent3D extent{
+        .width = width,
+        .height = height,
+        .depthOrArrayLayers = 1,
+    };
+    encoder.CopyTextureToBuffer(&texture_src, &buffer_dst, &extent);
+
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    auto wait_copy = [&]() -> wgpu::Future {
+        return queue.OnSubmittedWorkDone(
+            wgpu::CallbackMode::WaitAnyOnly,
+            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg) {
+                spdlog::debug(LOG_ID
+                              " Finished copying texture to output buffer. "
+                              "status:{} msg:'{}'",
+                              static_cast<int>(status), std::string(msg));
+            });
+    };
+
+    const auto err = getAwaiter()
+                         .addCall(std::move(wait_copy),
+                                  "Copy texture to output buffer", false)
+                         .executeAll();
+
+    if (err) {
+        return std::unexpected("copying to output buffer: " + err.value());
+    }
+
+    const auto padded_size = padded_bytes_per_row * height;
+    auto output = readOutputbuffer(padded_size, 0);
+    if (!output) {
+        return std::unexpected("reading output buffer: " + output.error());
+    }
+
+    const std::vector<uint8_t> ehe
+        = output.value() | std::views::take(10)
+          | std::views::transform(
+              [](const std::byte& val) { return static_cast<uint8_t>(val); })
+          | std::ranges::to<std::vector<uint8_t>>();
+
+    // Strip the row padding
+    std::vector<std::byte> tight;
+
+    tight.reserve(static_cast<size_t>(unpadded_bytes_per_row) * height);
+    const auto& padded = output.value();
+
+    for (uint32_t row = 0; row < height; ++row) {
+        const auto* src
+            = padded.data() + static_cast<size_t>(row) * padded_bytes_per_row;
+        tight.insert(tight.end(), src, src + unpadded_bytes_per_row);
+    }
+
+    std::vector<std::byte> rgb = FloatBwTextureToRGB(tight);
+
+    if (is_bw) {
+        tight.reserve(tight.size() * 3);
+    }
+
+    return TextureData{
+        .width = width,
+        .height = height,
+        .pixel_data = std::move(rgb),
+    };
+}
+
+std::expected<std::vector<std::byte>, std::string> GPU::readOutputbuffer(
     size_t size, size_t offset) {
     struct UserData {
         size_t offset;
         size_t size;
         wgpu::Buffer& buf;
         wgpu::Device& device;
-        std::expected<std::vector<uint8_t>, std::string> result;
+        std::expected<std::vector<std::byte>, std::string> result;
     };
     UserData user_data{.offset = offset,
                        .size = size,
@@ -604,10 +726,10 @@ std::expected<std::vector<uint8_t>, std::string> GPU::readOutputbuffer(
         }
 
         const auto* output
-            = static_cast<const float*>(user_data->buf.GetConstMappedRange(
+            = static_cast<const std::byte*>(user_data->buf.GetConstMappedRange(
                 user_data->offset, user_data->size));
 
-        user_data->result->reserve(user_data->size);
+        user_data->result->resize(user_data->size);
         std::copy_n(output, user_data->size, user_data->result->begin());
     };
 
@@ -619,8 +741,11 @@ std::expected<std::vector<uint8_t>, std::string> GPU::readOutputbuffer(
 
     auto awaiter = getAwaiter();
     awaiter.addCall(std::move(future_cb), "Reading output buffer");
+    const auto err = awaiter.executeAll();
 
-    if (auto err = awaiter.executeAll()) {
+    output_buf_.Unmap();
+
+    if (err) {
         return std::unexpected("gpu callback: " + err.value());
     }
 
@@ -785,6 +910,61 @@ std::optional<std::string> GPU::fillNonInputBuffer(
     encoder.WriteBuffer(getBuffer(binding.getBuffertype()), binding.getOffset(),
                         reinterpret_cast<const uint8_t*>(data.data()),
                         data.size_bytes());
+
+    return std::nullopt;
+}
+
+std::expected<std::vector<std::byte>, std::string> GPU::readBuffer(
+    const BufferBinding& binding) {
+    if (binding.getBuffertype() == BufferType::Output) {
+        return readOutputbuffer(binding.getSize(), binding.getOffset());
+    }
+
+    if (auto err = copyDataToOutput(binding)) {
+        return std::unexpected("copying to output: " + err.value());
+    }
+
+    return readOutputbuffer(binding.getSize(), binding.getOffset());
+}
+
+std::optional<std::string> GPU::copyDataToOutput(const BufferBinding& binding) {
+    if (binding.getBuffertype() == BufferType::Output) {
+        return std::nullopt;
+    }
+
+    const auto& buf = getBuffer(binding.getBuffertype());
+
+    if (binding.getSize() >= WCOMPUTE_MAP_READ_BUF_SIZE) {
+        throw std::out_of_range("reading large buffers is not implemented");
+    }
+
+    const auto queue = device_.GetQueue();
+    const auto encoder = device_.CreateCommandEncoder();
+
+    encoder.CopyBufferToBuffer(buf, binding.getOffset(), output_buf_, 0,
+                               binding.getSize());
+
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    auto wait = [&]() -> wgpu::Future {
+        return queue.OnSubmittedWorkDone(
+            wgpu::CallbackMode::WaitAnyOnly,
+            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg) {
+                spdlog::debug(
+                    LOG_ID
+                    " finished copying to output buffer. status: {}, msg: '{}'",
+                    static_cast<int>(status), std::string(msg));
+            });
+    };
+
+    auto err = getAwaiter()
+                   .addCall(std::move(wait),
+                            std::format("copy {} to output buf", binding))
+                   .executeAll();
+    if (err) {
+        return "wgpu: " + err.value();
+    }
 
     return std::nullopt;
 }

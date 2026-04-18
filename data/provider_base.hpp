@@ -74,7 +74,7 @@ struct IMUReading {
     // NOLINTEND(readability-magic-numbers)
 };
 
-template <int FrameCnt>
+template <size_t FrameCnt>
 struct Reading {
     std::array<std::optional<FrameBW>, FrameCnt> frames;
     std::optional<IMUReading> imu;

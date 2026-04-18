@@ -69,8 +69,8 @@ class Awaiter {
         }
     }
 
-    void addFuture(wgpu::Future&& future, std::string error_label,
-                   bool catch_errors = true);
+    Awaiter& addFuture(wgpu::Future&& future, std::string error_label,
+                       bool catch_errors = true);
 
     // Block until every enqueued future resolves or the timeout elapses.
     // Returns the first error encountered (label + detail), or

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <span>
 
+#include "anybag.hpp"
 #include "common.hpp"
 #include "gpu.hpp"
 #include "pass.hpp"
@@ -15,6 +16,7 @@ using ImageProvider
 
 struct PassFillPyramidOpts {
     ImageProvider image_getter;
+    AnyBag& storage;
 };
 
 class FillPyramidPass : public compute::GPUPass {
@@ -24,6 +26,7 @@ class FillPyramidPass : public compute::GPUPass {
                     PassFillPyramidOpts opts)
         : GPUPass(std::move(gpu)),
           image_getter_(std::move(opts.image_getter)),
+          storage_(opts.storage),
           shared_bindings_(shared_bindings) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
@@ -32,6 +35,7 @@ class FillPyramidPass : public compute::GPUPass {
 
    private:
     ImageProvider image_getter_;
+    AnyBag& storage_;
 
     GpuSharedBindings& shared_bindings_;
     wgpu::Sampler sampler_;
@@ -61,6 +65,8 @@ class FillPyramidPass : public compute::GPUPass {
     [[nodiscard]] std::optional<std::string> writeNonBaseLayers();
     [[nodiscard]] std::optional<std::string> writeLayerN(
         const wgpu::CommandEncoder& encoder, size_t lod);
+
+    void writeTexturesToStorage();
 };
 
 };  // namespace wslam

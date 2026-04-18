@@ -2,10 +2,10 @@
 
 #include "anybag.hpp"
 #include "common.hpp"
-#include "detect_corners.hpp"
 #include "fill_pyramid.hpp"
 #include "provider_base.hpp"
 #include "sensor_loader.hpp"
+#include "vizualize_data.hpp"
 
 using namespace wslam;
 
@@ -39,17 +39,29 @@ compute::Stage wslam::CreateFeatureDetectStage(
     compute::Compute& compute, GpuSharedBindings& shared_bindings,
     std::generator<std::expected<data::Reading<1>, std::string>> provider) {
     const auto gpu = compute.getGPUPtr();
-
     compute::Stage stage{"Feature detect", gpu};
-
-    StorageImageProvider img_provider{compute.getStorage()};
 
     stage.add_pass(std::make_unique<SensorLoaderPass>(std::move(provider), gpu,
                                                       compute.getStorage()));
+
+    StorageImageProvider img_provider{compute.getStorage()};
     stage.add_pass(std::make_unique<FillPyramidPass>(
         gpu, shared_bindings,
-        PassFillPyramidOpts{.image_getter = std::move(img_provider)}));
-    stage.add_pass(std::make_unique<PassDetectCorners>(gpu, shared_bindings));
+        PassFillPyramidOpts{.image_getter = std::move(img_provider),
+                            .storage = compute.getStorage()}));
+
+    std::unique_ptr<viz::ResourceProvider> resource_provider
+        = std::make_unique<viz::WgpuResourceProvider>(
+            viz::WgpuResourceProvider::Opts{
+                .storage = compute.getStorage(),
+                .gpu = gpu,
+                .lod_levels = {{0}, {1}, {2}},
+            });
+    stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
+        gpu, std::move(resource_provider)));
+
+    // stage.add_pass(std::make_unique<PassDetectCorners>(gpu,
+    // shared_bindings));
 
     return stage;
 }

@@ -10,6 +10,8 @@
 using namespace wslam::compute;
 using namespace std::chrono_literals;
 
+#define LOG_ID "[Awaiter]"
+
 std::optional<AwaiterTasks::Task> AwaiterTasks::at(size_t idx) const {
     if (idx >= future_infos_.size() || idx >= wait_infos_.size()
         || idx >= is_completion_logged_.size()) {
@@ -111,6 +113,7 @@ Awaiter& Awaiter::addCallVoid(const std::function<void()>& callback,
         device_.PushErrorScope(wgpu::ErrorFilter::Validation);
     }
 
+    spdlog::debug(LOG_ID " Started call {}", error_label);
     callback();
 
     if (catch_errors) {
@@ -133,8 +136,8 @@ Awaiter& Awaiter::addCallFuture(std::function<wgpu::Future()>&& factory,
     return *this;
 }
 
-void Awaiter::addFuture(wgpu::Future&& future, std::string error_label,
-                        bool catch_errors) {
+Awaiter& Awaiter::addFuture(wgpu::Future&& future, std::string error_label,
+                            bool catch_errors) {
     if (catch_errors) {
         device_.PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
         device_.PushErrorScope(wgpu::ErrorFilter::Validation);
@@ -142,9 +145,13 @@ void Awaiter::addFuture(wgpu::Future&& future, std::string error_label,
 
     tasks_.add(FutureInfo{.future = future, .error_label = error_label});
 
+    spdlog::debug(LOG_ID " Added future {}", error_label);
+
     if (catch_errors) {
         addErrorHandlers(std::move(error_label));
     }
+
+    return *this;
 }
 
 void Awaiter::addErrorHandlers(std::string error_label) {
@@ -272,7 +279,7 @@ std::expected<bool, std::string> Awaiter::waitAny() {
         });
 
         if (completed && !task.is_completion_logged && !is_errscope_future) {
-            spdlog::debug("[Awaiter] Future completed. Label: {}",
+            spdlog::debug(LOG_ID " Future completed. Label: {}",
                           task.future_info.error_label);
 
             task.is_completion_logged = true;
