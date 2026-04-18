@@ -305,9 +305,14 @@ std::optional<std::string> FillPyramidPass::writeLayerN(
     const wgpu::CommandEncoder& encoder, size_t lod) {
     spdlog::info(LOG_ID " Preparing to write LoD {}", lod);
 
-    const auto width = GPUConst::frame_width;
-    const auto height = GPUConst::frame_height;
+    const auto [width, height] = GPUBindingSize::getPyramidLayerDimensions(
+        {static_cast<uint8_t>(lod)});
     const auto workgroup_size = 16;
+
+    const auto groups_x
+        = static_cast<uint32_t>((width + workgroup_size - 1) / workgroup_size);
+    const auto groups_y
+        = static_cast<uint32_t>((height + workgroup_size - 1) / workgroup_size);
 
     auto write_lod = [&]() {
         wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
@@ -317,8 +322,7 @@ std::optional<std::string> FillPyramidPass::writeLayerN(
         // Because there are no bind groups for lod 0 (it is written directly),
         // LoD - 1 is the index of the actual bind group for that LoD
         pass.SetBindGroup(0, bind_groups_.at(lod - 1));
-        pass.DispatchWorkgroups(width / workgroup_size,
-                                height / workgroup_size);
+        pass.DispatchWorkgroups(groups_x, groups_y);
 
         pass.End();
     };

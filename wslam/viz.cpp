@@ -80,6 +80,7 @@ void VizGUI::drawTexture(const VizTexture& texture) {
                                    GL_RGB,   // source format
                                    GL_UNSIGNED_BYTE);
 
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     gl_texture.Upload(draw_data, GL_RGB, GL_UNSIGNED_BYTE);
 
     // Render as a fullscreen quad in the current viewport

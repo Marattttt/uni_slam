@@ -605,6 +605,8 @@ namespace {
 
 std::expected<TextureData, std::string> GPU::readTexture(
     const wgpu::Texture& texture, uint32_t bytes_per_pixel, bool is_bw) {
+    spdlog::debug(LOG_ID " Reading texture: size:{}x{}", texture.GetWidth(),
+                  texture.GetHeight());
     assert(is_bw && "colored is not supported");
     assert(texture.GetFormat() == wgpu::TextureFormat::R32Float
            && "r32float is the only supported format");
@@ -668,12 +670,6 @@ std::expected<TextureData, std::string> GPU::readTexture(
         return std::unexpected("reading output buffer: " + output.error());
     }
 
-    const std::vector<uint8_t> ehe
-        = output.value() | std::views::take(10)
-          | std::views::transform(
-              [](const std::byte& val) { return static_cast<uint8_t>(val); })
-          | std::ranges::to<std::vector<uint8_t>>();
-
     // Strip the row padding
     std::vector<std::byte> tight;
 
@@ -687,10 +683,6 @@ std::expected<TextureData, std::string> GPU::readTexture(
     }
 
     std::vector<std::byte> rgb = FloatBwTextureToRGB(tight);
-
-    if (is_bw) {
-        tight.reserve(tight.size() * 3);
-    }
 
     return TextureData{
         .width = width,
