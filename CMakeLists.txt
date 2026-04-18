@@ -14,27 +14,26 @@ configureDependencies()
 
 add_executable(pc_wslam 
     main.cpp
-    viz.cpp
 
-    compute/gpu.cpp
+    compute/awaiter.cpp
     compute/compute.cpp
+    compute/gpu.cpp
     compute/pass.cpp
     compute/pass_hellowgsl.cpp
     compute/stage.cpp
-    compute/awaiter.cpp
 
-    # data/tum_provider.cpp
     data/euroc_provider.cpp
     data/provider_base.cpp
     data/stb.cpp
+    # data/tum_provider.cpp
 
     wslam/common.cpp
-    wslam/sensor_loader.cpp
-    wslam/feature_detect.cpp
     wslam/detect_corners.cpp
+    wslam/feature_detect.cpp
     wslam/fill_pyramid.cpp
-
-    base/assert.hpp
+    wslam/sensor_loader.cpp
+    wslam/viz.cpp
+    wslam/vizualize_data.cpp
  )
 
 target_include_directories(pc_wslam PRIVATE 
