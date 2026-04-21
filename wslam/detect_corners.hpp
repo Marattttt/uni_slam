@@ -13,22 +13,27 @@
 namespace wslam {
 class PassDetectCorners : public compute::Pass {
    public:
-    struct PassParams {
-        uint32_t lod;
-    };
-
     PassDetectCorners(std::shared_ptr<compute::GPU> gpu,
-                      GpuSharedBindings& shared_bindings)
-        : Pass(std::move(gpu)), shared_bindings_(shared_bindings) {}
+                      GpuSharedBindings& shared_bindings,
+                      std::string output_label)
+        : Pass(std::move(gpu)),
+          kCornersOutputLabel(std::move(output_label)),
+          shared_bindings_(shared_bindings) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
 
    private:
+    struct PassParams {
+        uint32_t lod;
+    };
+
     const size_t kConrnersArraySize
         = static_cast<size_t>(GPUConst::frame_width) * GPUConst::frame_height
           * GPUConst::pixel_size * GPUConst::levels_of_detail;
+
+    const std::string kCornersOutputLabel;
 
     GpuSharedBindings& shared_bindings_;
     compute::GPU::BufferBindingMap buf_bindings_;
@@ -69,5 +74,7 @@ class PassDetectCorners : public compute::Pass {
 
     [[nodiscard]] std::optional<std::string> writeGPUPassParams(
         const wgpu::CommandEncoder&);
+
+    void saveOutputs();
 };
 };  // namespace wslam

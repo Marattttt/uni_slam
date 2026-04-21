@@ -65,7 +65,7 @@ std::optional<std::string> Compute::preInitialize(const PreinitOpts& opts) {
     }
 
     spdlog::debug("[Compute] initializing for hello wslam");
-    createStages(DefinedWorkflow::HelloWGSL);
+    createStages(opts.workflow);
 
     return std::nullopt;
 }

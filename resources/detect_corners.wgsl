@@ -30,8 +30,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let response = getCornerStrength(gid.xy);
 
-    let lod = params.lod;
-
     storeCornerResponse(response, gid.xy);
 }
 
@@ -55,7 +53,9 @@ fn getCornerStrength(coord: vec2<u32>) -> u32 {
         streak = max(curr, streak);
     }
 
-    return max(9u, streak);
+    let is_good = streak > N_SIMILLAR_MIN;
+
+    return select(0u, streak, is_good);
 }
 
 fn storeCornerResponse(response: u32, xy: vec2<u32>) {

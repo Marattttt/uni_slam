@@ -1,87 +1,134 @@
 #pragma once
 
-#include <any>
+#include <cassert>
 #include <optional>
 #include <print>
 #include <string>
 #include <unordered_map>
 
+#include "unique_any.hpp"
+
+#define LOG_ID "[AnyBag]"
+
+// Type-erased storage for both move-only and copyable types, with copy getter
+// only available for copyable types
 class AnyBag {
    public:
+    // Set value
     template <typename T>
     void set(const std::string& key, T&& value) {
-        data_[key] = std::forward<T>(value);
+#ifndef NDEBUG
+        std::println("Adding value to AnyBag. key:'{}', value type:{}", key,
+                     typeid(value).name());
+#endif
+        data_.insert_or_assign(key, std::forward<T>(value));
     }
 
+    // Copy. Only usable when T is copy-constructible.
+    // Use take(key) for moving values out of the storage
     template <typename T>
+        requires std::is_copy_constructible_v<T>
     std::optional<T> get(const std::string& key) const {
-        const std::optional<const T*> ptr = getPtr<T>(key);
-
-        if (!ptr) {
+        const T* p = getRawPtr<T>(key);
+        if (!p) {
             return std::nullopt;
         }
-        return *ptr.value();
+        return *p;
     }
 
+    // Copy. Only usable when T is copy-constructible.
+    // Use take(key) for moving values out of the storage
     template <typename T>
+        requires std::is_copy_constructible_v<T>
     std::optional<T> get(const std::string& key) {
-        const std::optional<T*> ptr = getPtr<T>(key);
-
-        if (!ptr) {
+        T* p = getRawPtr<T>(key);
+        if (!p) {
             return std::nullopt;
         }
-
-        return *ptr.value();
+        return *p;
     }
 
     template <typename T>
     std::optional<const T*> getPtr(const std::string& key) const {
-        auto item = data_.find(key);
-        if (item == data_.end()) {
+        const T* p = getRawPtr<T>(key);
+        if (!p) {
             return std::nullopt;
         }
-#ifndef NDEBUG
-        if (item->second.type() != typeid(T)) {
-            std::println(
-                stderr,
-                "Type mismatch for key \"{}\": stored {}, requested {}\n", key,
-                item->second.type().name(), typeid(T).name());
-        }
-#endif
-        const T* ptr = std::any_cast<T>(&item->second);
-        if (ptr == nullptr) {
-            return std::nullopt;
-        }
-
-        return {ptr};
+        return p;
     }
 
     template <typename T>
     std::optional<T*> getPtr(const std::string& key) {
-        auto item = data_.find(key);
-        if (item == data_.end()) {
+        T* p = getRawPtr<T>(key);
+        if (!p) {
             return std::nullopt;
         }
-#ifndef NDEBUG
-        if (item->second.type() != typeid(T)) {
-            std::println(
-                stderr,
-                "Type mismatch for key \"{}\": stored {}, requested {}\n", key,
-                item->second.type().name(), typeid(T).name());
-        }
-#endif
-        T* ptr = std::any_cast<T>(&data_[key]);
-        if (ptr == nullptr) {
+        return p;
+    }
+
+    // Move the stored value out. Leaves the stored object in its
+    // moved-from state
+    //
+    // The entry still exists; erase() afterwards if
+    // you want it gone
+    template <typename T>
+    std::optional<T> take(const std::string& key, bool erase_after_move = true,
+                          std::optional<T>&& replace_with = std::nullopt) {
+        T* p = getRawPtr<T>(key);
+        if (!p) {
             return std::nullopt;
         }
 
-        return {ptr};
+        const auto result = std::move(*p);
+
+        if (replace_with) {
+            set(key, replace_with.value());
+            erase_after_move = false;
+        }
+
+        if (erase_after_move) {
+            assert(erase(key) && "Delete moved-out value");
+        }
+
+        return result;
     }
 
     bool has(const std::string& key) const { return data_.contains(key); }
-
     bool erase(const std::string& key) { return data_.erase(key) > 0; }
 
    private:
-    std::unordered_map<std::string, std::any> data_;
+    std::unordered_map<std::string, Any> data_;
+
+    // Shared lookup logic. Returns nullptr on missing key or type mismatch.
+    template <typename T>
+    const T* getRawPtr(const std::string& key) const {
+        auto it = data_.find(key);
+        if (it == data_.end()) {
+            return nullptr;
+        }
+#ifndef NDEBUG
+        if (it->second.getType() != typeid(T)) {
+            std::println(
+                stderr, "Type mismatch for key \"{}\": stored {}, requested {}",
+                key, it->second.getType().name(), typeid(T).name());
+        }
+#endif
+        return AnyCast<T>(&it->second);
+    }
+
+    template <typename T>
+    T* getRawPtr(const std::string& key) {
+        auto it = data_.find(key);
+        if (it == data_.end()) {
+            return nullptr;
+        }
+#ifndef NDEBUG
+        if (it->second.getType() != typeid(T)) {
+            std::println(
+                stderr, "Type mismatch for key \"{}\": stored {}, requested {}",
+                key, it->second.getType().name(), typeid(T).name());
+        }
+#endif
+        return AnyCast<T>(&it->second);
+    }
 };

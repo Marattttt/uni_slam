@@ -6,6 +6,7 @@
 
 #include "awaiter.hpp"
 #include "common.hpp"
+#include "unique_any.hpp"
 
 using namespace wslam;
 using namespace std::chrono_literals;
@@ -15,10 +16,9 @@ namespace c = wslam::compute;
 #define LOG_ID "[Pass Detect Corners]"
 
 namespace {
-inline constexpr std::string kCornersBindings = "corners";
 inline constexpr std::string kPassParamsBinding = "pass_params";
 
-inline constexpr std::string addLodBinding(const std::string& src, size_t lod) {
+constexpr std::string addLodBinding(const std::string& src, size_t lod) {
     return src + ":lod:" + std::to_string(lod);
 }
 };  // namespace
@@ -199,7 +199,7 @@ std::optional<std::string> PassDetectCorners::initCommonBindGroup() {
     };
 
     auto buf_binding = gpu_->assignBuffersAndOffsets(
-        {{kCornersBindings,
+        {{kCornersOutputLabel,
           compute::GPU::BgBinding{.buf_type = compute::BufferType::StorageB,
                                   .bg_entry = entry}}});
 
@@ -382,6 +382,12 @@ std::optional<std::string> PassDetectCorners::execute() {
         pass.SetBindGroup(0, common_bind_group_);
         pass.SetBindGroup(1, per_pass_bind_groups_.at(i));
 
+        const auto& view_tex = shared_bindings_.getTexture(i);
+        const uint32_t w = view_tex.GetWidth();
+        const uint32_t h = view_tex.GetHeight();
+        constexpr uint32_t wg = 16;  // matches WORKGROUP_SIZE override
+        pass.DispatchWorkgroups((w + wg - 1) / wg, (h + wg - 1) / wg, 1);
+
         pass.End();
     }
 
@@ -417,6 +423,8 @@ std::optional<std::string> PassDetectCorners::execute() {
         return "unsuccessful exeuction: " + status_error;
     }
 
+    saveOutputs();
+
     return std::nullopt;
 }
 
@@ -435,4 +443,15 @@ std::optional<std::string> PassDetectCorners::writeGPUPassParams(
     }
 
     return std::nullopt;
+}
+
+void PassDetectCorners::saveOutputs() {
+    auto& binding = buf_bindings_.at(kCornersOutputLabel);
+
+    spdlog::info(LOG_ID
+                 " Saving detected corners to shared storage. binding info: {}",
+                 binding);
+
+    shared_bindings_.getStorage().set(kCornersOutputLabel,
+                                      Any{std::move(binding)});
 }

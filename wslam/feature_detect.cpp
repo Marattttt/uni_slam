@@ -2,6 +2,7 @@
 
 #include "anybag.hpp"
 #include "common.hpp"
+#include "detect_corners.hpp"
 #include "fill_pyramid.hpp"
 #include "provider_base.hpp"
 #include "sensor_loader.hpp"
@@ -50,18 +51,19 @@ compute::Stage wslam::CreateFeatureDetectStage(
         PassFillPyramidOpts{.image_getter = std::move(img_provider),
                             .storage = compute.getStorage()}));
 
+    stage.add_pass(
+        std::make_unique<PassDetectCorners>(gpu, shared_bindings, "corners"));
+
     std::unique_ptr<viz::ResourceProvider> resource_provider
         = std::make_unique<viz::WgpuResourceProvider>(
             viz::WgpuResourceProvider::Opts{
                 .storage = compute.getStorage(),
                 .gpu = gpu,
                 .lod_levels = {{0}, {1}, {2}},
+                .features_label = "corners",
             });
     stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
         gpu, std::move(resource_provider)));
-
-    // stage.add_pass(std::make_unique<PassDetectCorners>(gpu,
-    // shared_bindings));
 
     return stage;
 }

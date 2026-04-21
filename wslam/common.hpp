@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "anybag.hpp"
 #include "gpu.hpp"
 
 #ifndef WSLAM_FRAME_WIDTH
@@ -80,15 +81,19 @@ class FillPyramidPass;
 
 class GpuSharedBindings {
    public:
-    GpuSharedBindings(const std::shared_ptr<compute::GPU>& gpu) : gpu_(gpu) {}
+    GpuSharedBindings(const std::shared_ptr<compute::GPU>& gpu, AnyBag& storage)
+        : gpu_(gpu), storage(storage) {}
 
     [[nodiscard]] std::optional<std::string> initialize();
     [[nodiscard]] const wgpu::Texture& getTexture(size_t lod) const;
+    [[nodiscard]] constexpr const AnyBag& getStorage() const { return storage; }
+    [[nodiscard]] constexpr AnyBag& getStorage() { return storage; }
 
    private:
     friend FillPyramidPass;
 
     std::shared_ptr<compute::GPU> gpu_;
+    AnyBag& storage;
 
     std::optional<std::string> initTextures();
     std::optional<std::string> initSrcTexture(compute::Awaiter& awaiter);

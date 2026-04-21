@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <flat_map>
+#include <numeric>
 #include <vector>
 
 #include "common.hpp"
@@ -78,7 +79,7 @@ WgpuResourceProvider::GetResources() {
 
         if (extracted) {
             for (const auto& [lod, features] : extracted.value().features) {
-                result.at(lod).features = std::move(features);
+                result[lod].features = std::move(features);
             }
 
         } else {
