@@ -29,17 +29,20 @@ BOOST_PREFIX="$HOME/opt/boost"
 if [ "$(uname)" == "Linux" ]; then
     ./b2 -j${WHEEL_BUILD_JOBS} install --prefix=${BOOST_PREFIX} -d0 --with-graph \
         --with-move --with-optional --with-program_options --with-random \
-        --with-serialization --with-smart_ptr --with-timer --with-chrono
+        --with-serialization --with-smart_ptr --with-timer --with-chrono \
+        --with-filesystem
 elif [ "$(uname)" == "Darwin" ]; then
     ./b2 -j${WHEEL_BUILD_JOBS} install --prefix=${BOOST_PREFIX} -d0 --with-graph \
         --with-move --with-optional --with-program_options --with-random \
         --with-serialization --with-smart_ptr --with-timer --with-chrono \
+        --with-filesystem \
         architecture=arm \
         cxxflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" \
         linkflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
     ./b2 -j${WHEEL_BUILD_JOBS} install --prefix=${BOOST_PREFIX}/x86 -d0 --with-graph \
         --with-move --with-optional --with-program_options --with-random \
         --with-serialization --with-smart_ptr --with-timer --with-chrono \
+        --with-filesystem \
         architecture=x86 \
         cxxflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" \
         linkflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
