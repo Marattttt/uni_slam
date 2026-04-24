@@ -21,6 +21,8 @@
 #include <gtsam/linear/VectorValues.h>
 #include <gtsam_unstable/linear/LinearEquality.h>
 
+#include <boost/range/iterator_range.hpp>
+
 using namespace std;
 using namespace gtsam;
 
