@@ -25,6 +25,16 @@ jobs:
             cibw_python_version: 312
             platform_id: manylinux_x86_64
             manylinux_image: manylinux2014
+          - os: ubuntu-latest
+            python_version: "3.13"
+            cibw_python_version: 313
+            platform_id: manylinux_x86_64
+            manylinux_image: manylinux2014
+          - os: ubuntu-latest
+            python_version: "3.14"
+            cibw_python_version: 314
+            platform_id: manylinux_x86_64
+            manylinux_image: manylinux2014
           - os: ubuntu-24.04-arm
             python_version: "3.11"
             cibw_python_version: 311
@@ -33,6 +43,16 @@ jobs:
           - os: ubuntu-24.04-arm
             python_version: "3.12"
             cibw_python_version: 312
+            platform_id: manylinux_aarch64
+            manylinux_image: manylinux2014
+          - os: ubuntu-24.04-arm
+            python_version: "3.13"
+            cibw_python_version: 313
+            platform_id: manylinux_aarch64
+            manylinux_image: manylinux2014
+          - os: ubuntu-24.04-arm
+            python_version: "3.14"
+            cibw_python_version: 314
             platform_id: manylinux_aarch64
             manylinux_image: manylinux2014
           - os: macos-latest
@@ -42,6 +62,14 @@ jobs:
           - os: macos-latest
             python_version: "3.12"
             cibw_python_version: 312
+            platform_id: macosx_universal2
+          - os: macos-latest
+            python_version: "3.13"
+            cibw_python_version: 313
+            platform_id: macosx_universal2
+          - os: macos-latest
+            python_version: "3.14"
+            cibw_python_version: 314
             platform_id: macosx_universal2
 
     steps:
