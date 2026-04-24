@@ -71,7 +71,7 @@ jobs:
 
       - name: Run CMake
         run: |
-          cmake -B build -G Ninja -DGTSAM_BUILD_PYTHON=1 -DGTSAM_PYTHON_VERSION=${{ matrix.python_version }}
+          cmake -B build -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DGTSAM_BUILD_PYTHON=1 -DGTSAM_PYTHON_VERSION=${{ matrix.python_version }}
 
       - name: Uninstall Boost (MacOS)
         if: runner.os == 'macOS'
