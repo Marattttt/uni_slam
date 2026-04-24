@@ -23,13 +23,12 @@ endif()
 
 # Store these in variables so they are automatically replicated in GTSAMConfig.cmake and such.
 set(BOOST_FIND_MINIMUM_VERSION 1.65)
-set(BOOST_FIND_MINIMUM_COMPONENTS serialization system filesystem thread program_options date_time timer chrono regex)
+set(BOOST_FIND_MINIMUM_COMPONENTS serialization filesystem program_options timer chrono)
 
 find_package(Boost ${BOOST_FIND_MINIMUM_VERSION} COMPONENTS ${BOOST_FIND_MINIMUM_COMPONENTS})
 
 # Required components
-if(NOT Boost_SERIALIZATION_LIBRARY OR NOT Boost_SYSTEM_LIBRARY OR NOT Boost_FILESYSTEM_LIBRARY OR
-    NOT Boost_THREAD_LIBRARY OR NOT Boost_DATE_TIME_LIBRARY)
+if(NOT Boost_SERIALIZATION_LIBRARY OR NOT Boost_FILESYSTEM_LIBRARY)
   message(FATAL_ERROR "Missing required Boost components >= v1.65, please install/upgrade Boost or configure your search paths.")
 endif()
 
@@ -37,11 +36,7 @@ option(GTSAM_DISABLE_NEW_TIMERS "Disables using Boost.chrono for timing" OFF)
 # Allow for not using the timer libraries on boost < 1.48 (GTSAM timing code falls back to old timer library)
 set(GTSAM_BOOST_LIBRARIES
   Boost::serialization
-  Boost::system
   Boost::filesystem
-  Boost::thread
-  Boost::date_time
-  Boost::regex
 )
 if (GTSAM_DISABLE_NEW_TIMERS)
     message("WARNING:  GTSAM timing instrumentation manually disabled")
