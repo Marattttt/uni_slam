@@ -32,24 +32,14 @@ if [ "$(uname)" == "Linux" ]; then
         --with-serialization --with-smart_ptr --with-timer --with-chrono \
         --with-filesystem
 elif [ "$(uname)" == "Darwin" ]; then
+    BOOST_ARCH="${GTSAM_BOOST_ARCH:-arm}"
     ./b2 -j${WHEEL_BUILD_JOBS} install --prefix=${BOOST_PREFIX} -d0 --with-graph \
         --with-move --with-optional --with-program_options --with-random \
         --with-serialization --with-smart_ptr --with-timer --with-chrono \
         --with-filesystem \
-        architecture=arm \
+        architecture=${BOOST_ARCH} \
         cxxflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" \
         linkflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
-    ./b2 -j${WHEEL_BUILD_JOBS} install --prefix=${BOOST_PREFIX}/x86 -d0 --with-graph \
-        --with-move --with-optional --with-program_options --with-random \
-        --with-serialization --with-smart_ptr --with-timer --with-chrono \
-        --with-filesystem \
-        architecture=x86 \
-        cxxflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" \
-        linkflags="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
-    for dylib in ${BOOST_PREFIX}/lib/*.dylib; do
-        lipo -create -output "$dylib" "$dylib" "${BOOST_PREFIX}/x86/lib/$(basename "$dylib")"
-    done
-    rm -r ${BOOST_PREFIX}/x86
 fi
 cd ..
 
@@ -74,7 +64,7 @@ cmake $PROJECT_DIR \
     -B build \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
-    -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+    -DCMAKE_OSX_ARCHITECTURES="${GTSAM_OSX_ARCHITECTURES:-arm64;x86_64}" \
     -DGTSAM_BUILD_TESTS=OFF \
     -DGTSAM_BUILD_UNSTABLE=${GTSAM_BUILD_UNSTABLE:-ON} \
     -DGTSAM_USE_QUATERNIONS=OFF \
