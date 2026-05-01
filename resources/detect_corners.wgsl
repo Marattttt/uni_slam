@@ -19,8 +19,6 @@ const CIRCLE_Y = array<i32, 16>(-3, -3, -2, -1, 0, 1, 2, 3, 3, 3, 2, 1, 0, -1, -
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let total_threads = 256u * /* num_workgroups — match dispatch */ 256u;
-
     let w = textureDimensions(image).x;
     let h = textureDimensions(image).y;
     let x = gid.x;
@@ -28,9 +26,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if x >= w || y >= h { return; }
 
+    if x == 0 && y == 0 {
+        writeLodDimensions(params.lod);
+    }
+
     let response = getCornerStrength(gid.xy);
 
     storeCornerResponse(response, gid.xy);
+}
+
+fn writeLodDimensions(lod: u32) {
+    let startIdx = SRC_IMAGE_H * SRC_IMAGE_W * lod;
+    let dims = textureDimensions(image);
+    corners[startIdx] = dims.x;
+    corners[startIdx + 1] = dims.y;
 }
 
 fn getCornerStrength(coord: vec2<u32>) -> u32 {
@@ -62,10 +71,11 @@ fn storeCornerResponse(response: u32, xy: vec2<u32>) {
     let dimensions = textureDimensions(image);
     let lod = params.lod;
 
+    const dims_offset = 2u;
     let lod_offset = lod * (SRC_IMAGE_W * SRC_IMAGE_H);
     let pixel_offset = xy.x + xy.y * dimensions.x;
 
-    let corner_idx: u32 = lod_offset + pixel_offset;
+    let corner_idx: u32 = dims_offset + lod_offset + pixel_offset;
 
     corners[corner_idx] = response;
 }

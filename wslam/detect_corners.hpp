@@ -75,6 +75,6 @@ class PassDetectCorners : public compute::Pass {
     [[nodiscard]] std::optional<std::string> writeGPUPassParams(
         const wgpu::CommandEncoder&);
 
-    void saveOutputs();
+    void saveOutputBindings();
 };
 };  // namespace wslam

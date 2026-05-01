@@ -5,3 +5,5 @@
 - implement zero-ing out memory after use in gpu buffer bindings 
     - may be only needed in debug builds
 - implement debug logs for assigning / unassigning gpu buffer bindings
+- this whole project likely needs a meaningful rewrite to allow for unit testing of individual passes
+

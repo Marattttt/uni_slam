@@ -26,6 +26,31 @@ using namespace std::chrono_literals;
 #define LOG_ID "[GPU]"
 constexpr std::string getLogId() { return LOG_ID; }
 
+wgpu::BufferBindingType wslam::compute::BufferTypeToWgpuBindingType(
+    BufferType bt) {
+    using BT = BufferType;
+    using WBG = wgpu::BufferBindingType;
+
+    switch (bt) {
+        case BT::StorageA:
+        case BT::StorageB:
+        case BT::SharedStorage:
+            return WBG::Storage;
+
+        case BT::Input:
+        case BT::Output:
+            return WBG::Undefined;
+
+        case BT::Uniform:
+            return WBG::Uniform;
+
+        case BT::COUNT:
+            assert(false && "Invlaid buffer type");
+    }
+
+    std::unreachable();
+}
+
 void BufferBinding::swap(BufferBinding& buf2) noexcept {
     gpu_ = {buf2.gpu_};
     buf_type_ = {buf2.buf_type_};
@@ -79,7 +104,7 @@ size_t GPU::getMinBufferAlignment(BufferType buftype) const {
 }
 
 std::expected<GPU::BufferBindingMap, std::string> GPU::assignBuffersAndOffsets(
-    BindGroupBindings bindings) {
+    BindGroupBindings&& bindings) {
     std::expected<GPU::BufferBindingMap, std::string> result{};
 
     auto handle = [&](const GPU::BindingKey& key, wgpu::BindGroupEntry& entry,

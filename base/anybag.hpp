@@ -8,6 +8,11 @@
 
 #include "unique_any.hpp"
 
+// Save old LOG_ID (which is unlikely)
+#ifdef LOG_ID
+#define ANYBAG_OLD_LOG_ID LOG_ID
+#endif
+
 #define LOG_ID "[AnyBag]"
 
 // Type-erased storage for both move-only and copyable types, with copy getter
@@ -72,25 +77,20 @@ class AnyBag {
     // The entry still exists; erase() afterwards if
     // you want it gone
     template <typename T>
-    std::optional<T> take(const std::string& key, bool erase_after_move = true,
-                          std::optional<T>&& replace_with = std::nullopt) {
+    std::optional<T> take(const std::string& key,
+                          bool erase_after_move = true) {
         T* p = getRawPtr<T>(key);
         if (!p) {
             return std::nullopt;
         }
 
-        const auto result = std::move(*p);
-
-        if (replace_with) {
-            set(key, replace_with.value());
-            erase_after_move = false;
-        }
+        auto result = std::move(*p);
 
         if (erase_after_move) {
             assert(erase(key) && "Delete moved-out value");
         }
 
-        return result;
+        return std::move(result);
     }
 
     bool has(const std::string& key) const { return data_.contains(key); }
@@ -132,3 +132,11 @@ class AnyBag {
         return AnyCast<T>(&it->second);
     }
 };
+
+#undef LOG_ID
+
+// Restore old LOG_ID if it was saved
+#ifdef ANYBAG_OLD_LOG_ID
+#define LOG_ID ANYBAG_OLD_LOG_ID
+#undef ANYBAG_OLD_LOG_ID
+#endif

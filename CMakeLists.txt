@@ -28,6 +28,7 @@ add_executable(pc_wslam
     # data/tum_provider.cpp
 
     wslam/common.cpp
+    wslam/cull_corners.cpp
     wslam/detect_corners.cpp
     wslam/feature_detect.cpp
     wslam/fill_pyramid.cpp

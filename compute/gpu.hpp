@@ -44,6 +44,8 @@ enum class BufferType : uint8_t {
     COUNT
 };
 
+wgpu::BufferBindingType BufferTypeToWgpuBindingType(BufferType bt);
+
 // Stores RGB data of an image
 struct TextureData {
     uint32_t width;
@@ -133,7 +135,7 @@ class GPU {
     // Bind group is valid only during the lifetime of its binding as space will
     // be available for reuse after its lifetime ends
     [[nodiscard]] std::expected<BufferBindingMap, std::string>
-    assignBuffersAndOffsets(BindGroupBindings bindings);
+    assignBuffersAndOffsets(BindGroupBindings&& bindings);
 
     [[nodiscard]] const wgpu::Buffer& getBuffer(BufferType buftype) const;
     [[nodiscard]] Awaiter getAwaiter() const;

@@ -54,6 +54,8 @@ std::optional<std::string> PassDetectCorners::initialize() {
         return "compute pipeline: " + err.value();
     }
 
+    saveOutputBindings();
+
     return std::nullopt;
 }
 
@@ -130,8 +132,8 @@ std::optional<std::string> PassDetectCorners::initCornersBindGroupLayout(
     compute::Awaiter& awaiter) {
     spdlog::debug(getId() + " initializing bind group layout for corners");
 
-    const std::vector<wgpu::BindGroupLayoutEntry> bindings{
-        {
+    const std::array<wgpu::BindGroupLayoutEntry, 1> bindings{
+        wgpu::BindGroupLayoutEntry{
             .binding = 0,
             .visibility = wgpu::ShaderStage::Compute,
             .buffer = {.type = wgpu::BufferBindingType::Storage},
@@ -348,6 +350,16 @@ std::optional<std::string> PassDetectCorners::initComputePipeline() {
         [](const auto& err) { return "awaiter: " + err; });
 }
 
+void PassDetectCorners::saveOutputBindings() {
+    auto& binding = buf_bindings_.at(kCornersOutputLabel);
+
+    spdlog::info(LOG_ID
+                 " Saving detected corners to shared storage. binding info: {}",
+                 binding);
+
+    shared_bindings_.getStorage().set(kCornersOutputLabel,
+                                      Any{std::move(binding)});
+}
 std::optional<std::string> PassDetectCorners::execute() {
     spdlog::info(LOG_ID " Executing");
 
@@ -423,7 +435,7 @@ std::optional<std::string> PassDetectCorners::execute() {
         return "unsuccessful exeuction: " + status_error;
     }
 
-    saveOutputs();
+    saveOutputBindings();
 
     return std::nullopt;
 }
@@ -443,15 +455,4 @@ std::optional<std::string> PassDetectCorners::writeGPUPassParams(
     }
 
     return std::nullopt;
-}
-
-void PassDetectCorners::saveOutputs() {
-    auto& binding = buf_bindings_.at(kCornersOutputLabel);
-
-    spdlog::info(LOG_ID
-                 " Saving detected corners to shared storage. binding info: {}",
-                 binding);
-
-    shared_bindings_.getStorage().set(kCornersOutputLabel,
-                                      Any{std::move(binding)});
 }

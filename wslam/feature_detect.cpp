@@ -2,6 +2,7 @@
 
 #include "anybag.hpp"
 #include "common.hpp"
+#include "cull_corners.hpp"
 #include "detect_corners.hpp"
 #include "fill_pyramid.hpp"
 #include "provider_base.hpp"
@@ -53,6 +54,9 @@ compute::Stage wslam::CreateFeatureDetectStage(
 
     stage.add_pass(
         std::make_unique<PassDetectCorners>(gpu, shared_bindings, "corners"));
+
+    stage.add_pass(std::make_unique<CullCornersPass>(gpu, shared_bindings,
+                                                     "corners", "corners"));
 
     std::unique_ptr<viz::ResourceProvider> resource_provider
         = std::make_unique<viz::WgpuResourceProvider>(
