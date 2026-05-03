@@ -435,8 +435,6 @@ std::optional<std::string> PassDetectCorners::execute() {
         return "unsuccessful exeuction: " + status_error;
     }
 
-    saveOutputBindings();
-
     return std::nullopt;
 }
 
