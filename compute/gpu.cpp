@@ -155,7 +155,8 @@ const wgpu::Buffer& GPU::getBuffer(BufferType buftype) const {
             buf = &shared_buf_;
             break;
         case BufferType::COUNT:
-            assert(false && "Invalid buffer type COUNT");
+            spdlog::error(LOG_ID " Invalid buffer type COUNT");
+            std::abort();
     }
 
     assert(buf != nullptr);
