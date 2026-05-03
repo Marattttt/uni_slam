@@ -33,11 +33,14 @@ class CullCornersPass : public compute::Pass {
     static constexpr std::string_view kVerticalBindingLabel = "vertical";
     static constexpr std::string_view kShaderModulePath = "cull_corners.wgsl";
 
+    // Sholud be better for memory access, not tested as of writing
+    static constexpr std::array<uint32_t, 3> kWgSize = {64, 1, 1};
+
     const std::string kCulledCornersOutputLabel;
     const std::string kInputCornersLabel;
 
     GpuSharedBindings& shared_bindings_;
-    compute::GPU::BufferBindingMap buf_bindings_;
+    std::optional<compute::BufferBinding> vertical_binding_;
 
     struct PassGpuData {
         wgpu::BindGroup bg;
@@ -49,12 +52,15 @@ class CullCornersPass : public compute::Pass {
     std::unordered_map<Workflow, PassGpuData> gpu_data_;
     wgpu::BindGroupLayout bind_group_layout_;
     wgpu::PipelineLayout compute_pipeline_layout_;
-    std::array<wgpu::ConstantEntry, 2> compute_constants_;
+    std::array<wgpu::ConstantEntry, 4> compute_constants_;
 
     void initGpuDataEntries();
     void initComputeConstants();
     [[nodiscard]] std::optional<std::string> initBindingLayout();
     [[nodiscard]] std::optional<std::string> initBindGroups();
     [[nodiscard]] std::optional<std::string> initComputePipeline();
+
+    void writeWorkflowPass(Workflow workflow,
+                           const wgpu::CommandEncoder& encoder) const;
 };
 };  // namespace wslam

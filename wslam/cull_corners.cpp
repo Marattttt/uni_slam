@@ -3,6 +3,10 @@
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>
 
+#include <algorithm>
+#include <cmath>
+#include <utility>
+
 #include "awaiter.hpp"
 #include "common.hpp"
 #include "gpu.hpp"
@@ -80,6 +84,7 @@ std::optional<std::string> CullCornersPass::initBindingLayout() {
         .executeAll();
 }
 
+// TODO: this needs rewriting
 std::optional<std::string> CullCornersPass::initBindGroups() {
     spdlog::info(LOG_ID " Initializing bind groups");
 
@@ -91,10 +96,17 @@ std::optional<std::string> CullCornersPass::initBindGroups() {
         return "could not get input corner binding";
     }
 
+    shared_bindings_.getStorage().set(kCulledCornersOutputLabel,
+                                      std::move(inputBinding.value()));
+
     using BT = compute::BufferType;
 
-    const auto unculled = std::move(inputBinding.value());
-    const auto unculled_buf_type = unculled.getBuffertype();
+    const auto* unculled
+        = shared_bindings_.getStorage()
+              .getPtr<compute::BufferBinding>(kCulledCornersOutputLabel)
+              .value();
+
+    const auto unculled_buf_type = unculled->getBuffertype();
     assert(unculled_buf_type == BT::StorageA
            || unculled_buf_type == BT::StorageB);
 
@@ -102,7 +114,7 @@ std::optional<std::string> CullCornersPass::initBindGroups() {
     // second pass
     const auto horizontal_buftype
         = unculled_buf_type == BT::StorageA ? BT::StorageB : BT::StorageA;
-    const auto binding_size = unculled.getSize();
+    const auto binding_size = unculled->getSize();
 
     wgpu::BindGroupEntry temp_bg_entry{
         .binding = 0,
@@ -115,20 +127,21 @@ std::optional<std::string> CullCornersPass::initBindGroups() {
                                 .bg_entry = temp_bg_entry},
     }});
 
-    if (temp_binding) {
-        buf_bindings_.merge(std::move(temp_binding.value()));
-    } else {
+    if (!temp_binding) {
         return "assigning buffer region for vertical buffer: "
                + temp_binding.error();
     }
+
+    vertical_binding_ = std::move(
+        temp_binding.value().at(std::string(kVerticalBindingLabel)));
 
     // HORIZONTAL PASS
     spdlog::debug(LOG_ID " Initializing bind group for horizontal pass");
     const std::array<wgpu::BindGroupEntry, 2> horizontal_entries{
         wgpu::BindGroupEntry{
             .binding = 0,
-            .buffer = gpu_->getBuffer(unculled.getBuffertype()),
-            .offset = unculled.getOffset(),
+            .buffer = gpu_->getBuffer(unculled->getBuffertype()),
+            .offset = unculled->getOffset(),
             .size = binding_size},
         wgpu::BindGroupEntry{
             .binding = 1,
@@ -190,13 +203,12 @@ std::optional<std::string> CullCornersPass::initBindGroups() {
 }
 
 void CullCornersPass::initComputeConstants() {
-    compute_constants_.at(0) = wgpu::ConstantEntry{
-        .key = "SRC_IMAGE_W",
-        .value = GPUConst::frame_width,
-    };
-    compute_constants_.at(1) = wgpu::ConstantEntry{
-        .key = "SRC_IMAGE_H",
-        .value = GPUConst::frame_height,
+    compute_constants_ = {
+        wgpu::ConstantEntry{.key = "SRC_IMAGE_W",
+                            .value = GPUConst::frame_width},
+        {.key = "SRC_IMAGE_H", .value = GPUConst::frame_height},
+        {.key = "WG_SIZE_X", .value = kWgSize.at(0)},
+        {.key = "WG_SIZE_Y", .value = kWgSize.at(1)},
     };
 }
 
@@ -273,6 +285,97 @@ std::optional<std::string> CullCornersPass::initComputePipeline() {
 }
 
 std::optional<std::string> CullCornersPass::execute() {
-    spdlog::info(LOG_ID " execute not implemented");
-    std::unreachable();
+    spdlog::info(LOG_ID " Executing");
+
+    const auto device = gpu_->getDevice();
+    const auto queue = device.GetQueue();
+    const auto encoder = device.CreateCommandEncoder();
+
+    writeWorkflowPass(Workflow::Horizontal, encoder);
+    writeWorkflowPass(Workflow::Vertical, encoder);
+
+    const auto commands = encoder.Finish();
+
+    queue.Submit(1, &commands);
+
+    std::string errormsg;
+
+    auto wait_submission = [&] -> wgpu::Future {
+        return queue.OnSubmittedWorkDone(
+            wgpu::CallbackMode::WaitAnyOnly,
+            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView sv,
+               std::string* err) {
+                spdlog::info(LOG_ID " gpu work done. status:{} msg:'{}'",
+                             static_cast<int>(status),
+                             static_cast<std::string>(sv));
+                if (status != wgpu::QueueWorkDoneStatus::Success) {
+                    *err = std::string(sv);
+                }
+            },
+            &errormsg);
+    };
+
+    const auto err
+        = gpu_->getAwaiter()
+              .addCall(std::move(wait_submission), "Wait GPU work", false)
+              .executeAll();
+
+    if (err) {
+        spdlog::error(LOG_ID "Error executing gpu pass: {}", errormsg);
+        return "executing: " + err.value();
+    }
+
+    const auto* binding
+        = shared_bindings_.getStorage()
+              .getPtr<compute::BufferBinding>(kCulledCornersOutputLabel)
+              .value();
+    const auto data = gpu_->readBuffer(*binding);
+
+    if (!data) {
+        return "reading culled data: " + data.error();
+    }
+
+    const auto nonzero = std::ranges::count_if(
+        data.value(), [](const auto x) { return static_cast<int>(x) > 0; });
+
+    spdlog::info(LOG_ID " Reading culled data. size:{} non-zero entries:{}",
+                 data.value().size(), nonzero);
+
+    return std::nullopt;
+}
+
+namespace {
+std::array<uint32_t, 3> getDispatchSize(uint32_t wg_x, uint32_t wg_y) {
+    const auto x = std::ceil(GPUConst::frame_width / wg_x);
+    const auto y = std::ceil(GPUConst::frame_width / wg_y);
+    const auto z = GPUConst::levels_of_detail;
+
+    return {static_cast<uint32_t>(x), static_cast<uint32_t>(y), z};
+}
+};  // namespace
+
+void CullCornersPass::writeWorkflowPass(
+    Workflow workflow, const wgpu::CommandEncoder& encoder) const {
+    const auto pass = encoder.BeginComputePass();
+
+    const std::string label = std::invoke([workflow] {
+        switch (workflow) {
+            case Workflow::Vertical:
+                return "vertical";
+            case Workflow::Horizontal:
+                return "horizontal";
+        }
+        std::unreachable();
+    });
+
+    const auto& data = gpu_data_.at(workflow);
+
+    pass.SetLabel({label});
+    pass.SetPipeline(data.pipeline);
+    pass.SetBindGroup(0, data.bg);
+
+    auto dispatch = getDispatchSize(kWgSize.at(0), kWgSize.at(1));
+    pass.DispatchWorkgroups(dispatch.at(0), dispatch.at(1), dispatch.at(2));
+
+    pass.End();
 }

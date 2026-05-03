@@ -7,11 +7,13 @@ const WORKFLOW_SCALE_SPACE = 3;
 
 override SRC_IMAGE_W: u32;
 override SRC_IMAGE_H: u32;
-override SCALE_FACTOR: f32;
+
+override WG_SIZE_X: u32;
+override WG_SIZE_Y: u32;
 
 override REGION_SIZE = 3u;
 
-@compute @workgroup_size(4, 4, 4) 
+@compute @workgroup_size(WG_SIZE_X, WG_SIZE_Y, 1) 
 fn main_horizontal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let lod = gid.z;
 
@@ -47,7 +49,7 @@ fn step_horizontal() -> u32 {
     return 1;
 }
 
-@compute @workgroup_size(4, 4, 4)
+@compute @workgroup_size(WG_SIZE_X, WG_SIZE_Y, 1)
 fn main_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
     let lod = gid.z;
     if lod > get_max_lod() { return; }
