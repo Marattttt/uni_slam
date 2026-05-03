@@ -5,12 +5,13 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED 23)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Add the directory to the search list
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# Now you can just use the filename (no .cmake needed)
 include(configureDependencies)
 configureDependencies()
+
+option(LOG_AWAITER_CALLS "Enable logging about future adding / completion in compute::Awaiter" OFF)
+option(ENABLE_SANITIZERS TRUE)
 
 add_executable(pc_wslam 
     main.cpp
@@ -43,11 +44,10 @@ target_include_directories(pc_wslam PRIVATE
     base
 )
 
+
 target_compile_options(pc_wslam PRIVATE
     -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
 )
-
-option(ENABLE_SANITIZERS TRUE)
 
 if (ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(pc_wslam PRIVATE
@@ -58,6 +58,10 @@ if (ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_link_options(pc_wslam PRIVATE
         -fsanitize=address,undefined
     )
+endif()
+
+if(LOG_AWAITER_CALLS) 
+    target_compile_definitions(pc_wslam PRIVATE LOG_AWAITER_CALLS)
 endif()
 
 target_link_libraries(pc_wslam 

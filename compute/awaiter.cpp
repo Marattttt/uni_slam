@@ -113,7 +113,10 @@ Awaiter& Awaiter::addCallVoid(const std::function<void()>& callback,
         device_.PushErrorScope(wgpu::ErrorFilter::Validation);
     }
 
+#ifdef LOG_AWAITER_CALLS
     spdlog::debug(LOG_ID " Started call {}", error_label);
+#endif
+
     callback();
 
     if (catch_errors) {
@@ -145,7 +148,9 @@ Awaiter& Awaiter::addFuture(wgpu::Future&& future, std::string error_label,
 
     tasks_.add(FutureInfo{.future = future, .error_label = error_label});
 
+#ifdef LOG_AWAITER_CALLS
     spdlog::debug(LOG_ID " Added future {}", error_label);
+#endif
 
     if (catch_errors) {
         addErrorHandlers(std::move(error_label));
@@ -274,6 +279,7 @@ std::expected<bool, std::string> Awaiter::waitAny() {
 
         are_all_completed &= completed;
 
+#ifdef LOG_AWAITER_CALLS
         bool is_errscope_future = std::invoke([&task]() {
             return task.future_info.error_label.contains("errscope");
         });
@@ -285,6 +291,7 @@ std::expected<bool, std::string> Awaiter::waitAny() {
             task.is_completion_logged = true;
             tasks_.set(i, task);
         }
+#endif
     }
 
     return are_all_completed;
