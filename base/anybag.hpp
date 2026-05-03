@@ -107,6 +107,8 @@ class AnyBag {
             return nullptr;
         }
 #ifndef NDEBUG
+        std::println("Getting value from anybag. Key: {}, value type: {}", key,
+                     it->second.getType().name());
         if (it->second.getType() != typeid(T)) {
             std::println(
                 stderr, "Type mismatch for key \"{}\": stored {}, requested {}",
@@ -123,6 +125,8 @@ class AnyBag {
             return nullptr;
         }
 #ifndef NDEBUG
+        std::println("Getting value from anybag. Key: {}, value type: {}", key,
+                     it->second.getType().name());
         if (it->second.getType() != typeid(T)) {
             std::println(
                 stderr, "Type mismatch for key \"{}\": stored {}, requested {}",
