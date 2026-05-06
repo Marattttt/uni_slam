@@ -1,38 +1,17 @@
 #include "vizualize_data.hpp"
 
-#include <algorithm>
 #include <cstring>
 #include <flat_map>
-#include <numeric>
+#include <memory>
 #include <vector>
 
 #include "common.hpp"
+#include "models.hpp"
 
 using namespace wslam;
 using namespace wslam::viz;
 
 #define LOG_ID "[Wgpu Resource Provider]"
-
-namespace {
-std::vector<uint32_t> bytesToUint32(std::span<const std::byte> bytes) {
-    if (bytes.size() % 4 != 0) {
-        throw std::invalid_argument("size must be multiple of 4");
-    }
-
-    std::vector<uint32_t> result(bytes.size() / 4);
-
-    for (size_t i = 0; i < result.size(); ++i) {
-        std::array<std::byte, 4> chunk;
-        auto to_copy = bytes.subspan(i * 4, 4);
-
-        std::ranges::copy(to_copy, chunk.begin());
-
-        result[i] = std::bit_cast<uint32_t>(chunk);
-    }
-
-    return result;
-}
-};  // namespace
 
 std::expected<WgpuResourceProvider::ResourceVec, std::string>
 WgpuResourceProvider::GetResources() {
@@ -60,7 +39,6 @@ WgpuResourceProvider::GetResources() {
         }
     }
 
-    // GET FEATURES
     if (features_label_) {
         const auto features_bind
             = storage_.getPtr<compute::BufferBinding>(features_label_.value());
@@ -74,17 +52,10 @@ WgpuResourceProvider::GetResources() {
                                    + data.error());
         }
 
-        const auto features_data = bytesToUint32(data.value());
-        auto extracted = impl::ExtractFeaturePerLod(features_data);
+        auto extracted = impl::ExtractFeaturePerLod(data.value());
 
-        if (extracted) {
-            for (const auto& [lod, features] : extracted.value().features) {
-                result[lod].features = std::move(features);
-            }
-
-        } else {
-            return std::unexpected(
-                std::format("getting features: {}", extracted.error()));
+        for (const auto& [lod, features] : extracted) {
+            result[lod].features = std::move(features);
         }
     }
 
@@ -108,40 +79,33 @@ WgpuResourceProvider::loadTexture(const std::string& name) {
     return texture_data;
 }
 
-std::expected<impl::FeaturesPerLod, std::string> impl::ExtractFeaturePerLod(
-    const std::vector<uint32_t>& data) {
-    const auto width = GPUConst::frame_width;
-    const auto height = GPUConst::frame_height;
+impl::FeaturesPerLod impl::ExtractFeaturePerLod(
+    std::span<const std::byte> data) {
+    using Block = gpumodels::FeaturesBlock<GPUConst::frame_width,
+                                           GPUConst::frame_height>;
 
-    const std::span data_sp(data);
+    const size_t blocks_cnt = data.size_bytes() / sizeof(Block);
+
+    const std::span<const Block> blocks(
+        reinterpret_cast<const Block*>(data.data()), blocks_cnt);
 
     FeaturesPerLod result;
 
-    for (uint8_t lod = 0; lod < GPUConst::levels_of_detail; ++lod) {
-        const auto offset = lod * width * height;
-        const auto segment
-            = data_sp.subspan(offset, static_cast<size_t>(width) * height);
-
-        // Likely cheaper than to reallocate
-        const auto feature_count = static_cast<size_t>(
-            std::ranges::count_if(segment, [](uint32_t el) { return el > 0; }));
-
+    for (size_t i = 0; i < blocks.size(); i++) {
+        const auto lod = blocks[i];
         std::vector<Feature> features;
-        features.reserve(feature_count);
 
-        for (size_t i = 0; i < segment.size(); ++i) {
-            if (segment[i] == 0) {
-                continue;
+        for (size_t x = 0; x < lod.width; x++) {
+            for (size_t y = 0; y < lod.height; y++) {
+                const auto str = lod[x, y];
+                if (str > 0) {
+                    features.emplace_back(x, y, str);
+                }
             }
-
-            const auto x = static_cast<uint32_t>(i % width);
-            const auto y = static_cast<uint32_t>(i / width);
-            const auto strength = static_cast<uint32_t>(segment[i]);
-
-            features.emplace_back(x, y, strength);
         }
 
-        result.features.insert({LOD{lod}, std::move(features)});
+        result.insert_or_assign(LOD{static_cast<uint8_t>(i)},
+                                std::move(features));
     }
 
     return result;
@@ -168,6 +132,25 @@ std::optional<std::string> VisualizeDataPass::execute() {
         spdlog::warn(LOG_ID " No resources to visualize");
         return std::nullopt;
     }
+
+#ifndef NDEBUG
+    const auto& res = resources.value();
+    for (size_t lod = 0; lod < res.size(); lod++) {
+        spdlog::debug(LOG_ID " Resources for lod:{}: total_features:{}", lod,
+                      res.at(lod).features.value_or({}).size());
+
+        const size_t pairs_to_print = 30;
+        std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> to_print;
+        to_print.reserve(pairs_to_print);
+
+        for (const auto& feature :
+             res.at(lod).features.value() | std::views::take(pairs_to_print)) {
+            to_print.emplace_back(feature.x, feature.y, feature.strength);
+        }
+
+        spdlog::debug(LOG_ID " First enties: {}", to_print);
+    }
+#endif
 
     size_t current_idx = 0;
     gui_->addRequestNextCallback([&] {

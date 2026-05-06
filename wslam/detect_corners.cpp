@@ -301,13 +301,28 @@ std::optional<std::string> PassDetectCorners::initPerPassBindGroups() {
     return awaiter.executeAll();
 }
 
+namespace {
+std::array<compute::GPU::ShaderOverride, 2> GetShaderOverrides() {
+    return {
+        compute::GPU::ShaderOverride{
+            "LOD_COUNT",
+            std::format("{}u", GPUConst::levels_of_detail),
+        },
+        compute::GPU::ShaderOverride{
+            "FEATURE_BLOCK_SZ",
+            std::format("{}u", GPUConst::frame_width * GPUConst::frame_height),
+        },
+    };
+}
+}  // namespace
+
 std::optional<std::string> PassDetectCorners::initComputePipeline() {
     spdlog::info(getId() + " initializing compute pipeline");
 
     wgpu::ShaderModule module;
 
-    auto mod_err
-        = gpu_->loadShaderModule("detect_corners.wgsl", "detect corners");
+    auto mod_err = gpu_->loadShaderModule(
+        "detect_corners.wgsl", "detect corners", GetShaderOverrides());
 
     if (!mod_err) {
         return "loading shader module: " + mod_err.error();
@@ -357,8 +372,7 @@ void PassDetectCorners::saveOutputBindings() {
                  " Saving detected corners to shared storage. binding info: {}",
                  binding);
 
-    shared_bindings_.getStorage().set(kCornersOutputLabel,
-                                      Any{std::move(binding)});
+    shared_bindings_.getStorage().set(kCornersOutputLabel, std::move(binding));
 }
 std::optional<std::string> PassDetectCorners::execute() {
     spdlog::info(LOG_ID " Executing");
@@ -397,7 +411,7 @@ std::optional<std::string> PassDetectCorners::execute() {
         const auto& view_tex = shared_bindings_.getTexture(i);
         const uint32_t w = view_tex.GetWidth();
         const uint32_t h = view_tex.GetHeight();
-        constexpr uint32_t wg = 16;  // matches WORKGROUP_SIZE override
+        constexpr uint32_t wg = 8;  // matches WORKGROUP_SIZE override
         pass.DispatchWorkgroups((w + wg - 1) / wg, (h + wg - 1) / wg, 1);
 
         pass.End();

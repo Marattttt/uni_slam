@@ -47,6 +47,13 @@ function (configureDependencies)
     target_include_directories(stb SYSTEM INTERFACE "${stb_SOURCE_DIR}")
 
     FetchContent_Declare(
+        ctre
+        GIT_REPOSITORY https://github.com/hanickadot/compile-time-regular-expressions.git
+        GIT_TAG        v3.10.0
+    )
+    FetchContent_MakeAvailable(ctre)
+
+    FetchContent_Declare(
         nlohmann_json
         URL      https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE

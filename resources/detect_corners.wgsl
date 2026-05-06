@@ -2,14 +2,26 @@ struct Params {
     lod: u32,
 };
 
+// A replacement must be put at shader reading time (before compilation)
+// as 'override' values are not yet supported as array sizes at the moment
+const LOD_COUNT = 0x69u;
+const FEATURE_BLOCK_SZ = 0x69u;
+
+struct FeatureBlock {
+    width: u32,
+    height: u32,
+    values: array<u32, FEATURE_BLOCK_SZ>,
+};
+
+
 override SCALE_FACTOR: f32;
 override SRC_IMAGE_W: u32;
 override SRC_IMAGE_H: u32;
 override THRESHOLD: f32 = 0.3;
 override N_SIMILLAR_MIN: u32 = 9;
-override WORKGROUP_SIZE: u32 = 16;
+override WORKGROUP_SIZE: u32 = 8;
 
-@group(0) @binding(0) var<storage, read_write> corners: array<u32>;
+@group(0) @binding(0) var<storage, read_write> corners: array<FeatureBlock, LOD_COUNT>;
 @group(1) @binding(0) var image: texture_2d<f32>;
 @group(1) @binding(1) var<uniform> params: Params;
 
@@ -38,8 +50,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn writeLodDimensions(lod: u32) {
     let startIdx = SRC_IMAGE_H * SRC_IMAGE_W * lod;
     let dims = textureDimensions(image);
-    corners[startIdx] = dims.x;
-    corners[startIdx + 1] = dims.y;
+    corners[lod].width = dims.x;
+    corners[lod].height = dims.y;
 }
 
 fn getCornerStrength(coord: vec2<u32>) -> u32 {
@@ -68,14 +80,9 @@ fn getCornerStrength(coord: vec2<u32>) -> u32 {
 }
 
 fn storeCornerResponse(response: u32, xy: vec2<u32>) {
-    let dimensions = textureDimensions(image);
     let lod = params.lod;
+    let block = &corners[lod];
+    let idx = xy.y * block.width + xy.x;
 
-    const dims_offset = 2u;
-    let lod_offset = lod * (SRC_IMAGE_W * SRC_IMAGE_H);
-    let pixel_offset = xy.x + xy.y * dimensions.x;
-
-    let corner_idx: u32 = dims_offset + lod_offset + pixel_offset;
-
-    corners[corner_idx] = response;
+    block.values[idx] = response;
 }

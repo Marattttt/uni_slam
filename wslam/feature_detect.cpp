@@ -56,15 +56,15 @@ compute::Stage wslam::CreateFeatureDetectStage(
         std::make_unique<PassDetectCorners>(gpu, shared_bindings, "corners"));
 
     stage.add_pass(std::make_unique<CullCornersPass>(gpu, shared_bindings,
-                                                     "corners", "corners"));
+                                                     "corners", "corners_out"));
 
     std::unique_ptr<viz::ResourceProvider> resource_provider
         = std::make_unique<viz::WgpuResourceProvider>(
             viz::WgpuResourceProvider::Opts{
                 .storage = compute.getStorage(),
                 .gpu = gpu,
-                .lod_levels = {{0}, {1}, {2}},
-                .features_label = "corners",
+                .lod_levels = {{0}, {1}, {2}, {3}, {4}},
+                .features_label = "corners_out",
             });
     stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
         gpu, std::move(resource_provider)));

@@ -10,21 +10,11 @@
 #include "anybag.hpp"
 #include "common.hpp"
 #include "gpu.hpp"
+#include "models.hpp"
 #include "pass.hpp"
 #include "viz.hpp"
 
 namespace wslam::viz {
-
-struct FeatureStyle {
-    std::array<uint8_t, 3> color;
-    uint8_t thickness;
-};
-
-struct Feature {
-    uint32_t x;
-    uint32_t y;
-    uint32_t strength;
-};
 
 struct Resource {
     std::string title;
@@ -68,12 +58,10 @@ class ReourceBuilder {
 };
 
 namespace impl {
-struct FeaturesPerLod {
-    std::flat_map<LOD, std::vector<Feature>> features;
-};
+using FeaturesPerLod = std::flat_map<LOD, std::vector<Feature>>;
+;
 
-std::expected<FeaturesPerLod, std::string> ExtractFeaturePerLod(
-    const std::vector<uint32_t>& data);
+FeaturesPerLod ExtractFeaturePerLod(std::span<const std::byte> data);
 };  // namespace impl
 
 class ResourceProvider {

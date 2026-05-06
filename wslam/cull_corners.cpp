@@ -3,17 +3,35 @@
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>
 
-#include <algorithm>
-#include <cmath>
-#include <utility>
+#include <string>
 
-#include "awaiter.hpp"
 #include "common.hpp"
 #include "gpu.hpp"
 
 using namespace wslam;
 
 #define LOG_ID "[Cull Corners pass]"
+
+namespace {
+constinit std::string kVerticalBindingLabel = "vertical";
+constexpr std::string_view kShaderModulePath = "cull_corners.wgsl";
+
+// Sholud be better for memory access, not tested as of writing
+constexpr std::array<uint32_t, 3> kWgSize = {64, 1, 1};
+constexpr uint32_t kRegionSize = 3;
+std::array<compute::GPU::ShaderOverride, 2> GetShaderOverrides() {
+    return {
+        compute::GPU::ShaderOverride{
+            "LOD_COUNT",
+            std::format("{}u", GPUConst::levels_of_detail),
+        },
+
+        compute::GPU::ShaderOverride{
+            "FEATURE_BLOCK_SZ",
+            std::format("{}u", GPUConst::frame_height * GPUConst::frame_width)},
+    };
+}
+}  // namespace
 
 std::string CullCornersPass::getId() const { return LOG_ID; }
 
@@ -89,67 +107,64 @@ std::optional<std::string> CullCornersPass::initBindGroups() {
     spdlog::info(LOG_ID " Initializing bind groups");
 
     auto inputBinding
-        = shared_bindings_.getStorage().take<compute::BufferBinding>(
+        = shared_bindings_.getStorage().getPtr<compute::BufferBinding>(
             kInputCornersLabel);
 
     if (!inputBinding) {
         return "could not get input corner binding";
     }
 
-    shared_bindings_.getStorage().set(kCulledCornersOutputLabel,
-                                      std::move(inputBinding.value()));
-
     using BT = compute::BufferType;
 
-    const auto* unculled
-        = shared_bindings_.getStorage()
-              .getPtr<compute::BufferBinding>(kCulledCornersOutputLabel)
-              .value();
+    const auto* unculled = inputBinding.value();
 
     const auto unculled_buf_type = unculled->getBuffertype();
     assert(unculled_buf_type == BT::StorageA
            || unculled_buf_type == BT::StorageB);
 
-    // Opposite storage buffer for the first pass, and same binding used for the
-    // second pass
+    // Opposite storage buffer for the first pass
     const auto horizontal_buftype
         = unculled_buf_type == BT::StorageA ? BT::StorageB : BT::StorageA;
+    const auto vertical_buftype = unculled_buf_type;
+
     const auto binding_size = unculled->getSize();
 
-    wgpu::BindGroupEntry temp_bg_entry{
-        .binding = 0,
-        .size = binding_size,
+    std::array<wgpu::BindGroupEntry, 2> vertical_entries{
+        wgpu::BindGroupEntry{.binding = 0, .size = binding_size},
+        wgpu::BindGroupEntry{.binding = 1, .size = binding_size},
     };
 
-    auto temp_binding = gpu_->assignBuffersAndOffsets({{
-        std::string{kVerticalBindingLabel},
-        compute::GPU::BgBinding{.buf_type = horizontal_buftype,
-                                .bg_entry = temp_bg_entry},
-    }});
+    auto bindings = gpu_->assignBuffersAndOffsets({
+        {
+            kVerticalBindingLabel,
+            compute::GPU::BgBinding{.buf_type = horizontal_buftype,
+                                    .bg_entry = vertical_entries.at(0)},
+        },
+        {
+            kCulledCornersOutputLabel,
+            compute::GPU::BgBinding{
+                .buf_type = vertical_buftype,
+                .bg_entry = vertical_entries.at(1),
+            },
+        },
+    });
 
-    if (!temp_binding) {
-        return "assigning buffer region for vertical buffer: "
-               + temp_binding.error();
+    if (!bindings) {
+        return "reserving buffers: " + bindings.error();
     }
 
-    vertical_binding_ = std::move(
-        temp_binding.value().at(std::string(kVerticalBindingLabel)));
+    for (auto& [key, val] : bindings.value()) {
+        shared_bindings_.getStorage().set(key, std::move(val));
+    }
 
-    // HORIZONTAL PASS
-    spdlog::debug(LOG_ID " Initializing bind group for horizontal pass");
-    const std::array<wgpu::BindGroupEntry, 2> horizontal_entries{
-        wgpu::BindGroupEntry{
-            .binding = 0,
-            .buffer = gpu_->getBuffer(unculled->getBuffertype()),
-            .offset = unculled->getOffset(),
-            .size = binding_size},
-        wgpu::BindGroupEntry{
-            .binding = 1,
-            .buffer = temp_bg_entry.buffer,
-            .offset = temp_bg_entry.offset,
-            .size = binding_size,
-        },
+    std::array<wgpu::BindGroupEntry, 2> horizontal_entries{
+        wgpu::BindGroupEntry{.binding = 0,
+                             .buffer = gpu_->getBuffer(unculled_buf_type),
+                             .offset = unculled->getOffset(),
+                             .size = unculled->getSize()},
+        vertical_entries.at(0),
     };
+    horizontal_entries.at(1).binding = 1;
 
     const wgpu::BindGroupDescriptor horizontal_desc{
         .label = LOG_ID " Horizontal culling bind group",
@@ -169,16 +184,6 @@ std::optional<std::string> CullCornersPass::initBindGroups() {
                        .executeAll()) {
         return "horizontal: " + err.value();
     }
-
-    // VERTICAL PASS
-    spdlog::debug(LOG_ID " Initializing bind group for vertical pass");
-
-    std::array<wgpu::BindGroupEntry, 2> vertical_entries{
-        horizontal_entries.at(1),
-        horizontal_entries.at(0),
-    };
-    vertical_entries.at(0).binding = 0;
-    vertical_entries.at(1).binding = 1;
 
     const wgpu::BindGroupDescriptor vertical_descriptor{
         .label = LOG_ID " Vertical culling bind group",
@@ -233,7 +238,8 @@ std::optional<std::string> CullCornersPass::initComputePipeline() {
         return "pipeline layout: " + err.value();
     }
 
-    auto code_err = gpu_->loadShaderModule(kShaderModulePath, "cull corners");
+    auto code_err = gpu_->loadShaderModule(kShaderModulePath, "cull corners",
+                                           GetShaderOverrides());
     if (!code_err) {
         return "loading shader: " + code_err.error();
     }
@@ -325,34 +331,27 @@ std::optional<std::string> CullCornersPass::execute() {
         return "executing: " + err.value();
     }
 
+#ifndef NDEBUG
     const auto* binding
         = shared_bindings_.getStorage()
               .getPtr<compute::BufferBinding>(kCulledCornersOutputLabel)
               .value();
-    const auto data = gpu_->readBuffer(*binding);
+    const auto culled_data = gpu_->readBuffer(*binding);
 
-    if (!data) {
-        return "reading culled data: " + data.error();
+    if (!culled_data) {
+        return "reading culled data: " + culled_data.error();
     }
 
     const auto nonzero = std::ranges::count_if(
-        data.value(), [](const auto x) { return static_cast<int>(x) > 0; });
+        culled_data.value(),
+        [](const auto x) { return static_cast<int>(x) > 0; });
 
     spdlog::info(LOG_ID " Reading culled data. size:{} non-zero entries:{}",
-                 data.value().size(), nonzero);
+                 culled_data.value().size(), nonzero);
+#endif
 
     return std::nullopt;
 }
-
-namespace {
-std::array<uint32_t, 3> getDispatchSize(uint32_t wg_x, uint32_t wg_y) {
-    const auto x = std::ceil(GPUConst::frame_width / wg_x);
-    const auto y = std::ceil(GPUConst::frame_width / wg_y);
-    const auto z = GPUConst::levels_of_detail;
-
-    return {static_cast<uint32_t>(x), static_cast<uint32_t>(y), z};
-}
-};  // namespace
 
 void CullCornersPass::writeWorkflowPass(
     Workflow workflow, const wgpu::CommandEncoder& encoder) const {
@@ -374,8 +373,38 @@ void CullCornersPass::writeWorkflowPass(
     pass.SetPipeline(data.pipeline);
     pass.SetBindGroup(0, data.bg);
 
-    auto dispatch = getDispatchSize(kWgSize.at(0), kWgSize.at(1));
+    const auto dispatch_full = getDispatchSize();
+    const auto dispatch = workflow == Workflow::Horizontal
+                              ? dispatch_full.at(0)
+                              : dispatch_full.at(1);
+
     pass.DispatchWorkgroups(dispatch.at(0), dispatch.at(1), dispatch.at(2));
 
     pass.End();
+}
+namespace {
+constexpr uint32_t ceilDiv(uint32_t n, uint32_t d) { return (n + d - 1) / d; }
+};  // namespace
+
+std::array<std::array<uint32_t, 3>, 2> CullCornersPass::getDispatchSize() {
+    const uint32_t horx = ceilDiv(GPUConst::frame_width, kRegionSize);
+    const uint32_t hory = GPUConst::frame_height;
+    const uint32_t horz = GPUConst::levels_of_detail;
+
+    constexpr std::array<uint32_t, 3> horizontal{
+        ceilDiv(horx, kWgSize[0]),
+        ceilDiv(hory, kWgSize[1]),
+        ceilDiv(horz, kWgSize[2]),
+    };
+
+    const uint32_t vert_x = GPUConst::frame_width;
+    const uint32_t vert_y = ceilDiv(GPUConst::frame_height, kRegionSize);
+    const uint32_t vert_z = GPUConst::levels_of_detail;
+    constexpr std::array<uint32_t, 3> vertical{
+        ceilDiv(vert_x, kWgSize[0]),
+        ceilDiv(vert_y, kWgSize[1]),
+        ceilDiv(vert_z, kWgSize[2]),
+    };
+
+    return {horizontal, vertical};
 }

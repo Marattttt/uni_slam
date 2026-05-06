@@ -15,7 +15,7 @@ class CullCornersPass : public compute::Pass {
    public:
     CullCornersPass(std::shared_ptr<compute::GPU> gpu,
                     GpuSharedBindings& shared_bindings,
-                    std::string output_label, std::string corners_label)
+                    std::string corners_label, std::string output_label)
 
         : Pass(std::move(gpu)),
           kCulledCornersOutputLabel(std::move(output_label)),
@@ -30,17 +30,11 @@ class CullCornersPass : public compute::Pass {
     enum class Workflow : uint8_t { Horizontal, Vertical };
 
     static constexpr size_t kPassCount = 2;
-    static constexpr std::string_view kVerticalBindingLabel = "vertical";
-    static constexpr std::string_view kShaderModulePath = "cull_corners.wgsl";
-
-    // Sholud be better for memory access, not tested as of writing
-    static constexpr std::array<uint32_t, 3> kWgSize = {64, 1, 1};
 
     const std::string kCulledCornersOutputLabel;
     const std::string kInputCornersLabel;
 
     GpuSharedBindings& shared_bindings_;
-    std::optional<compute::BufferBinding> vertical_binding_;
 
     struct PassGpuData {
         wgpu::BindGroup bg;
@@ -62,5 +56,7 @@ class CullCornersPass : public compute::Pass {
 
     void writeWorkflowPass(Workflow workflow,
                            const wgpu::CommandEncoder& encoder) const;
+
+    static std::array<std::array<uint32_t, 3>, 2> getDispatchSize();
 };
 };  // namespace wslam

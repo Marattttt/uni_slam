@@ -27,6 +27,7 @@ constexpr uint32_t frame_width = WSLAM_FRAME_WIDTH;
 constexpr uint32_t frame_height = WSLAM_FRAME_HEIGHT;
 constexpr uint32_t pixel_size = sizeof(float);
 constexpr uint32_t levels_of_detail = 6;
+constexpr std::string levels_of_detail_str = "6";
 constexpr double lod_scale_factor = 1.2;
 };  // namespace GPUConst
 

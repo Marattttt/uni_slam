@@ -8,6 +8,7 @@
 #include "awaiter.hpp"
 #include "common.hpp"
 #include "gpu.hpp"
+#include "models.hpp"
 #include "pass.hpp"
 
 namespace wslam {
@@ -29,9 +30,10 @@ class PassDetectCorners : public compute::Pass {
         uint32_t lod;
     };
 
-    const size_t kConrnersArraySize
-        = static_cast<size_t>(GPUConst::frame_width) * GPUConst::frame_height
-          * GPUConst::pixel_size * GPUConst::levels_of_detail;
+    static constexpr size_t kConrnersArraySize
+        = sizeof(std::array<gpumodels::FeaturesBlock<GPUConst::frame_width,
+                                                     GPUConst::frame_height>,
+                            GPUConst::levels_of_detail>);
 
     const std::string kCornersOutputLabel;
 
