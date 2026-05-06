@@ -70,6 +70,7 @@ target_link_libraries(pc_wslam
     spdlog::spdlog_header_only $<$<BOOL:${MINGW}>:ws2_32> # The bool template comes from spdlog docs
     pango_display pango_python
     stb
+    ctre::ctre
     Eigen3::Eigen
     yaml-cpp::yaml-cpp
     nlohmann_json::nlohmann_json

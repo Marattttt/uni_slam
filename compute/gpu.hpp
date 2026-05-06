@@ -116,8 +116,11 @@ class GPU {
           device_lost_callback_(std::move(deviceLostCallback)),
           uncaptured_error_callback_(std::move(errorCallback)) {}
 
+    using ShaderOverride = std::pair<std::string, std::string>;
     [[nodiscard]] virtual std::expected<wgpu::ShaderModule, std::string>
-    loadShaderModule(const std::filesystem::path& path, std::string_view label);
+    loadShaderModule(const std::filesystem::path& path, std::string_view label,
+                     std::optional<std::span<const ShaderOverride>> overrides
+                     = std::nullopt);
 
     [[nodiscard]] std::optional<std::string> initialize();
     [[nodiscard]] const wgpu::Device& getDevice() const;

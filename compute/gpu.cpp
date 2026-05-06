@@ -7,6 +7,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstdint>
+#include <ctre.hpp>
 #include <format>
 #include <fstream>
 #include <memory>
@@ -16,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "awaiter.hpp"
@@ -499,8 +501,70 @@ std::optional<std::string> GPU::initBuffers() {
     return std::nullopt;
 }
 
+namespace {
+std::string replaceWgslValues(std::string_view code,
+                              std::span<const GPU::ShaderOverride> overrides) {
+#ifndef NDEBUG
+    const auto messages
+        = overrides | std::views::transform([&](const auto& pair) {
+              return std::format("[{} -> {}]", pair.first, pair.second);
+          })
+          | std::views::join_with(std::string_view(", "))
+          | std::ranges::to<std::string>();
+
+    spdlog::debug(LOG_ID " Applying overrides: {}", overrides.size(), messages);
+#endif
+
+    // Matches WGSL declarations of the form:
+    //     (const | let | override | var<...>)  NAME  [: TYPE]  =  VALUE ;
+    // Captures: 1 = name, 2 = value (everything between '=' and ';').
+    // The optional `: TYPE` is a non-capturing group; `[^=;]+` cannot escape
+    // the declaration because WGSL types never contain '=' or ';'.
+    static constexpr auto pattern = ctll::fixed_string{
+        R"((?:const|let|override|var(?:<[^>]*>)?)\s+([a-zA-Z_]\w*)\s*(?::[^=;]+)?=\s*([^;]+);)"};
+
+    std::string result;
+    result.reserve(code.size());
+
+    std::size_t cursor = 0;
+
+    for (const auto& match : ctre::search_all<pattern>(code)) {
+        const auto name = match.template get<1>().to_view();
+        const auto value = match.template get<2>().to_view();
+
+        // Byte offset of the captured value within `code`.
+        const auto valueStart
+            = static_cast<std::size_t>(value.data() - code.data());
+        const auto valueEnd = valueStart + value.size();
+
+        const auto it = std::ranges::find_if(
+            overrides, [&name](const auto& p) { return p.first == name; });
+
+        // Copy everything up to the value, then either the override or the
+        // original value. The keyword, name, type annotation, '=', and ';'
+        // are all left untouched.
+        result.append(code.substr(cursor, valueStart - cursor));
+        if (it != overrides.end()) {
+            result.append(it->second);
+        } else {
+            result.append(value);
+        }
+
+        cursor = valueEnd;
+    }
+
+    result.append(code.substr(cursor));
+
+#ifndef NDEBUG
+    spdlog::debug(LOG_ID " code : {}", result);
+#endif
+    return result;
+}
+};  // namespace
+
 std::expected<wgpu::ShaderModule, std::string> GPU::loadShaderModule(
-    const std::filesystem::path& path, std::string_view label) {
+    const std::filesystem::path& path, std::string_view label,
+    std::optional<std::span<const ShaderOverride>> overrides) {
     const auto full_path = path_prefix_ / path;
 
     spdlog::info("[GPU] loading shader source {} at {}", label,
@@ -514,6 +578,10 @@ std::expected<wgpu::ShaderModule, std::string> GPU::loadShaderModule(
     std::stringstream sst;
     sst << file.rdbuf();
     std::string shader_source = sst.str();
+
+    if (overrides) {
+        shader_source = replaceWgslValues(shader_source, overrides.value());
+    }
 
     if (auto err = checkShaderModule(shader_source)) {
         return std::unexpected(
