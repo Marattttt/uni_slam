@@ -58,10 +58,8 @@ class PassDetectCorners : public compute::Pass {
 
     wgpu::PipelineLayout compute_pipeline_layout_;
     wgpu::ComputePipeline compute_pipeline_;
-    std::array<wgpu::ConstantEntry, 3> compute_constants;
 
     void fillPassParams();
-    void fillConstants();
 
     [[nodiscard]] std::optional<std::string> initTextureViews();
     [[nodiscard]] std::optional<std::string> initPerPassBindGroups();

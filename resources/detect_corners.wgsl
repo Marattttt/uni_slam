@@ -13,10 +13,6 @@ struct FeatureBlock {
     values: array<u32, FEATURE_BLOCK_SZ>,
 };
 
-
-override SCALE_FACTOR: f32;
-override SRC_IMAGE_W: u32;
-override SRC_IMAGE_H: u32;
 override THRESHOLD: f32 = 0.3;
 override N_SIMILLAR_MIN: u32 = 9;
 override WORKGROUP_SIZE: u32 = 8;
@@ -48,7 +44,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 fn writeLodDimensions(lod: u32) {
-    let startIdx = SRC_IMAGE_H * SRC_IMAGE_W * lod;
     let dims = textureDimensions(image);
     corners[lod].width = dims.x;
     corners[lod].height = dims.y;

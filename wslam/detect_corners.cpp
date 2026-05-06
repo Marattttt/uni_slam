@@ -6,7 +6,6 @@
 
 #include "awaiter.hpp"
 #include "common.hpp"
-#include "unique_any.hpp"
 
 using namespace wslam;
 using namespace std::chrono_literals;
@@ -32,7 +31,6 @@ std::optional<std::string> PassDetectCorners::initialize() {
     assert(gpu_->getInstance() != nullptr);
 
     fillPassParams();
-    fillConstants();
 
     if (auto err = initTextureViews()) {
         return "texture views: " + err.value();
@@ -63,24 +61,6 @@ void PassDetectCorners::fillPassParams() {
     for (size_t i = 0; i < pass_params_.size(); i++) {
         pass_params_[i].lod = static_cast<uint32_t>(i);
     }
-}
-
-void PassDetectCorners::fillConstants() {
-    compute_constants = {
-        wgpu::ConstantEntry{
-            .key = "SCALE_FACTOR",
-            .value = GPUConst::lod_scale_factor,
-        },
-        {
-            .key = "SRC_IMAGE_W",
-            .value = GPUConst::frame_width,
-
-        },
-        {
-            .key = "SRC_IMAGE_H",
-            .value = GPUConst::frame_height,
-        },
-    };
 }
 
 std::optional<std::string> PassDetectCorners::initTextureViews() {
@@ -349,10 +329,7 @@ std::optional<std::string> PassDetectCorners::initComputePipeline() {
     wgpu::ComputePipelineDescriptor compute_desc{
         .label = LOG_ID " compute pipeline",
         .layout = compute_pipeline_layout_,
-        .compute = {.module = module,
-                    .entryPoint = "main",
-                    .constantCount = compute_constants.size(),
-                    .constants = compute_constants.data()},
+        .compute = {.module = module, .entryPoint = "main"},
     };
 
     auto create_pipeline = [&]() {
