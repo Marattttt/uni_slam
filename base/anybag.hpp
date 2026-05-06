@@ -20,13 +20,12 @@
 class AnyBag {
    public:
     // Set value
-    template <typename T>
-    void set(const std::string& key, T&& value) {
+    void set(const std::string& key, auto&& value) {
 #ifndef NDEBUG
         std::println("Adding value to AnyBag. key:'{}', value type:{}", key,
                      typeid(value).name());
 #endif
-        data_.insert_or_assign(key, std::forward<T>(value));
+        data_.insert_or_assign(key, std::forward<decltype(value)>(value));
     }
 
     // Copy. Only usable when T is copy-constructible.
@@ -35,18 +34,6 @@ class AnyBag {
         requires std::is_copy_constructible_v<T>
     std::optional<T> get(const std::string& key) const {
         const T* p = getRawPtr<T>(key);
-        if (!p) {
-            return std::nullopt;
-        }
-        return *p;
-    }
-
-    // Copy. Only usable when T is copy-constructible.
-    // Use take(key) for moving values out of the storage
-    template <typename T>
-        requires std::is_copy_constructible_v<T>
-    std::optional<T> get(const std::string& key) {
-        T* p = getRawPtr<T>(key);
         if (!p) {
             return std::nullopt;
         }
