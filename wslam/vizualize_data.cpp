@@ -81,8 +81,8 @@ WgpuResourceProvider::loadTexture(const std::string& name) {
 
 impl::FeaturesPerLod impl::ExtractFeaturePerLod(
     std::span<const std::byte> data) {
-    using Block = gpumodels::FeaturesBlock<GPUConst::frame_width,
-                                           GPUConst::frame_height>;
+    using Block = gpumodels::CornersBlock<GPUConst::frame_width,
+                                          GPUConst::frame_height>;
 
     const size_t blocks_cnt = data.size_bytes() / sizeof(Block);
 
@@ -93,7 +93,7 @@ impl::FeaturesPerLod impl::ExtractFeaturePerLod(
 
     for (size_t i = 0; i < blocks.size(); i++) {
         const auto lod = blocks[i];
-        std::vector<Feature> features;
+        std::vector<Corner> features;
 
         for (size_t x = 0; x < lod.width; x++) {
             for (size_t y = 0; y < lod.height; y++) {

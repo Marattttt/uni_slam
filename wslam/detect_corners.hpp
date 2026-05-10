@@ -31,8 +31,8 @@ class PassDetectCorners : public compute::Pass {
     };
 
     static constexpr size_t kConrnersArraySize
-        = sizeof(std::array<gpumodels::FeaturesBlock<GPUConst::frame_width,
-                                                     GPUConst::frame_height>,
+        = sizeof(std::array<gpumodels::CornersBlock<GPUConst::frame_width,
+                                                    GPUConst::frame_height>,
                             GPUConst::levels_of_detail>);
 
     const std::string kCornersOutputLabel;

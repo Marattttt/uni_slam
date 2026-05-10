@@ -20,7 +20,7 @@ struct Resource {
     std::string title;
     std::optional<wslam::compute::TextureData> texture;
     std::optional<FeatureStyle> feature_style;
-    std::optional<std::vector<Feature>> features;
+    std::optional<std::vector<Corner>> features;
 };
 
 constexpr FeatureStyle kDefaultFeatureStyle{.color = {255, 0, 0},
@@ -33,7 +33,7 @@ class ReourceBuilder {
         res_.feature_style = style;
         return *this;
     }
-    constexpr ReourceBuilder& SetFeatures(std::vector<Feature>&& features) {
+    constexpr ReourceBuilder& SetFeatures(std::vector<Corner>&& features) {
         res_.features = std::move(features);
         return *this;
     }
@@ -58,7 +58,7 @@ class ReourceBuilder {
 };
 
 namespace impl {
-using FeaturesPerLod = std::flat_map<LOD, std::vector<Feature>>;
+using FeaturesPerLod = std::flat_map<LOD, std::vector<Corner>>;
 ;
 
 FeaturesPerLod ExtractFeaturePerLod(std::span<const std::byte> data);
