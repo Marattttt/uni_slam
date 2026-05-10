@@ -80,6 +80,16 @@ class Awaiter {
         std::chrono::nanoseconds timeout
         = std::chrono::seconds(kDefaultTimeoutSeconds));
 
+    [[nodiscard]] constexpr std::expected<void, std::string> execute(
+        bool stop_on_error = true,
+        std::chrono::nanoseconds timeout
+        = std::chrono::seconds(kDefaultTimeoutSeconds)) {
+        if (auto err = executeAll(stop_on_error, timeout)) {
+            return std::unexpected(std::move(err).value());
+        }
+        return {};
+    }
+
    private:
     Awaiter& addCallFuture(std::function<wgpu::Future()>&& factory,
                            std::string error_label, bool catch_errors = true);
