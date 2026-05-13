@@ -555,9 +555,6 @@ std::string replaceWgslValues(std::string_view code,
 
     result.append(code.substr(cursor));
 
-#ifndef NDEBUG
-    spdlog::debug(LOG_ID " code : {}", result);
-#endif
     return result;
 }
 };  // namespace
