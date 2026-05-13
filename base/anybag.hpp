@@ -3,8 +3,10 @@
 #include <cassert>
 #include <optional>
 #include <print>
+#include <ranges>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "unique_any.hpp"
 
@@ -22,9 +24,13 @@ class AnyBag {
     // Set value
     void set(const std::string& key, auto&& value) {
 #ifndef NDEBUG
-        std::println("Adding value to AnyBag. key:'{}', value type:{}", key,
-                     typeid(value).name());
+        auto msg
+            = std::format("Adding value to AnyBag. key:'{}', value type:{}",
+                          key, typeid(value).name());
+        std::println(stderr, "{}", msg);
+        logs_.emplace_back(std::move(msg));
 #endif
+
         data_.insert_or_assign(key, std::forward<decltype(value)>(value));
     }
 
@@ -83,19 +89,47 @@ class AnyBag {
     bool has(const std::string& key) const { return data_.contains(key); }
     bool erase(const std::string& key) { return data_.erase(key) > 0; }
 
+#ifndef NDEBUG
+    [[nodiscard]] std::vector<std::string> getLogs() const { return logs_; }
+
+    void printLogs() const {
+        const auto lines = std::ranges::owning_view{
+            logs_ | std::views::join_with(std::string_view("\n\t"))};
+
+        std::println(stderr, "Logs: \n{}", lines);
+    }
+#endif
+
    private:
     std::unordered_map<std::string, Any> data_;
+
+#ifndef NDEBUG
+    mutable std::vector<std::string> logs_;
+#endif
 
     // Shared lookup logic. Returns nullptr on missing key or type mismatch.
     template <typename T>
     const T* getRawPtr(const std::string& key) const {
         auto it = data_.find(key);
+
+#ifndef NDEBUG
+        const auto val_info
+            = it == data_.end()
+                  ? std::format("value:null, requested type:{}",
+                                typeid(T).name())
+                  : std::format("type:{}", it->second.getType().name());
+
+        auto msg = std::format("Getting value from anybag. Key: {}, {}", key,
+                               val_info);
+        std::println(stderr, "{}", msg);
+        logs_.emplace_back(std::move(msg));
+#endif
+
         if (it == data_.end()) {
             return nullptr;
         }
+
 #ifndef NDEBUG
-        std::println("Getting value from anybag. Key: {}, value type: {}", key,
-                     it->second.getType().name());
         if (it->second.getType() != typeid(T)) {
             std::println(
                 stderr, "Type mismatch for key \"{}\": stored {}, requested {}",
@@ -108,12 +142,25 @@ class AnyBag {
     template <typename T>
     T* getRawPtr(const std::string& key) {
         auto it = data_.find(key);
+
+#ifndef NDEBUG
+        const auto val_info
+            = it == data_.end()
+                  ? std::format("value:null, requested type:{}",
+                                typeid(T).name())
+                  : std::format("type:{}", it->second.getType().name());
+
+        auto msg = std::format("Getting value from anybag. Key: {}, {}", key,
+                               val_info);
+        std::println(stderr, "{}", msg);
+        logs_.emplace_back(std::move(msg));
+#endif
+
         if (it == data_.end()) {
             return nullptr;
         }
+
 #ifndef NDEBUG
-        std::println("Getting value from anybag. Key: {}, value type: {}", key,
-                     it->second.getType().name());
         if (it->second.getType() != typeid(T)) {
             std::println(
                 stderr, "Type mismatch for key \"{}\": stored {}, requested {}",
