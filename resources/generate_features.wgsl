@@ -59,7 +59,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let orientation = getOrientation(gid.xy);
 
-    let descriptor = computeDescriptor(gid.xy, orientation);
+    let descriptor = computeDescriptor(vec2(i32(gid.x), i32(gid.y)), orientation);
 
     let feature = Feature(
         gid.xy,

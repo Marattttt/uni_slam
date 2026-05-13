@@ -35,6 +35,8 @@ std::optional<std::string> FillPyramidPass::initialize() {
         return "compute pipeline: " + err.value();
     }
 
+    writeTexturesToStorage();
+
     return std::nullopt;
 }
 
@@ -212,8 +214,6 @@ std::optional<std::string> FillPyramidPass::execute() {
     if (auto err = writeNonBaseLayers()) {
         return "writing pyramid mips: " + err.value();
     }
-
-    writeTexturesToStorage();
 
     return std::nullopt;
 }

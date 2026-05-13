@@ -31,6 +31,11 @@ constexpr std::string levels_of_detail_str = "6";
 constexpr double lod_scale_factor = 1.2;
 };  // namespace GPUConst
 
+constexpr auto Add256Padding(auto num) {
+    const decltype(num) alignment = std::numeric_limits<uint8_t>::max();
+    return (num + alignment) & ~alignment;
+}
+
 namespace GPUBindingSize {
 constexpr std::pair<size_t, size_t> getPyramidLayerDimensions(const LOD lod) {
     if (lod.v >= GPUConst::levels_of_detail) {

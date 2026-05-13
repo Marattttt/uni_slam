@@ -92,10 +92,6 @@ fn main_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
         dst_block.values[i] = src_block.values[i];
     }
 
-    return;
-
-    // dst_block.values[maxIdx] = src_block.values[maxIdx];
-
     if didFindMax {
         dst_block.values[maxIdx] = src_block.values[maxIdx];
     }
