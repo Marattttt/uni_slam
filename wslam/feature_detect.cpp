@@ -1,10 +1,13 @@
 #include "feature_detect.hpp"
 
+#include <memory>
+
 #include "anybag.hpp"
 #include "common.hpp"
 #include "cull_corners.hpp"
 #include "detect_corners.hpp"
 #include "fill_pyramid.hpp"
+#include "generate_features.hpp"
 #include "provider_base.hpp"
 #include "sensor_loader.hpp"
 #include "vizualize_data.hpp"
@@ -50,7 +53,7 @@ compute::Stage wslam::CreateFeatureDetectStage(
     stage.add_pass(std::make_unique<FillPyramidPass>(
         gpu, shared_bindings,
         PassFillPyramidOpts{.image_getter = std::move(img_provider),
-                            .storage = compute.getStorage()}));
+                            .storage = shared_bindings.getStorage()}));
 
     stage.add_pass(
         std::make_unique<PassDetectCorners>(gpu, shared_bindings, "corners"));
@@ -58,16 +61,19 @@ compute::Stage wslam::CreateFeatureDetectStage(
     stage.add_pass(std::make_unique<CullCornersPass>(gpu, shared_bindings,
                                                      "corners", "corners_out"));
 
-    std::unique_ptr<viz::ResourceProvider> resource_provider
-        = std::make_unique<viz::WgpuResourceProvider>(
-            viz::WgpuResourceProvider::Opts{
-                .storage = compute.getStorage(),
-                .gpu = gpu,
-                .lod_levels = {{0}, {1}, {2}, {3}, {4}},
-                .features_label = "corners_out",
-            });
-    stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
-        gpu, std::move(resource_provider)));
+    stage.add_pass(std::make_unique<GenerateFeaturesPass>(
+        gpu, shared_bindings, "corners_out", "features"));
 
+    // std::unique_ptr<viz::ResourceProvider> resource_provider
+    //     = std::make_unique<viz::WgpuResourceProvider>(
+    //         viz::WgpuResourceProvider::Opts{
+    //             .storage = compute.getStorage(),
+    //             .gpu = gpu,
+    //             .lod_levels = {{0}, {1}, {2}, {3}, {4}},
+    //             .features_label = "corners_out",
+    //         });
+    // stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
+    //     gpu, std::move(resource_provider)));
+    //
     return stage;
 }

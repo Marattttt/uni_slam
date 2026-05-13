@@ -2,13 +2,11 @@
 
 #include <webgpu/webgpu_cpp.h>
 
-#include <cstdint>
 #include <expected>
 #include <memory>
 
 #include "common.hpp"
 #include "gpu.hpp"
-#include "models.hpp"
 #include "pass.hpp"
 
 namespace wslam {
@@ -27,19 +25,10 @@ class GenerateFeaturesPass : public compute::Pass {
     [[nodiscard]] std::string getId() const override;
 
    private:
-    const std::string kCornersLabel;
-    const std::string kFeaturesLabel;
-
     static constexpr auto kPassCount = GPUConst::levels_of_detail;
 
-    static constexpr auto kCornersBindingSize
-        = sizeof(gpumodels::CornersBlock<GPUConst::frame_width,
-                                         GPUConst::frame_height>)
-          * GPUConst::levels_of_detail;
-    static constexpr auto kBriefTestsBindingSize
-        = sizeof(std::array<std::array<int32_t, 4>, 256>);
-    static constexpr auto kFeatureArrayBindingSize
-        = sizeof(gpumodels::FeatureArray<>);
+    const std::string kCornersLabel;
+    const std::string kFeaturesLabel;
 
     GpuSharedBindings& shared_;
     std::optional<compute::BufferBinding> brief_tests_binding_;
@@ -62,5 +51,8 @@ class GenerateFeaturesPass : public compute::Pass {
     [[nodiscard]] std::expected<void, std::string> initPerPassBindgroups();
 
     [[nodiscard]] std::expected<void, std::string> writeBRIEFvalues();
+
+    void writeSinglePassCommands(const wgpu::CommandEncoder& encoder,
+                                 size_t passIdx);
 };
 }  // namespace wslam

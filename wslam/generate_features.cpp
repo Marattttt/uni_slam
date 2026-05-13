@@ -6,7 +6,6 @@
 
 #include <expected>
 #include <span>
-#include <stdexcept>
 #include <type_traits>
 
 #include "common.hpp"
@@ -16,6 +15,33 @@
 using namespace wslam;
 
 #define LOG_ID "[Generate Descriptors pass]"
+
+namespace {
+namespace CONSTANTS {
+constexpr std::string_view kShaderPath = "generate_features.wgsl";
+
+constexpr std::array<wgpu::ConstantEntry, 2> kShaderOverrides{
+    wgpu::ConstantEntry{
+        .key = "WG_SIZE_X",
+        .value = 8,
+    },
+    wgpu::ConstantEntry{
+        .key = "WG_SIZE_Y",
+        .value = 8,
+    },
+};
+
+constexpr auto kCornersBindingSize = Add256Padding<size_t>(
+    sizeof(
+        gpumodels::CornersBlock<GPUConst::frame_width, GPUConst::frame_height>)
+    * GPUConst::levels_of_detail);
+constexpr auto kBriefTestsBindingSize
+    = sizeof(std::array<std::array<int32_t, 4>, 256>);
+constexpr auto kFeatureArrayBindingSize = sizeof(gpumodels::FeatureArray<>);
+
+};  // namespace CONSTANTS
+};  // namespace
+
 std::string GenerateFeaturesPass::getId() const { return LOG_ID; }
 
 std::optional<std::string> GenerateFeaturesPass::initialize() {
@@ -43,8 +69,6 @@ std::optional<std::string> GenerateFeaturesPass::initialize() {
     if (auto err = label(initComputePipeline(), "compute pipeline")) {
         return err;
     }
-
-    throw std::logic_error(LOG_ID "::initialize is not implemented!");
 
     return std::nullopt;
 }
@@ -132,11 +156,13 @@ GenerateFeaturesPass::initPerPassBindgroupLayout() {
     const std::array<wgpu::BindGroupLayoutEntry, 2> entries{
         wgpu::BindGroupLayoutEntry{
             .binding = 0,
+            .visibility = wgpu::ShaderStage::Compute,
             .texture = {.sampleType = wgpu::TextureSampleType::Float,
                         .viewDimension = wgpu::TextureViewDimension::e2D},
         },
         wgpu::BindGroupLayoutEntry{
             .binding = 1,
+            .visibility = wgpu::ShaderStage::Compute,
             .sampler = {.type = wgpu::SamplerBindingType::Filtering},
         },
     };
@@ -180,27 +206,29 @@ std::expected<void, std::string> GenerateFeaturesPass::initBindGroups() {
 GenerateFeaturesPass::initCommonBindgroup() {
     spdlog::debug(LOG_ID " Initializing common bind group");
 
-    const auto corners_binding
+    auto* const corners_binding
         = shared_.getStorage()
-              .take<compute::BufferBinding>(kCornersLabel)
+              .getPtr<compute::BufferBinding>(kCornersLabel)
               .value();
 
     using BT = compute::BufferType;
 
     const auto features_storage_type
-        = corners_binding.getBuffertype() == BT::StorageA ? BT::StorageB
-                                                          : BT::StorageA;
+        = corners_binding->getBuffertype() == BT::StorageA ? BT::StorageB
+                                                           : BT::StorageA;
 
-    assert(kCornersBindingSize == corners_binding.getSize());
+    assert(CONSTANTS::kCornersBindingSize == corners_binding->getSize());
 
     std::array<wgpu::BindGroupEntry, 3> entries{
         wgpu::BindGroupEntry{
             .binding = 0,
-            .buffer = gpu_->getBuffer(corners_binding.getBuffertype()),
-            .offset = corners_binding.getOffset(),
-            .size = kCornersBindingSize},
-        wgpu::BindGroupEntry{.binding = 1, .size = kBriefTestsBindingSize},
-        wgpu::BindGroupEntry{.binding = 2, .size = kFeatureArrayBindingSize},
+            .buffer = gpu_->getBuffer(corners_binding->getBuffertype()),
+            .offset = corners_binding->getOffset(),
+            .size = CONSTANTS::kCornersBindingSize},
+        wgpu::BindGroupEntry{.binding = 1,
+                             .size = CONSTANTS::kBriefTestsBindingSize},
+        wgpu::BindGroupEntry{.binding = 2,
+                             .size = CONSTANTS::kFeatureArrayBindingSize},
     };
 
     static constexpr auto kBriefTestsBindingLabel = "BRIEF tests";
@@ -302,6 +330,65 @@ GenerateFeaturesPass::initPerPassBindgroups() {
     return awaiter.execute();
 }
 
+std::expected<void, std::string> GenerateFeaturesPass::initComputePipeline() {
+    spdlog::info(LOG_ID " Initializing compute pipeline");
+
+    const auto res_shader = gpu_->loadShaderModule(CONSTANTS::kShaderPath,
+                                                   LOG_ID " compute shader")
+                                .transform_error([](auto&& err) {
+                                    return "loading shader: " + err;
+                                });
+    if (!res_shader) {
+        return std::unexpected(std::move(res_shader).error());
+    }
+
+    const auto& shader = res_shader.value();
+
+    const wgpu::PipelineLayoutDescriptor layout_desc{
+        .label = LOG_ID " pipeline layout",
+        .bindGroupLayoutCount = bind_group_layouts_.size(),
+        .bindGroupLayouts = bind_group_layouts_.data(),
+    };
+
+    auto create_layout = [&] {
+        compute_pipeline_layout_
+            = gpu_->getDevice().CreatePipelineLayout(&layout_desc);
+    };
+
+    if (auto res
+        = gpu_->getAwaiter()
+              .addCall(std::move(create_layout), "create pipeline layout")
+              .execute()
+              .transform_error([](auto&& err) { return "layout: " + err; });
+        !res) {
+        return res;
+    }
+
+    const wgpu::ComputePipelineDescriptor comp_desc{
+        .label = LOG_ID " compute pipeline",
+        .layout = compute_pipeline_layout_,
+        .compute = {.module = shader,
+                    .entryPoint = "main",
+                    .constantCount = CONSTANTS::kShaderOverrides.size(),
+                    .constants = CONSTANTS::kShaderOverrides.data()},
+    };
+
+    auto create_pipeline = [&] {
+        compute_pipeline_ = gpu_->getDevice().CreateComputePipeline(&comp_desc);
+    };
+
+    if (auto res
+        = gpu_->getAwaiter()
+              .addCall(std::move(create_pipeline), "create compute pipeline")
+              .execute()
+              .transform_error([](auto&& err) { return "pipeline: " + err; });
+        !res) {
+        return res;
+    }
+
+    return {};
+}
+
 std::expected<void, std::string> GenerateFeaturesPass::writeBRIEFvalues() {
     spdlog::info(LOG_ID " writing binary test values for BRIEF descriptors");
 
@@ -332,10 +419,11 @@ std::expected<void, std::string> GenerateFeaturesPass::writeBRIEFvalues() {
             wgpu::CallbackMode::WaitAnyOnly,
             [](wgpu::QueueWorkDoneStatus status, wgpu::StringView sv,
                std::string* err) {
-                spdlog::info(
-                    LOG_ID
-                    " finished writing BRIEF test values. status:{} msg:'{}'",
-                    static_cast<int>(status), static_cast<std::string>(sv));
+                spdlog::info(LOG_ID
+                             " finished writing BRIEF test values. "
+                             "status:{} msg:'{}'",
+                             static_cast<int>(status),
+                             static_cast<std::string>(sv));
                 if (status != wgpu::QueueWorkDoneStatus::Success) {
                     *err = static_cast<std::string>(sv);
                 }
@@ -362,4 +450,55 @@ std::expected<void, std::string> GenerateFeaturesPass::writeBRIEFvalues() {
     return {};
 }
 
-std::optional<std::string> GenerateFeaturesPass::execute() {}
+std::optional<std::string> GenerateFeaturesPass::execute() {
+    spdlog::info(LOG_ID " Executing");
+
+    const auto device = gpu_->getDevice();
+    const auto queue = device.GetQueue();
+    const auto encoder = device.CreateCommandEncoder();
+
+    for (size_t p = 0; p < kPassCount; p++) {
+        writeSinglePassCommands(encoder, p);
+    }
+
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    std::string err;
+    auto wait_submission = [&] -> wgpu::Future {
+        return queue.OnSubmittedWorkDone(
+            wgpu::CallbackMode::WaitAnyOnly,
+            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg,
+               std::string* err_out) {
+                if (status == wgpu::QueueWorkDoneStatus::Success) {
+                    spdlog::info(LOG_ID " submitted GPU work done");
+                } else {
+                    spdlog::warn(LOG_ID
+                                 " Error waiting for submitted GPU work. "
+                                 "status:{} msg:'{}'",
+                                 static_cast<int>(status),
+                                 static_cast<std::string>(msg));
+                    *err_out = static_cast<std::string>(msg);
+                }
+            },
+            &err);
+    };
+
+    return gpu_->getAwaiter()
+        .addCall(std::move(wait_submission), "Wait for GPU work", false)
+        .executeAll();
+}
+
+void GenerateFeaturesPass::writeSinglePassCommands(
+    const wgpu::CommandEncoder& encoder, size_t passIdx) {
+    const auto pass = encoder.BeginComputePass();
+
+    const std::string label = std::format("pass for lod {}", passIdx);
+
+    pass.SetLabel(label.c_str());
+    pass.SetPipeline(compute_pipeline_);
+    pass.SetBindGroup(0, bind_groups_.at(passIdx).at(0));
+    pass.SetBindGroup(1, bind_groups_.at(passIdx).at(1));
+
+    pass.End();
+}
