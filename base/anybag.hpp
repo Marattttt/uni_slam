@@ -24,11 +24,8 @@ class AnyBag {
     // Set value
     void set(const std::string& key, auto&& value) {
 #ifndef NDEBUG
-        auto msg
-            = std::format("Adding value to AnyBag. key:'{}', value type:{}",
-                          key, typeid(value).name());
-        std::println(stderr, "{}", msg);
-        logs_.emplace_back(std::move(msg));
+        logMsg(std::format("Adding value to AnyBag. key:'{}', value type:{}",
+                           key, typeid(value).name()));
 #endif
 
         data_.insert_or_assign(key, std::forward<decltype(value)>(value));
@@ -113,16 +110,14 @@ class AnyBag {
         auto it = data_.find(key);
 
 #ifndef NDEBUG
-        const auto val_info
+        const auto type
             = it == data_.end()
                   ? std::format("value:null, requested type:{}",
                                 typeid(T).name())
                   : std::format("type:{}", it->second.getType().name());
 
-        auto msg = std::format("Getting value from anybag. Key: {}, {}", key,
-                               val_info);
-        std::println(stderr, "{}", msg);
-        logs_.emplace_back(std::move(msg));
+        logMsg(
+            std::format("Getting value from anybag. Key: {}, {}", key, type));
 #endif
 
         if (it == data_.end()) {
@@ -131,9 +126,9 @@ class AnyBag {
 
 #ifndef NDEBUG
         if (it->second.getType() != typeid(T)) {
-            std::println(
-                stderr, "Type mismatch for key \"{}\": stored {}, requested {}",
-                key, it->second.getType().name(), typeid(T).name());
+            logMsg(std::format(
+                "Type mismatch for key \"{}\": stored {}, requested {}", key,
+                it->second.getType().name(), typeid(T).name()));
         }
 #endif
         return AnyCast<T>(&it->second);
@@ -144,16 +139,14 @@ class AnyBag {
         auto it = data_.find(key);
 
 #ifndef NDEBUG
-        const auto val_info
+        const auto type
             = it == data_.end()
                   ? std::format("value:null, requested type:{}",
                                 typeid(T).name())
                   : std::format("type:{}", it->second.getType().name());
 
-        auto msg = std::format("Getting value from anybag. Key: {}, {}", key,
-                               val_info);
-        std::println(stderr, "{}", msg);
-        logs_.emplace_back(std::move(msg));
+        logMsg(
+            std::format("Getting value from anybag. Key: {}, {}", key, type));
 #endif
 
         if (it == data_.end()) {
@@ -162,12 +155,17 @@ class AnyBag {
 
 #ifndef NDEBUG
         if (it->second.getType() != typeid(T)) {
-            std::println(
-                stderr, "Type mismatch for key \"{}\": stored {}, requested {}",
-                key, it->second.getType().name(), typeid(T).name());
+            logMsg(std::format(
+                "Type mismatch for key \"{}\": stored {}, requested {}", key,
+                it->second.getType().name(), typeid(T).name()));
         }
 #endif
         return AnyCast<T>(&it->second);
+    }
+
+    void logMsg(std::string msg) const {
+        std::println(stderr, "{}", msg);
+        logs_.emplace_back(std::move(msg));
     }
 };
 
