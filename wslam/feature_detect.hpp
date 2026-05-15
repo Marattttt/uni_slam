@@ -8,6 +8,7 @@
 namespace wslam {
 compute::Stage CreateFeatureDetectStage(
     compute::Compute& compute, GpuSharedBindings& shared_bindings,
-    std::generator<std::expected<data::Reading<1>, std::string>> provider);
+    std::generator<std::expected<data::Reading<1>, std::string>> provider,
+    std::string feature_output_label);
 
 };  // namespace wslam

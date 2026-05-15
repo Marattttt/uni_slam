@@ -42,7 +42,8 @@ class StorageImageProvider {
 
 compute::Stage wslam::CreateFeatureDetectStage(
     compute::Compute& compute, GpuSharedBindings& shared_bindings,
-    std::generator<std::expected<data::Reading<1>, std::string>> provider) {
+    std::generator<std::expected<data::Reading<1>, std::string>> provider,
+    std::string feature_output_label) {
     const auto gpu = compute.getGPUPtr();
     compute::Stage stage{"Feature detect", gpu};
 
@@ -62,20 +63,20 @@ compute::Stage wslam::CreateFeatureDetectStage(
                                                      "corners", "corners_out"));
 
     stage.add_pass(std::make_unique<GenerateFeaturesPass>(
-        gpu, shared_bindings, "corners_out", "features"));
+        gpu, shared_bindings, "corners_out", feature_output_label));
 
-    std::unique_ptr<viz::ResourceProvider> resource_provider
-        = std::make_unique<viz::WgpuResourceProvider>(
-            viz::WgpuResourceProvider::Opts{
-                .storage = compute.getStorage(),
-                .shared = shared_bindings,
-                .gpu = gpu,
-                .lod_levels = {{0}, {1}, {2}, {3}, {4}},
-                .corners_label = "corners_out",
-                .features_label = "features",
-            });
-    stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
-        gpu, std::move(resource_provider)));
+    // std::unique_ptr<viz::ResourceProvider> resource_provider
+    //     = std::make_unique<viz::WgpuResourceProvider>(
+    //         viz::WgpuResourceProvider::Opts{
+    //             .storage = compute.getStorage(),
+    //             .shared = shared_bindings,
+    //             .gpu = gpu,
+    //             .lod_levels = {{0}, {1}, {2}, {3}, {4}},
+    //             .corners_label = "corners_out",
+    //             .features_label = feature_output_label,
+    //         });
+    // stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
+    //     gpu, std::move(resource_provider)));
 
     return stage;
 }

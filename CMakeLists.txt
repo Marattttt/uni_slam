@@ -34,9 +34,12 @@ add_executable(pc_wslam
     wslam/feature_detect.cpp
     wslam/fill_pyramid.cpp
     wslam/generate_features.cpp
+    wslam/load_features_cpu.cpp
+    wslam/pose_estimate_cpu.cpp
     wslam/sensor_loader.cpp
     wslam/viz.cpp
     wslam/vizualize_data.cpp
+    wslam/wslam.hpp
  )
 
 target_include_directories(pc_wslam PRIVATE 

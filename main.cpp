@@ -6,7 +6,7 @@
 #include "euroc_provider.hpp"
 #include "provider_base.hpp"
 #include "wslam/common.hpp"
-#include "wslam/feature_detect.hpp"
+#include "wslam/wslam.hpp"
 
 using namespace wslam;
 using namespace std::chrono_literals;
@@ -32,8 +32,8 @@ int main_test() {
 
     auto data_provider = data::AdaptProvider<1UL, 2UL>(euroc_generator);
 
-    comp.addStage(wslam::CreateFeatureDetectStage(comp, shared,
-                                                  std::move(data_provider)));
+    CreateWslamPipeline(comp, shared, std::move(data_provider));
+
     if (auto err = comp.initizalizeAllStages()) {
         spdlog::error("initializing stages: {}", err.value());
         std::terminate();
