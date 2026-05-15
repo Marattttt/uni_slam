@@ -10,7 +10,6 @@
 #include "generate_features.hpp"
 #include "provider_base.hpp"
 #include "sensor_loader.hpp"
-#include "vizualize_data.hpp"
 
 using namespace wslam;
 
@@ -43,7 +42,7 @@ class StorageImageProvider {
 compute::Stage wslam::CreateFeatureDetectStage(
     compute::Compute& compute, GpuSharedBindings& shared_bindings,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
-    std::string feature_output_label) {
+    const std::string& feature_output_label) {
     const auto gpu = compute.getGPUPtr();
     compute::Stage stage{"Feature detect", gpu};
 

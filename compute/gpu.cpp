@@ -998,7 +998,7 @@ std::expected<TextureData, std::string> GPU::readTexture(
     return TextureData{
         .width = width,
         .height = height,
-        .pixel_data = std::move(rgb),
+        .pixel_data_rgb = std::move(rgb),
     };
 }
 

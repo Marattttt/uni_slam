@@ -50,7 +50,7 @@ wgpu::BufferBindingType BufferTypeToWgpuBindingType(BufferType bt);
 struct TextureData {
     uint32_t width;
     uint32_t height;
-    std::vector<std::byte> pixel_data;
+    std::vector<std::byte> pixel_data_rgb;
 };
 
 class GPU;

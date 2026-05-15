@@ -229,12 +229,12 @@ std::optional<std::string> VisualizeDataPass::execute() {
 
 namespace {
 VizTexture textureDataToVizTexture(compute::TextureData&& texture) {
-    assert(texture.pixel_data.size() % 3 == 0);
+    assert(texture.pixel_data_rgb.size() % 3 == 0);
 
-    const auto& data = texture.pixel_data;
+    const auto& data = texture.pixel_data_rgb;
 
     std::vector<data::PixelRGB> pixels;
-    pixels.reserve(texture.pixel_data.size() / 3);
+    pixels.reserve(texture.pixel_data_rgb.size() / 3);
 
     for (size_t i = 0; i < data.size() - 2; i += 3) {
         pixels.emplace_back(static_cast<uint8_t>(data[i]),
