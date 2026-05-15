@@ -1,11 +1,18 @@
 #include "vizualize_data.hpp"
 
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
 #include <cstring>
+#include <expected>
 #include <flat_map>
+#include <flat_set>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "common.hpp"
+#include "gpu.hpp"
 #include "models.hpp"
 
 using namespace wslam;
@@ -13,9 +20,30 @@ using namespace wslam::viz;
 
 #define LOG_ID "[Wgpu Resource Provider]"
 
+namespace {
+namespace utils {
+std::flat_map<size_t, std::vector<Feature>> ExtractFeatures(
+    std::span<const std::byte> data);
+};
+}  // namespace
+
 std::expected<WgpuResourceProvider::ResourceVec, std::string>
 WgpuResourceProvider::GetResources() {
-    std::flat_map<LOD, Resource> result;
+    std::flat_map<size_t, Resource> result;
+
+    const auto debug_check_zero_values
+        = [](auto data, auto is_zero, std::string_view label) {
+#ifndef NDEBUG
+              uint32_t nonzero = 0;
+              for (const auto& vec : data) {
+                  nonzero += std::ranges::count_if(vec, is_zero);
+              }
+
+              if (nonzero == 0) {
+                  spdlog::warn(LOG_ID " all zero values for {}", label);
+              }
+#endif
+          };
 
     // GET TEXTURES AND CREATE ENTRIES
     for (const auto lod : lod_levels_) {
@@ -23,36 +51,66 @@ WgpuResourceProvider::GetResources() {
             {lod, Resource{
                       .title = std::format("Vizualization for lod {}", lod.v),
                       .texture = {},
+                      .corner_style = kDefaultCornerStyle,
+                      .corners = std::nullopt,
                       .feature_style = kDefaultFeatureStyle,
                       .features = std::nullopt,
+                      .brief_tests = kDefaultBRIEFTestSet,
                   }});
 
         auto& res = result.at(LOD{lod});
 
-        const std::string texture_name
-            = ResourceIdentifier::GetFrameName({0, LOD{lod}});
-
-        if (auto texture = loadTexture(texture_name)) {
+        if (auto texture = loadTexture(lod)) {
             res.texture = std::move(texture.value());
         } else {
             return std::unexpected("getting texture: " + texture.error());
         }
     }
 
+    if (corners_label_) {
+        const auto corners
+            = storage_.getPtr<compute::BufferBinding>(corners_label_.value());
+        if (!corners) {
+            return std::unexpected("could not get corners binding");
+        }
+
+        const auto data = gpu_->readBuffer(**corners);
+        if (!data) {
+            return std::unexpected("reading corners data: "
+                                   + std::move(data).error());
+        }
+
+        auto extracted = impl::ExtractLodCorners(data.value());
+
+        debug_check_zero_values(
+            std::span(extracted.values()),
+            [](const Corner& c) { return c.strength > 0; }, "corners");
+
+        for (const auto& [lod, features] : extracted) {
+            result[lod].corners = std::move(features);
+        }
+    }
+
     if (features_label_) {
-        const auto features_bind
-            = storage_.getPtr<compute::BufferBinding>(features_label_.value());
-        if (!features_bind) {
+        const auto features
+            = storage_.getPtr<compute::BufferBinding>(*features_label_);
+
+        if (!features) {
             return std::unexpected("could not get features binding");
         }
 
-        auto data = gpu_->readBuffer(**features_bind);
+        const auto data = gpu_->readBuffer(**features);
+
         if (!data) {
-            return std::unexpected("reading feautres buffer binding: "
-                                   + data.error());
+            return std::unexpected("reading features data: "
+                                   + std::move(data).error());
         }
 
-        auto extracted = impl::ExtractFeaturePerLod(data.value());
+        auto extracted = utils::ExtractFeatures(data.value());
+
+        debug_check_zero_values(
+            std::span(extracted.values()),
+            [](const Feature& c) { return c.strength > 0; }, "features");
 
         for (const auto& [lod, features] : extracted) {
             result[lod].features = std::move(features);
@@ -63,12 +121,8 @@ WgpuResourceProvider::GetResources() {
 }
 
 std::expected<compute::TextureData, std::string>
-WgpuResourceProvider::loadTexture(const std::string& name) {
-    const auto texture_ptr = storage_.getPtr<wgpu::Texture>(name);
-    if (!texture_ptr) {
-        return std::unexpected("could not get gexture by key");
-    }
-    const auto& texture = *texture_ptr.value();
+WgpuResourceProvider::loadTexture(size_t lod) {
+    const auto& texture = shared_.getTexture(lod);
 
     const auto texture_data
         = gpu_->readTexture(texture, GPUConst::pixel_size, true)
@@ -79,8 +133,7 @@ WgpuResourceProvider::loadTexture(const std::string& name) {
     return texture_data;
 }
 
-impl::FeaturesPerLod impl::ExtractFeaturePerLod(
-    std::span<const std::byte> data) {
+impl::FeaturesPerLod impl::ExtractLodCorners(std::span<const std::byte> data) {
     using Block = gpumodels::CornersBlock<GPUConst::frame_width,
                                           GPUConst::frame_height>;
 
@@ -111,6 +164,22 @@ impl::FeaturesPerLod impl::ExtractFeaturePerLod(
     return result;
 }
 
+std::flat_map<size_t, std::vector<Feature>> utils::ExtractFeatures(
+    std::span<const std::byte> data) {
+    std::flat_map<size_t, std::vector<Feature>> result;
+
+    const auto* array
+        = reinterpret_cast<const gpumodels::FeatureArray<>*>(data.data());
+
+    std::span<const Feature> features{array->values.data(), array->count};
+
+    for (const auto& feat : features) {
+        result[feat.lod].emplace_back(feat);
+    }
+
+    return result;
+}
+
 #undef LOG_ID
 #define LOG_ID "[Vizualize Data pass]"
 
@@ -135,20 +204,8 @@ std::optional<std::string> VisualizeDataPass::execute() {
 
 #ifndef NDEBUG
     const auto& res = resources.value();
-    for (size_t lod = 0; lod < res.size(); lod++) {
-        spdlog::debug(LOG_ID " Resources for lod:{}: total_features:{}", lod,
-                      res.at(lod).features.value_or({}).size());
-
-        const size_t pairs_to_print = 30;
-        std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> to_print;
-        to_print.reserve(pairs_to_print);
-
-        for (const auto& feature :
-             res.at(lod).features.value() | std::views::take(pairs_to_print)) {
-            to_print.emplace_back(feature.x, feature.y, feature.strength);
-        }
-
-        spdlog::debug(LOG_ID " First enties: {}", to_print);
+    for (auto i = 0UZ; i < res.size(); ++i) {
+        spdlog::debug(LOG_ID " Resource {}: {}", i, res.at(i));
     }
 #endif
 
@@ -199,32 +256,55 @@ std::optional<std::string> VisualizeDataPass::drawResource(Resource res) {
         return std::nullopt;  // nothing to show for this resource
     }
 
-    auto& frame = res.texture.value();
-
-    // Adjust the field accesses below to match your FrameRGB definition.
-    VizTexture texture = textureDataToVizTexture(std::move(frame));
+    VizTexture texture
+        = textureDataToVizTexture(std::move(res.texture).value());
     gui_->drawTexture(texture);
 
+    if (res.corners.has_value() && !res.corners->empty()) {
+        drawCorners(res);
+    }
+
     if (res.features.has_value() && !res.features->empty()) {
-        const FeatureStyle style
-            = res.feature_style.value_or(kDefaultFeatureStyle);
-
-        std::vector<VizFeature> viz_features;
-        viz_features.reserve(res.features->size());
-        for (const auto& f : *res.features) {
-            viz_features.push_back(
-                {.x = static_cast<float>(f.x), .y = static_cast<float>(f.y)});
-        }
-
-        // Use `thickness` as a visual radius in pixels. If you want
-        // strength to modulate radius, scale per-feature here instead.
-        const float radius = static_cast<float>(style.thickness) * 1.5F;
-        gui_->drawFeatures({.features = viz_features,
-                            .color = style.color,
-                            .radius = radius,
-                            .image_width = texture.width,
-                            .image_height = texture.height});
+        drawFeatures(res);
     }
 
     return std::nullopt;
+}
+
+void VisualizeDataPass::drawCorners(const Resource& res) {
+    const CornerStyle style = res.corner_style.value_or(kDefaultCornerStyle);
+
+    std::vector<VizCorner> viz_features;
+    viz_features.reserve(res.corners->size());
+    for (const auto& f : res.corners.value()) {
+        viz_features.push_back(
+            {.x = static_cast<float>(f.x), .y = static_cast<float>(f.y)});
+    }
+
+    // Use `thickness` as a visual radius in pixels. If you want
+    // strength to modulate radius, scale per-feature here instead.
+    const float radius = static_cast<float>(style.thickness) * 1.5F;
+    gui_->drawCorners({.corners = viz_features,
+                       .color = style.color,
+                       .radius = radius,
+                       .image_width = res.texture.value().width,
+                       .image_height = res.texture.value().height});
+}
+
+void VisualizeDataPass::drawFeatures(const Resource& res) {
+    const auto style = res.feature_style.value_or(kDefaultFeatureStyle);
+
+    std::vector<Feature> features;
+    features.reserve(res.features.value().size());
+
+    gui_->drawFeatures({
+        .features = res.features.value(),
+        .test_set = res.brief_tests.value_or(kDefaultBRIEFTestSet),
+        .feature_color = style.feature_color,
+        .bit_one_color = style.bit_one_color,
+        .bit_zero_color = style.bit_zero_color,
+        .radius = style.radius,
+        .image_width = res.texture.value().width,
+        .image_height = res.texture.value().height,
+    });
 }

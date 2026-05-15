@@ -382,28 +382,25 @@ void CullCornersPass::writeWorkflowPass(
 
     pass.End();
 }
-namespace {
-constexpr uint32_t ceilDiv(uint32_t n, uint32_t d) { return (n + d - 1) / d; }
-};  // namespace
 
 std::array<std::array<uint32_t, 3>, 2> CullCornersPass::getDispatchSize() {
-    const uint32_t horx = ceilDiv(GPUConst::frame_width, kRegionSize);
+    const uint32_t horx = CeilDiv(GPUConst::frame_width, kRegionSize);
     const uint32_t hory = GPUConst::frame_height;
     const uint32_t horz = GPUConst::levels_of_detail;
 
     constexpr std::array<uint32_t, 3> horizontal{
-        ceilDiv(horx, kWgSize[0]),
-        ceilDiv(hory, kWgSize[1]),
-        ceilDiv(horz, kWgSize[2]),
+        CeilDiv(horx, kWgSize[0]),
+        CeilDiv(hory, kWgSize[1]),
+        CeilDiv(horz, kWgSize[2]),
     };
 
     const uint32_t vert_x = GPUConst::frame_width;
-    const uint32_t vert_y = ceilDiv(GPUConst::frame_height, kRegionSize);
+    const uint32_t vert_y = CeilDiv(GPUConst::frame_height, kRegionSize);
     const uint32_t vert_z = GPUConst::levels_of_detail;
     constexpr std::array<uint32_t, 3> vertical{
-        ceilDiv(vert_x, kWgSize[0]),
-        ceilDiv(vert_y, kWgSize[1]),
-        ceilDiv(vert_z, kWgSize[2]),
+        CeilDiv(vert_x, kWgSize[0]),
+        CeilDiv(vert_y, kWgSize[1]),
+        CeilDiv(vert_z, kWgSize[2]),
     };
 
     return {horizontal, vertical};

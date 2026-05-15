@@ -3,6 +3,7 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include <flat_map>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <utility>
@@ -16,25 +17,49 @@
 
 namespace wslam::viz {
 
+struct CornerStyle {
+    std::array<uint8_t, 3> color;
+    uint8_t thickness;
+};
+
+struct FeatureStyle {
+    std::array<uint8_t, 3> feature_color;
+    std::array<uint8_t, 3> bit_one_color;
+    std::array<uint8_t, 3> bit_zero_color;
+    float radius;
+};
+
 struct Resource {
     std::string title;
     std::optional<wslam::compute::TextureData> texture;
+    std::optional<CornerStyle> corner_style;
+    std::optional<std::vector<Corner>> corners;
     std::optional<FeatureStyle> feature_style;
-    std::optional<std::vector<Corner>> features;
+    std::optional<std::vector<Feature>> features;
+    std::optional<std::reference_wrapper<const gpumodels::BRIEFTestSet>>
+        brief_tests;
 };
 
-constexpr FeatureStyle kDefaultFeatureStyle{.color = {255, 0, 0},
-                                            .thickness = 5};
-constexpr auto kDefaultTexutreName = "viz_texture";
+constexpr CornerStyle kDefaultCornerStyle{.color = {255, 0, 0}, .thickness = 5};
+constexpr FeatureStyle kDefaultFeatureStyle{
+    .feature_color = {255, 0, 0},
+    .bit_one_color = {255, 255, 255},
+    .bit_zero_color = {0, 0, 255},
+    .radius = 5.0F,
+};
+constexpr auto kDefaultTextureName = "viz_texture";
+constexpr gpumodels::BRIEFTestSet kDefaultBRIEFTestSet{
+#include "brief_tests.inc"
+};
 
 class ReourceBuilder {
    public:
-    constexpr ReourceBuilder& SetFeatureStyle(FeatureStyle style) {
-        res_.feature_style = style;
+    constexpr ReourceBuilder& SetFeatureStyle(CornerStyle style) {
+        res_.corner_style = style;
         return *this;
     }
     constexpr ReourceBuilder& SetFeatures(std::vector<Corner>&& features) {
-        res_.features = std::move(features);
+        res_.corners = std::move(features);
         return *this;
     }
     constexpr ReourceBuilder& SetTexture(wslam::compute::TextureData texture) {
@@ -52,8 +77,11 @@ class ReourceBuilder {
     Resource res_{
         .title = ResourceIdentifier::GetFrameName(0),
         .texture = std::nullopt,
-        .feature_style = kDefaultFeatureStyle,
+        .corner_style = std::nullopt,
+        .corners = std::nullopt,
+        .feature_style = std::nullopt,
         .features = std::nullopt,
+        .brief_tests = std::nullopt,
     };
 };
 
@@ -61,7 +89,7 @@ namespace impl {
 using FeaturesPerLod = std::flat_map<LOD, std::vector<Corner>>;
 ;
 
-FeaturesPerLod ExtractFeaturePerLod(std::span<const std::byte> data);
+FeaturesPerLod ExtractLodCorners(std::span<const std::byte> data);
 };  // namespace impl
 
 class ResourceProvider {
@@ -77,28 +105,34 @@ class WgpuResourceProvider : public ResourceProvider {
    public:
     struct Opts {
         AnyBag& storage;
+        GpuSharedBindings& shared;
         std::shared_ptr<compute::GPU> gpu;
         std::initializer_list<LOD> lod_levels;
+        std::optional<std::string> corners_label = std::nullopt;
         std::optional<std::string> features_label = std::nullopt;
     };
 
     WgpuResourceProvider(Opts opts)
         : ResourceProvider(),
           storage_(opts.storage),
+          shared_(opts.shared),
           gpu_(std::move(opts.gpu)),
           lod_levels_(opts.lod_levels),
+          corners_label_(std::move(opts.corners_label)),
           features_label_(std::move(opts.features_label)) {}
 
     std::expected<ResourceVec, std::string> GetResources() override;
 
    private:
     AnyBag& storage_;
+    GpuSharedBindings& shared_;
     std::shared_ptr<compute::GPU> gpu_;
     std::initializer_list<LOD> lod_levels_;
+    std::optional<std::string> corners_label_;
     std::optional<std::string> features_label_;
 
     [[nodiscard]] std::expected<compute::TextureData, std::string> loadTexture(
-        const std::string& name);
+        size_t lod);
 
     [[nodiscard]] ResourceVec resourceMapToVec(
         std::flat_map<LOD, Resource>& features);
@@ -119,7 +153,100 @@ class VisualizeDataPass : public wslam::compute::Pass {
     std::unique_ptr<ResourceProvider> res_provider_;
 
     std::optional<std::string> drawResource(Resource res);
-    std::optional<std::string> drawCorners();
+    void drawCorners(const Resource& res);
+    void drawFeatures(const Resource& res);
     void handleNext();
 };
 };  // namespace wslam::viz
+
+namespace {
+
+constexpr bool is_non_zero(std::uint8_t v) noexcept { return v != 0; }
+constexpr bool is_non_zero(std::uint32_t v) noexcept { return v != 0; }
+constexpr bool is_non_zero(std::int32_t v) noexcept { return v != 0; }
+constexpr bool is_non_zero(const wslam::Corner& c) noexcept {
+    return c.strength != 0;
+}
+constexpr bool is_non_zero(const wslam::Feature& f) noexcept {
+    return f.strength != 0;
+}
+
+template <typename Container>
+constexpr std::size_t count_non_zero(const Container& c) noexcept {
+    return static_cast<std::size_t>(
+        std::count_if(std::begin(c), std::end(c),
+                      [](const auto& v) { return is_non_zero(v); }));
+}
+
+}  // namespace
+   //
+template <>
+struct std::formatter<wslam::viz::CornerStyle> {
+    static constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+    static constexpr auto format(const wslam::viz::CornerStyle& s,
+                                 std::format_context& ctx) {
+        return std::format_to(ctx.out(),
+                              "{{CornerStyle color:[{},{},{}] thickness:{} }}",
+                              static_cast<unsigned>(s.color[0]),
+                              static_cast<unsigned>(s.color[1]),
+                              static_cast<unsigned>(s.color[2]),
+                              static_cast<unsigned>(s.thickness));
+    }
+};
+
+template <>
+struct std::formatter<wslam::viz::FeatureStyle> {
+    static constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+    static constexpr auto format(const wslam::viz::FeatureStyle& s,
+                                 std::format_context& ctx) {
+        return std::format_to(
+            ctx.out(),
+            "{{FeatureStyle feature_color:[{},{},{}] "
+            "bit_one_color:[{},{},{}] bit_zero_color:[{},{},{}] radius:{} }}",
+            static_cast<unsigned>(s.feature_color[0]),
+            static_cast<unsigned>(s.feature_color[1]),
+            static_cast<unsigned>(s.feature_color[2]),
+            static_cast<unsigned>(s.bit_one_color[0]),
+            static_cast<unsigned>(s.bit_one_color[1]),
+            static_cast<unsigned>(s.bit_one_color[2]),
+            static_cast<unsigned>(s.bit_zero_color[0]),
+            static_cast<unsigned>(s.bit_zero_color[1]),
+            static_cast<unsigned>(s.bit_zero_color[2]), s.radius);
+    }
+};
+
+template <>
+struct std::formatter<wslam::viz::Resource> {
+    static constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+    static auto format(const wslam::viz::Resource& r,
+                       std::format_context& ctx) {
+        auto out
+            = std::format_to(ctx.out(), "{{Resource title:\"{}\" texture:{}",
+                             r.title, r.texture.has_value());
+        if (r.corner_style) {
+            out = std::format_to(out, " corner_style:{}", *r.corner_style);
+        }
+        if (r.corners) {
+            out = std::format_to(out, " corners:{{ size:{} non-zero:{} }}",
+                                 r.corners->size(), count_non_zero(*r.corners));
+        }
+        if (r.feature_style) {
+            out = std::format_to(out, " feature_style:{}", *r.feature_style);
+        }
+        if (r.features) {
+            out = std::format_to(out, " features:{{ size:{} non-zero:{} }}",
+                                 r.features->size(),
+                                 count_non_zero(*r.features));
+        }
+
+        out = std::format_to(out, " brief_tests:{}", !!r.brief_tests);
+
+        return std::format_to(out, " }}");
+    }
+};

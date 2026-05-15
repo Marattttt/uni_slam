@@ -26,12 +26,16 @@ class GenerateFeaturesPass : public compute::Pass {
 
    private:
     static constexpr auto kPassCount = GPUConst::levels_of_detail;
+    static constexpr auto kBriefTestsBindingLabel
+        = "generate_features:BRIEF tests";
+    static constexpr auto kLodValuesBindingLabel = "generate_features:LODs";
 
     const std::string kCornersLabel;
     const std::string kFeaturesLabel;
 
     GpuSharedBindings& shared_;
     std::optional<compute::BufferBinding> brief_tests_binding_;
+    std::optional<compute::BufferBinding> lod_idxs_binding_;
 
     std::array<wgpu::BindGroupLayout, 2> bind_group_layouts_;
     std::array<std::array<wgpu::BindGroup, 2>, kPassCount> bind_groups_;
@@ -50,7 +54,7 @@ class GenerateFeaturesPass : public compute::Pass {
     [[nodiscard]] std::expected<void, std::string> initCommonBindgroup();
     [[nodiscard]] std::expected<void, std::string> initPerPassBindgroups();
 
-    [[nodiscard]] std::expected<void, std::string> writeBRIEFvalues();
+    [[nodiscard]] std::expected<void, std::string> writeConstantValues();
 
     void writeSinglePassCommands(const wgpu::CommandEncoder& encoder,
                                  size_t passIdx);

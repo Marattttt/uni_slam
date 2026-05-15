@@ -65,8 +65,5 @@ class FillPyramidPass : public compute::GPUPass {
     [[nodiscard]] std::optional<std::string> writeNonBaseLayers();
     [[nodiscard]] std::optional<std::string> writeLayerN(
         const wgpu::CommandEncoder& encoder, size_t lod);
-
-    void writeTexturesToStorage();
 };
-
 };  // namespace wslam

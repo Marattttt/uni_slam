@@ -9,6 +9,7 @@
 #include <functional>
 #include <string>
 
+#include "models.hpp"
 #include "provider_base.hpp"
 
 namespace wslam::viz {
@@ -18,7 +19,7 @@ struct VizTexture {
     std::vector<data::PixelRGB> data;
 };
 
-struct VizFeature {
+struct VizCorner {
     float x;
     float y;
 };
@@ -47,14 +48,26 @@ class VizGUI {
     void endFrame();
     void addRequestNextCallback(std::function<void()> callback);
 
-    struct Features {
-        const std::vector<VizFeature>& features;
+    struct Corners {
+        const std::vector<VizCorner>& corners;
         std::array<uint8_t, 3> color;
         float radius;
         uint32_t image_width;
         uint32_t image_height;
     };
-    void drawFeatures(Features features);
+    void drawCorners(Corners corners);
+
+    struct VizFeatures {
+        const std::vector<Feature>& features;
+        const gpumodels::BRIEFTestSet& test_set;
+        std::array<uint8_t, 3> feature_color;
+        std::array<uint8_t, 3> bit_one_color;
+        std::array<uint8_t, 3> bit_zero_color;
+        float radius;
+        uint32_t image_width;
+        uint32_t image_height;
+    };
+    void drawFeatures(VizFeatures features);
 
     void drawTestCube();
     void drawTexture(const VizTexture& texture);

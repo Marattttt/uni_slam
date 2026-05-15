@@ -35,8 +35,6 @@ std::optional<std::string> FillPyramidPass::initialize() {
         return "compute pipeline: " + err.value();
     }
 
-    writeTexturesToStorage();
-
     return std::nullopt;
 }
 
@@ -331,11 +329,4 @@ std::optional<std::string> FillPyramidPass::writeLayerN(
         .addCall(std::move(write_lod), std::format(LOG_ID "fill lod {}", lod))
         .executeAll()
         .transform([](const auto& err) { return "awaiter: " + err; });
-}
-
-void FillPyramidPass::writeTexturesToStorage() {
-    for (uint8_t i = 0; i < GPUConst::levels_of_detail; i++) {
-        const auto texture = shared_bindings_.getTexture(i);
-        storage_.set(ResourceIdentifier::GetFrameName({0, LOD{i}}), texture);
-    }
 }

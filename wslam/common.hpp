@@ -27,13 +27,33 @@ constexpr uint32_t frame_width = WSLAM_FRAME_WIDTH;
 constexpr uint32_t frame_height = WSLAM_FRAME_HEIGHT;
 constexpr uint32_t pixel_size = sizeof(float);
 constexpr uint32_t levels_of_detail = 6;
+constexpr uint32_t min_uniform_buffer_alignment = 256;
 constexpr std::string levels_of_detail_str = "6";
 constexpr double lod_scale_factor = 1.2;
 };  // namespace GPUConst
 
-constexpr auto Add256Padding(auto num) {
-    const decltype(num) alignment = std::numeric_limits<uint8_t>::max();
+[[nodiscard]] constexpr uint32_t CeilDiv(uint32_t n, uint32_t d) {
+    return (n + d - 1) / d;
+}
+
+[[nodiscard]] constexpr auto AddPadding(auto num, size_t alignment) {
+    alignment -= 1;
     return (num + alignment) & ~alignment;
+}
+
+template <typename T,
+          std::size_t Alignment = GPUConst::min_uniform_buffer_alignment>
+    requires std::is_trivially_copyable_v<T>
+[[nodiscard]] std::vector<std::byte> AddPadding(std::span<const T> data) {
+    constexpr std::size_t stride
+        = (sizeof(T) + Alignment - 1) / Alignment * Alignment;
+
+    std::vector<std::byte> result(stride * data.size());
+    for (std::size_t i = 0; i < data.size(); ++i) {
+        const auto src = std::as_bytes(data.subspan(i, 1));
+        std::ranges::copy(src, result.begin() + i * stride);
+    }
+    return result;
 }
 
 namespace GPUBindingSize {
@@ -79,6 +99,9 @@ constexpr std::string GetFrameName(std::pair<uint32_t, LOD> info) {
 constexpr std::string GetFrameName(uint32_t frame_idx) {
     return GetFrameName({frame_idx, {0}});
 };
+constexpr std::string GetTextureName(size_t lod) {
+    return std::format("res:texture:lod:{}", lod);
+}
 constexpr std::string GetImuVecName() { return "res:imu:vec"; }
 constexpr std::string GetVizResourceName() { return "res:viz"; }
 }  // namespace ResourceIdentifier
@@ -91,7 +114,9 @@ class GpuSharedBindings {
         : gpu_(gpu), storage(storage) {}
 
     [[nodiscard]] std::optional<std::string> initialize();
-    [[nodiscard]] const wgpu::Texture& getTexture(size_t lod) const;
+    [[nodiscard]] constexpr wgpu::Texture getTexture(size_t lod) const {
+        return textures_.at(lod);
+    }
     [[nodiscard]] constexpr const AnyBag& getStorage() const { return storage; }
     [[nodiscard]] constexpr AnyBag& getStorage() { return storage; }
 

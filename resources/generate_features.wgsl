@@ -2,7 +2,6 @@
 // as 'override' values are not yet supported as array sizes at the moment
 const LOD_COUNT = 0x69u;
 const FEATURE_BLOCK_SZ = 0x69u;
-override ORIENTATION_R: i32 = 3;
 
 struct CornerBlock {
     width: u32,
@@ -17,10 +16,10 @@ struct PointPair {
     by: i32,
 };
 
-alias Descriptor = array<u32, 4>; // 256 bit string
+alias Descriptor = array<u32, 8>; // 256 bit string
 
 struct Feature {
-    coords: vec2<u32>,
+    coords: vec3<u32>,
     strength: u32,
     orientation: f32,
     descriptor: Descriptor,
@@ -34,20 +33,21 @@ struct FeatureArray {
 @group(0) @binding(0) var<storage, read> corners: array<CornerBlock, LOD_COUNT>;
 @group(0) @binding(1) var<uniform> brief_tests: array<PointPair, 256>;
 @group(0) @binding(2) var<storage, read_write> features: FeatureArray;
+@group(0) @binding(3) var samp: sampler; // linear filtering, clamp-to-edge
 
 @group(1) @binding(0) var image: texture_2d<f32>;
-@group(1) @binding(1) var samp: sampler; // linear filtering, clamp-to-edge
+@group(1) @binding(1) var<uniform> lod: u32;
 
 override WG_SIZE_X: u32;
 override WG_SIZE_Y: u32;
+override ORIENTATION_R: i32 = 3;
 
 @compute @workgroup_size(WG_SIZE_X, WG_SIZE_Y, 1) 
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let x = gid.x;
     let y = gid.y;
-    let lod = gid.z;
 
-    if lod > LOD_COUNT { return; }
+    if lod >= LOD_COUNT { return; }
 
     let block = &corners[lod];
 
@@ -62,7 +62,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let descriptor = computeDescriptor(vec2(i32(gid.x), i32(gid.y)), orientation);
 
     let feature = Feature(
-        gid.xy,
+        vec3(gid.x, gid.y, lod),
         strength,
         orientation,
         descriptor,
@@ -149,7 +149,8 @@ fn gaussianTap9(centerPx: vec2<u32>) -> f32 {
         f32(centerPx.x) / dims.x,
         f32(centerPx.y) / dims.y
     );
-    let uv = (centerUV + vec2<f32>(0.5)) * texel; // pixel-center to UV
+    // let uv = (centerUV + vec2<f32>(0.5)) * texel; // pixel-center to UV
+    let uv = (vec2<f32>(centerPx) + vec2<f32>(0.5)) * texel;
 
     let offsets = array<f32, 3>(-1.2, 0.0, 1.2);
     let weights = array<f32, 3>(0.3125, 0.375, 0.3125);

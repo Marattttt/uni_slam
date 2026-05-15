@@ -385,9 +385,9 @@ std::optional<std::string> PassDetectCorners::execute() {
         pass.SetBindGroup(0, common_bind_group_);
         pass.SetBindGroup(1, per_pass_bind_groups_.at(i));
 
-        const auto& view_tex = shared_bindings_.getTexture(i);
-        const uint32_t w = view_tex.GetWidth();
-        const uint32_t h = view_tex.GetHeight();
+        const auto texture = shared_bindings_.getTexture(i);
+        const uint32_t w = texture.GetWidth();
+        const uint32_t h = texture.GetHeight();
         constexpr uint32_t wg = 8;  // matches WORKGROUP_SIZE override
         pass.DispatchWorkgroups((w + wg - 1) / wg, (h + wg - 1) / wg, 1);
 
