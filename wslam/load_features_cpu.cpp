@@ -61,10 +61,10 @@ std::optional<std::string> LoadDataCPUPass::execute() {
         return textures.error();
     }
 
-    spdlog::debug(LOG_ID " Loaded texture data; texture sizes: {}",
-                  textures.value() | std::views::transform([](auto&& t) {
-                      return std::make_pair(t.width, t.height);
-                  }));
+    spdlog::info(LOG_ID " Loaded texture data; texture sizes: {}",
+                 textures.value() | std::views::transform([](auto&& t) {
+                     return std::make_pair(t.width, t.height);
+                 }));
 
     auto features = loadFeatures().transform_error(
         [](auto&& err) { return "features: " + err; });
@@ -73,8 +73,8 @@ std::optional<std::string> LoadDataCPUPass::execute() {
         return features.error();
     }
 
-    spdlog::debug(LOG_ID " Loaded features data; total features: {}",
-                  features.value().size());
+    spdlog::info(LOG_ID " Loaded features data; total features: {}",
+                 features.value().size());
 
     auto& storage = shared_.getStorage();
 
