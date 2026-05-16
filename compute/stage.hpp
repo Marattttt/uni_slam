@@ -13,6 +13,8 @@ namespace compute {
 
 class Compute;
 
+constexpr std::string kStageStopExecution = "STAGE_STOP";
+
 class Stage {
     friend class Compute;
 

@@ -38,6 +38,8 @@ struct PreinitOpts {
 
 PreinitOpts createPreInitializeOpts(DefinedWorkflow = DefinedWorkflow::None);
 
+constexpr std::string kComputeStopExecution = "COMP_STOP";
+
 class Compute {
    public:
     using StorageKeyType = std::string;

@@ -4,13 +4,14 @@
 
 #include <algorithm>
 
+#include "compute.hpp"
 #include "pass.hpp"
 #include "pass_hellowgsl.hpp"
 
 using namespace wslam::compute;
 
-Stage::Stage(std::string type, std::shared_ptr<GPU> gpu)
-    : gpu_(std::move(gpu)), id_("[" + std::move(type) + "]") {}
+Stage::Stage(std::string id, std::shared_ptr<GPU> gpu)
+    : gpu_(std::move(gpu)), id_("[" + std::move(id) + "]") {}
 
 std::optional<std::string> Stage::initialize() {
     spdlog::info("[Stage] Initializing stage {}", getId());
@@ -31,6 +32,20 @@ std::optional<std::string> Stage::execute() {
 
     for (std::unique_ptr<Pass>& pass : passes_) {
         auto err = pass->execute();
+
+        if (err.value_or("") == kStageStopExecution) {
+            spdlog::info("[Stage] Received stop execution command from pass {}",
+                         pass->getId());
+            return {};
+        }
+
+        if (err.value_or("") == kComputeStopExecution) {
+            spdlog::info(
+                "[Stage] Received stop compute execution command from pass {}",
+                pass->getId());
+            return kComputeStopExecution;
+        }
+
         if (err) {
             return std::format("executing pass {}: {}", pass->getId(),
                                err.value());

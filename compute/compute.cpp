@@ -101,6 +101,13 @@ std::optional<std::string> Compute::initizalizeAllStages() {
 std::optional<std::string> Compute::execute() {
     for (Stage& stage : stages_) {
         if (auto err = stage.execute()) {
+            if (err.value() == kComputeStopExecution) {
+                spdlog::info("[COMPUTE] Execution stop requested from stage {}",
+                             stage.getId());
+
+                return {};
+            }
+
             return std::format("executing stage {}: {}", stage.getId(),
                                err.value());
         }
