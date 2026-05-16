@@ -59,6 +59,7 @@ static_assert(offsetof(Feature, strength) == 12);
 static_assert(offsetof(Feature, orientation) == 16);
 static_assert(offsetof(Feature, descriptor) == 20);
 // NOLINTEND(readability-magic-numbers)
+using FeatureSet = std::array<std::vector<Feature>, GPUConst::levels_of_detail>;
 
 namespace gpumodels {
 // NOLINTNEXTLINE(readability-magic-numbers)

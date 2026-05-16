@@ -15,8 +15,7 @@ compute::Stage wslam::CreatePoseEstimateCPUStage(
     compute::Stage stage{"Pose Estimate", gpu};
 
     stage.add_pass(std::make_unique<LoadDataCPUPass>(
-        shared, gpu, "cpu:texture_data",
-        std::make_pair(std::move(features_binding_label), "cpu:features")));
+        shared, gpu, std::move(features_binding_label)));
 
     return stage;
 }

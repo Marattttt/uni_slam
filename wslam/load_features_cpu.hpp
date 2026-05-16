@@ -11,13 +11,9 @@ namespace wslam {
 class LoadDataCPUPass : public compute::Pass {
    public:
     LoadDataCPUPass(GpuSharedBindings& shared,
-                    std::shared_ptr<compute::GPU> gpu,
-                    std::string textures_out_label,
-                    std::pair<std::string, std::string> features)
+                    std::shared_ptr<compute::GPU> gpu, std::string features)
         : compute::Pass(std::move(gpu)),
-          kTexturesOutputLabel(std::move(textures_out_label)),
-          kFeaturesGPULabel(std::move(features.first)),
-          kFeaturesOutputLabel(std::move(features.second)),
+          kFeaturesGPULabel(std::move(features)),
           shared_(shared) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
@@ -27,10 +23,7 @@ class LoadDataCPUPass : public compute::Pass {
    private:
     static constexpr size_t kLodCount = GPUConst::levels_of_detail;
 
-    const std::string kTexturesGPULabel;
-    const std::string kTexturesOutputLabel;
     const std::string kFeaturesGPULabel;
-    const std::string kFeaturesOutputLabel;
 
     GpuSharedBindings& shared_;
 
@@ -42,5 +35,7 @@ class LoadDataCPUPass : public compute::Pass {
     std::expected<std::array<compute::TextureData, kLodCount>, std::string>
     loadTextureData();
     std::expected<std::vector<Feature>, std::string> loadFeatures();
+
+    void shiftFeatureSets();
 };
 };  // namespace wslam

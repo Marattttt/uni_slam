@@ -28,7 +28,9 @@ constexpr uint32_t frame_height = WSLAM_FRAME_HEIGHT;
 constexpr uint32_t pixel_size = sizeof(float);
 constexpr uint32_t levels_of_detail = 6;
 constexpr uint32_t min_uniform_buffer_alignment = 256;
-constexpr std::string levels_of_detail_str = "6";
+
+constexpr uint32_t featuesets_stored = 2;
+
 constexpr double lod_scale_factor = 1.2;
 };  // namespace GPUConst
 
@@ -104,6 +106,13 @@ constexpr std::string GetTextureName(size_t lod) {
 }
 constexpr std::string GetImuVecName() { return "res:imu:vec"; }
 constexpr std::string GetVizResourceName() { return "res:viz"; }
+constexpr std::string GetProcessedFrameName(uint32_t keyframes_ago,
+                                            uint32_t lod) {
+    return std::format("gen:frame:-{}:lod:{}", keyframes_ago, lod);
+}
+constexpr std::string GetFeatureSetName(size_t keyframes_ago) {
+    return std::format("gen:featureset:-{}", keyframes_ago);
+}
 }  // namespace ResourceIdentifier
 
 class FillPyramidPass;

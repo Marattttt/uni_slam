@@ -78,10 +78,39 @@ std::optional<std::string> LoadDataCPUPass::execute() {
 
     auto& storage = shared_.getStorage();
 
-    storage.set(kTexturesOutputLabel, std::move(textures).value());
-    storage.set(kFeaturesOutputLabel, std::move(features).value());
+    for (uint32_t i = 0; i < features->size(); i++) {
+        storage.set(ResourceIdentifier::GetProcessedFrameName(0, i),
+                    std::move(textures).value());
+    }
+
+    shiftFeatureSets();
+
+    storage.set(ResourceIdentifier::GetFeatureSetName(0),
+                std::move(features).value());
 
     return {};
+}
+
+void LoadDataCPUPass::shiftFeatureSets() {
+    for (auto i : std::views::iota(0U, GPUConst::featuesets_stored)
+                      | std::views::reverse) {
+        auto& storage = shared_.getStorage();
+
+        auto set = storage.take<FeatureSet>(
+            ResourceIdentifier::GetFeatureSetName(i), false);
+
+        // Remove longest kept feature set
+        if (!set) {
+            continue;
+        }
+
+        if (i == GPUConst::featuesets_stored) {
+            continue;
+        }
+
+        storage.set(ResourceIdentifier::GetFeatureSetName(i + 1),
+                    std::move(set).value());
+    }
 }
 
 auto LoadDataCPUPass::loadTextureData()
