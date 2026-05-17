@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "common.hpp"
+#include "compute.hpp"
 #include "provider_base.hpp"
 
 using namespace wslam;
@@ -27,10 +28,11 @@ std::optional<std::string> SensorLoaderPass::execute() {
 
     if (iter_ == std::nullopt) {
         iter_ = generator_.begin();
-    }
-
-    if (iter_.value() == generator_.end()) {
-        return "end of readigs reached";
+    } else if (iter_.value() == generator_.end()) {
+        spdlog::info(LOG_ID " No more sensor readings. Stopping execution");
+        return compute::kComputeStopExecution;
+    } else {
+        iter_.value()++;
     }
 
     std::vector<data::IMUReading> temp_imu{};

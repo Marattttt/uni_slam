@@ -243,6 +243,10 @@ std::optional<std::string> FillPyramidPass::writeBaseLayer() {
         return "end of data";
     }
 
+    if (data->size() == 0) {
+        return "data is empty";
+    }
+
     const auto image_head = data.value() | std::views::take(10)
                             | std::views::transform([](const auto& x) {
                                   return static_cast<uint8_t>(x);

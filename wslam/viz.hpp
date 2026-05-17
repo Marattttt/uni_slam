@@ -46,7 +46,7 @@ class VizGUI {
     void closeWindow();
     void startFrame();
     void endFrame();
-    void addRequestNextCallback(std::function<void()> callback);
+    void addCallback(char key, std::function<void()> callback);
 
     struct Corners {
         const std::vector<VizCorner>& corners;

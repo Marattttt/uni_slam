@@ -185,12 +185,20 @@ std::flat_map<size_t, std::vector<Feature>> utils::ExtractFeatures(
 std::string VisualizeDataPass::getId() const { return LOG_ID; }
 
 std::optional<std::string> VisualizeDataPass::initialize() {
-    return std::nullopt;
+    spdlog::info(LOG_ID " Initializing");
+    auto gui_res = VizGUI::create({}).transform_error(
+        [](auto&& err) { return "creating window: " + err; });
+
+    if (!gui_res) {
+        return std::move(gui_res).error();
+    }
+
+    gui_ = std::move(gui_res.value());
+
+    return {};
 }
 
 std::optional<std::string> VisualizeDataPass::execute() {
-    gui_ = std::move(VizGUI::create({}).value());
-
     auto resources = res_provider_->GetResources();
     if (!resources) {
         return "getting data: " + resources.error();
@@ -209,12 +217,15 @@ std::optional<std::string> VisualizeDataPass::execute() {
 #endif
 
     size_t current_idx = 0;
-    gui_->addRequestNextCallback([&] {
+    gui_->addCallback('n', [&] {
         current_idx = (current_idx + 1) % resources->size();
         spdlog::debug(LOG_ID " advancing to resource {}", current_idx);
     });
 
-    while (!gui_->windowShouldClose()) {
+    bool should_continue = true;
+    gui_->addCallback('N', [&] { should_continue = false; });
+
+    while (!gui_->windowShouldClose() && should_continue) {
         gui_->startFrame();
 
         const auto& resource = resources->at(current_idx);

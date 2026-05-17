@@ -43,8 +43,8 @@ std::expected<VizGUI, std::string> VizGUI::create(VizInitOpts opts) {
     }
 }
 
-void VizGUI::addRequestNextCallback(std::function<void()> callback) {
-    pangolin::RegisterKeyPressCallback('n', std::move(callback));
+void VizGUI::addCallback(char key, std::function<void()> callback) {
+    pangolin::RegisterKeyPressCallback(key, std::move(callback));
 }
 
 bool VizGUI::windowShouldClose() { return pangolin::ShouldQuit(); }

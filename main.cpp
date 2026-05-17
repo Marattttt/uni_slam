@@ -39,9 +39,12 @@ int main_test() {
         std::terminate();
     }
 
-    if (auto err = comp.execute()) {
-        spdlog::error("executing: {}", err.value());
-        std::terminate();
+    while (true) {
+        auto err = comp.execute();
+        if (err) {
+            spdlog::error("executing: {}", err.value());
+            std::terminate();
+        }
     }
 
     return 0;
