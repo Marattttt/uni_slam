@@ -151,11 +151,16 @@ class VisualizeDataPass : public wslam::compute::Pass {
    private:
     std::optional<wslam::viz::VizGUI> gui_;
     std::unique_ptr<ResourceProvider> res_provider_;
+    size_t current_idx_ = 0;
+    size_t resource_count_ = 0;
+    int frames_to_skip_ = 0;
+    bool advance_frame_ = false;
 
     std::optional<std::string> drawResource(Resource res);
     void drawCorners(const Resource& res);
     void drawFeatures(const Resource& res);
-    void handleNext();
+    void initCallbacks();
+    void initNextResourceCallback();
 };
 };  // namespace wslam::viz
 

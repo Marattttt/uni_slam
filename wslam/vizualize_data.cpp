@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "common.hpp"
+#include "compute.hpp"
 #include "gpu.hpp"
 #include "models.hpp"
 
@@ -194,11 +195,43 @@ std::optional<std::string> VisualizeDataPass::initialize() {
     }
 
     gui_ = std::move(gui_res.value());
+    initCallbacks();
 
     return {};
 }
 
+void VisualizeDataPass::initNextResourceCallback() {
+    gui_->addCallback('n', [this] {
+        if (resource_count_ > 0) {
+            current_idx_ = (current_idx_ + 1) % resource_count_;
+            spdlog::debug(LOG_ID " advancing to resource {}", current_idx_);
+        }
+    });
+}
+
+void VisualizeDataPass::initCallbacks() {
+    initNextResourceCallback();
+
+    gui_->addCallback('N', [this] { advance_frame_ = true; });
+
+    for (char c = '1'; c <= '9'; c++) {
+        gui_->addCallback(c, [this, c] {
+            frames_to_skip_ = (c - '0') * 5 - 1;
+            advance_frame_ = true;
+        });
+    }
+    gui_->addCallback('0', [this] {
+        frames_to_skip_ = 49;
+        advance_frame_ = true;
+    });
+}
+
 std::optional<std::string> VisualizeDataPass::execute() {
+    if (frames_to_skip_ > 0) {
+        frames_to_skip_--;
+        return std::nullopt;
+    }
+
     auto resources = res_provider_->GetResources();
     if (!resources) {
         return "getting data: " + resources.error();
@@ -209,6 +242,10 @@ std::optional<std::string> VisualizeDataPass::execute() {
         return std::nullopt;
     }
 
+    resource_count_ = resources->size();
+    current_idx_ = 0;
+    advance_frame_ = false;
+
 #ifndef NDEBUG
     const auto& res = resources.value();
     for (auto i = 0UZ; i < res.size(); ++i) {
@@ -216,25 +253,21 @@ std::optional<std::string> VisualizeDataPass::execute() {
     }
 #endif
 
-    size_t current_idx = 0;
-    gui_->addCallback('n', [&] {
-        current_idx = (current_idx + 1) % resources->size();
-        spdlog::debug(LOG_ID " advancing to resource {}", current_idx);
-    });
-
-    bool should_continue = true;
-    gui_->addCallback('N', [&] { should_continue = false; });
-
-    while (!gui_->windowShouldClose() && should_continue) {
+    while (!gui_->windowShouldClose() && !advance_frame_) {
         gui_->startFrame();
 
-        const auto& resource = resources->at(current_idx);
+        const auto& resource = resources->at(current_idx_);
         if (auto err = drawResource(resource)) {
             return "drawing " + resource.title + ": " + err.value();
         }
 
         gui_->endFrame();
     }
+
+    if (gui_->windowShouldClose()) {
+        return compute::kFullStopExecution;
+    }
+
     return std::nullopt;
 }
 

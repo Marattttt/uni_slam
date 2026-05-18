@@ -39,6 +39,7 @@ struct PreinitOpts {
 PreinitOpts createPreInitializeOpts(DefinedWorkflow = DefinedWorkflow::None);
 
 constexpr std::string kComputeStopExecution = "COMP_STOP";
+constexpr std::string kFullStopExecution = "FULL_STOP";
 
 class Compute {
    public:
