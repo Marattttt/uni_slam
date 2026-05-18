@@ -31,10 +31,14 @@ add_executable(pc_wslam
     wslam/common.cpp
     wslam/cull_corners.cpp
     wslam/detect_corners.cpp
+    wslam/factor_builder.cpp
     wslam/feature_detect.cpp
     wslam/fill_pyramid.cpp
     wslam/generate_features.cpp
+    wslam/isam2_update.cpp
+    wslam/keyframe_gate.cpp
     wslam/load_features_cpu.cpp
+    wslam/mapping.cpp
     wslam/match_features_cpu.cpp
     wslam/pose_estimate_cpu.cpp
     wslam/ransac_cpu.cpp

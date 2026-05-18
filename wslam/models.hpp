@@ -130,6 +130,86 @@ struct TriangulationResult {
     TriangulationStats stats;
 };
 
+// Stable, globally-unique identifiers used to address pose and landmark
+// variables in the GTSAM factor graph. Kept as plain integer wrappers so the
+// rest of the codebase need not depend on GTSAM.
+struct PoseId {
+    uint64_t v = 0;
+    constexpr auto operator<=>(const PoseId&) const = default;
+};
+struct LandmarkId {
+    uint64_t v = 0;
+    constexpr auto operator<=>(const LandmarkId&) const = default;
+};
+
+// A single feature observation of a landmark from a given keyframe pose. The
+// pixel coordinates are in LOD-0 (i.e. already up-sampled from the feature's
+// LOD), which is the space GTSAM's projection factors expect.
+struct LandmarkObservation {
+    PoseId pose;
+    LandmarkId landmark;
+    Eigen::Vector2d pixel_lod0;
+};
+
+// Incremental change emitted by the keyframe gate. Communicates the new
+// keyframe to the factor-builder pass — including its initial pose guess in
+// world coordinates and any new landmarks that need a Point3 variable.
+struct MapDelta {
+    bool accepted = false;             // false ⇒ frame skipped, no-op downstream
+    bool is_first_keyframe = false;    // true ⇒ initialise gauge with priors
+    PoseId pose_id{};
+    // Initial pose estimate (T_world_camera) for the new keyframe. Composed
+    // from the previous keyframe pose and the triangulation R/t.
+    Eigen::Matrix3d R_world_cam = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d t_world_cam = Eigen::Vector3d::Zero();
+
+    // Optional previous pose this keyframe was chained from. Empty on the
+    // very first accepted keyframe.
+    std::optional<PoseId> prev_pose_id;
+    // Relative rotation/translation from prev to current keyframe (in the
+    // prev-camera frame, p_curr = R*p_prev + t). Used to build the
+    // odometry BetweenFactor downstream.
+    Eigen::Matrix3d R_rel = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d t_rel = Eigen::Vector3d::Zero();
+
+    // Landmarks newly created in this frame (need a Point3 variable + a prior
+    // initial guess in world coordinates), and observations to add as
+    // projection factors.
+    std::vector<std::pair<LandmarkId, Eigen::Vector3d>> new_landmarks_world;
+    std::vector<LandmarkObservation> observations;
+};
+
+// Per-keyframe pose recorded in the published snapshot.
+struct KeyframePose {
+    PoseId id;
+    Eigen::Matrix3d R_world_cam = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d t_world_cam = Eigen::Vector3d::Zero();
+};
+
+// Per-landmark world position recorded in the published snapshot.
+struct LandmarkEstimate {
+    LandmarkId id;
+    Eigen::Vector3d position_world = Eigen::Vector3d::Zero();
+};
+
+struct MapStats {
+    size_t keyframes = 0;
+    size_t landmarks = 0;
+    size_t factors = 0;
+    // Reported by the last ISAM2 update. Zero when no update has run yet.
+    double last_relinearised_keys = 0.0;
+    double last_error = 0.0;
+};
+
+// Lightweight snapshot of the current factor-graph estimate. Published every
+// optimised frame so downstream consumers (GUI, telemetry) can read the map
+// state without touching GTSAM headers.
+struct MapSnapshot {
+    std::vector<KeyframePose> keyframes;
+    std::vector<LandmarkEstimate> landmarks;
+    MapStats stats;
+};
+
 namespace gpumodels {
 // NOLINTNEXTLINE(readability-magic-numbers)
 using BRIEFTestSet = std::array<int32_t, 4UZ * 256>;

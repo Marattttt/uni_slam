@@ -64,7 +64,7 @@ struct IMUReading {
     uint64_t timestamp;
 
     // NOLINTBEGIN(readability-magic-numbers)
-    Eigen::Vector<float, 6> vals;
+    Eigen::Matrix<float, 6, 1> vals;
     [[nodiscard]] float wx() const { return vals[0]; }
     [[nodiscard]] float wy() const { return vals[1]; }
     [[nodiscard]] float wz() const { return vals[2]; }

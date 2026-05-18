@@ -74,7 +74,9 @@ int main_test(WslamConfig config) {
 
     auto data_provider = data::AdaptProvider<1UL, 2UL>(euroc_generator);
 
-    CreateWslamPipeline(comp, shared, std::move(data_provider), config);
+    auto handles = CreateWslamPipeline(comp, shared, std::move(data_provider),
+                                       config);
+    (void)handles;  // keep mapping state alive for the duration of the run
 
     if (auto err = comp.initizalizeAllStages()) {
         spdlog::error("initializing stages: {}", err.value());

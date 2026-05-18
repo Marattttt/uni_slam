@@ -236,7 +236,7 @@ std::expected<std::vector<IMUReading>, std::string> loadIMUReadings(
     const int csvColumns = 7;
 
     uint64_t timestamp;
-    Eigen::Vector<float, csvColumns - 1> values;
+    Eigen::Matrix<float, csvColumns - 1, 1> values;
 
     std::vector<IMUReading> readings;
 

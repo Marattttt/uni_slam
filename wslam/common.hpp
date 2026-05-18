@@ -124,6 +124,8 @@ constexpr std::string GetFeatureSetName(size_t keyframes_ago) {
 constexpr std::string MatchedFeaturesName = "gen:feat:match";
 constexpr std::string RansacResultName = "gen:feat:ransac";
 constexpr std::string TriangulationResultName = "gen:tri";
+constexpr std::string MapDeltaName = "gen:map:delta";
+constexpr std::string MapSnapshotName = "gen:map:snap";
 constexpr std::string GetCameraIntrinsicsName(uint32_t cam_idx) {
     return std::format("res:cam:intrinsics:{}", cam_idx);
 }

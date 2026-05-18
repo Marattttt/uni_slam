@@ -39,8 +39,9 @@ IMUReading interpolateIMU(std::span<IMUReading> readings, uint64_t image_ts) {
     float accel_z = prev.az() + factor * (next.az() - prev.az());
 
     // IMU does not contain rotation data
-    return {.timestamp = image_ts,
-            .vals = {accel_x, accel_y, accel_z, 0, 0, 0}};
+    Eigen::Matrix<float, 6, 1> vals;
+    vals << accel_x, accel_y, accel_z, 0.0F, 0.0F, 0.0F;
+    return {.timestamp = image_ts, .vals = vals};
 }
 
 FrameBW frameRGBToBW(const FrameRGB& frame) {

@@ -5,13 +5,21 @@
 #include "common.hpp"
 #include "compute.hpp"
 #include "feature_detect.hpp"
+#include "mapping.hpp"
 #include "pass.hpp"
 #include "pose_estimate_cpu.hpp"
 #include "provider_base.hpp"
 
 namespace wslam {
 
-constexpr void CreateWslamPipeline(
+// Long-lived handles created by CreateWslamPipeline that need to outlive
+// Compute (they own shared CPU state referenced by passes). The caller keeps
+// this struct in scope for as long as Compute runs.
+struct WslamPipelineHandles {
+    std::shared_ptr<MappingState> mapping_state;
+};
+
+inline WslamPipelineHandles CreateWslamPipeline(
     compute::Compute& compute, GpuSharedBindings& shared,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
     WslamConfig config = {}) {
@@ -29,5 +37,12 @@ constexpr void CreateWslamPipeline(
 
     compute.addStage(
         CreatePoseEstimateCPUStage(compute, shared, "features", config));
+
+    auto mapping = CreateMappingStage(compute, compute.getStorage(), config);
+    compute.addStage(std::move(mapping.stage));
+
+    return WslamPipelineHandles{
+        .mapping_state = std::move(mapping.state),
+    };
 }
 };  // namespace wslam
