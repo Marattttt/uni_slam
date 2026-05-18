@@ -82,4 +82,5 @@ target_link_libraries(pc_wslam
     yaml-cpp::yaml-cpp
     nlohmann_json::nlohmann_json
     fast_cpp_csv_parser
+    gtsam
 )

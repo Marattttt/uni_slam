@@ -107,4 +107,8 @@ function (configureDependencies)
     set(Pangolin_DIR "${PROJECT_SOURCE_DIR}/vendor/pangolin/install/lib/cmake/Pangolin")
     find_package(Pangolin 0.8 REQUIRED)
     include_directories(${Pangolin_INCLUDE_DIRS})
+
+    # Why not vendor it?
+    set(GTSAM_DIR "${PROJECT_SOURCE_DIR}/vendor/gtsam/install/lib/cmake/GTSAM")
+    find_package(GTSAM REQUIRED)
 endfunction()
