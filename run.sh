@@ -7,8 +7,9 @@ LOG_AWAITER=OFF
 RUN_ARGS=()
 for arg in "$@"; do
     case "$arg" in
-        awaiter) LOG_AWAITER=ON ;;
-        -gui)    RUN_ARGS+=("-gui") ;;
+        awaiter)        LOG_AWAITER=ON ;;
+        -gui)           RUN_ARGS+=("-gui") ;;
+        --max-iters=*)  RUN_ARGS+=("$arg") ;;
     esac
 done
 

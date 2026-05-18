@@ -1,9 +1,11 @@
 #pragma once
 
+#include <Eigen/Core>
 #include <array>
 #include <bit>
 #include <cstdint>
 #include <flat_map>
+#include <vector>
 
 #include "common.hpp"
 
@@ -85,6 +87,47 @@ struct RansacResult {
     MatchResult inliers;
     std::array<std::array<double, 3>, 3> fundamental_matrix{};
     RansacStats stats;
+};
+
+// A single triangulated 3D point in the current camera's coordinate frame.
+//
+// `position_cam_curr` is in the same units as the recovered translation. Since
+// the essential-matrix decomposition only fixes translation up to scale, the
+// landmark depths are relative — `t_prev_to_curr` is normalised to unit length
+// and the landmarks are expressed in those same units.
+struct Landmark {
+    Eigen::Vector3d position_cam_curr;
+    Feature feat_prev;
+    Feature feat_curr;
+    // Mean reprojection error across both views, in LOD-0 pixels.
+    double reprojection_error_px;
+};
+
+struct TriangulationStats {
+    // Inliers handed to the triangulator from the RANSAC stage.
+    size_t input_matches = 0;
+    // Landmarks produced after the chosen pose's cheirality + reprojection
+    // tests.
+    size_t landmark_count = 0;
+    // Count of points in front of *both* cameras for the chosen (R, t).
+    size_t cheirality_passes = 0;
+    // Across kept landmarks.
+    double mean_reprojection_error_px = 0.0;
+    // True iff a viable (R, t) was picked.
+    bool pose_recovered = false;
+    // Absolute rotation angle (radians) recovered between prev and curr.
+    double rotation_angle_rad = 0.0;
+};
+
+struct TriangulationResult {
+    // Rotation and translation that take a point in the previous camera frame
+    // into the current camera frame: p_curr = R * p_prev + t.
+    Eigen::Matrix3d R_prev_to_curr = Eigen::Matrix3d::Identity();
+    // Unit-norm translation. Real-world scale would need depth from elsewhere
+    // (IMU pre-integration with bias, stereo baseline, prior map, etc.).
+    Eigen::Vector3d t_prev_to_curr = Eigen::Vector3d::Zero();
+    std::vector<Landmark> landmarks;
+    TriangulationStats stats;
 };
 
 namespace gpumodels {

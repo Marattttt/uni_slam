@@ -3,10 +3,12 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <expected>
 #include <flat_map>
 #include <memory>
+#include <numbers>
 #include <span>
 #include <vector>
 
@@ -64,6 +66,8 @@ WgpuResourceProvider::GetResources() {
                       .brief_tests = kDefaultBRIEFTestSet,
                       .match_style = std::nullopt,
                       .feature_matches = std::nullopt,
+                      .landmark_style = std::nullopt,
+                      .landmarks = std::nullopt,
                   }});
 
         auto& res = result.at(LOD{lod});
@@ -242,6 +246,8 @@ CpuResourceProvider::GetResources() {
             .brief_tests = kDefaultBRIEFTestSet,
             .match_style = std::nullopt,
             .feature_matches = std::nullopt,
+            .landmark_style = std::nullopt,
+            .landmarks = std::nullopt,
         };
 
         if (features_ptr != nullptr) {
@@ -277,6 +283,8 @@ CpuResourceProvider::GetResources() {
                 .brief_tests = std::nullopt,
                 .match_style = kDefaultMatchStyle,
                 .feature_matches = std::move(pairs),
+                .landmark_style = std::nullopt,
+                .landmarks = std::nullopt,
             });
         }
     }
@@ -310,6 +318,95 @@ CpuResourceProvider::GetResources() {
             .brief_tests = std::nullopt,
             .match_style = kInlierMatchStyle,
             .feature_matches = std::move(pairs),
+            .landmark_style = std::nullopt,
+            .landmarks = std::nullopt,
+        });
+    }
+
+    if (load_landmarks_) {
+        const auto ptr = storage_.getPtr<TriangulationResult>(
+            ResourceIdentifier::TriangulationResultName);
+        if (!ptr) {
+            return std::unexpected(
+                "could not get triangulation result from storage");
+        }
+        const auto& tri = **ptr;
+        const auto cam_ptr = storage_.getPtr<data::CamSensorParams>(
+            ResourceIdentifier::GetCameraIntrinsicsName(0));
+        if (!cam_ptr) {
+            return std::unexpected(
+                "could not get camera intrinsics from storage");
+        }
+        const auto& cam = **cam_ptr;
+
+        // Project each landmark back into the LOD-0 image and color by depth.
+        // A linear blue→red ramp on log-depth keeps near landmarks visually
+        // distinct from far ones — important because most points cluster
+        // close to the camera.
+        std::vector<VizLandmark2D> viz_landmarks;
+        viz_landmarks.reserve(tri.landmarks.size());
+
+        const auto& K = cam.intrinsics;
+        const auto& D = cam.distortion_coefficients;
+        const auto distort = [&D](double x, double y) {
+            const double r2 = x * x + y * y;
+            const double radial = 1.0 + D[0] * r2 + D[1] * r2 * r2;
+            const double dx = 2.0 * D[2] * x * y + D[3] * (r2 + 2.0 * x * x);
+            const double dy = D[2] * (r2 + 2.0 * y * y) + 2.0 * D[3] * x * y;
+            return std::pair{x * radial + dx, y * radial + dy};
+        };
+
+        double min_z = std::numeric_limits<double>::infinity();
+        double max_z = -std::numeric_limits<double>::infinity();
+        for (const auto& lm : tri.landmarks) {
+            min_z = std::min(min_z, lm.position_cam_curr.z());
+            max_z = std::max(max_z, lm.position_cam_curr.z());
+        }
+        const double log_min = std::log(std::max(min_z, 1e-6));
+        const double log_max = std::log(std::max(max_z, log_min + 1e-6));
+        const double log_range = std::max(log_max - log_min, 1e-6);
+
+        for (const auto& lm : tri.landmarks) {
+            const auto& p = lm.position_cam_curr;
+            if (p.z() <= 0.0) {
+                continue;
+            }
+            const auto [xd, yd] = distort(p.x() / p.z(), p.y() / p.z());
+            const float u = static_cast<float>(K[0] * xd + K[2]);
+            const float v = static_cast<float>(K[1] * yd + K[3]);
+
+            const double t = std::clamp(
+                (std::log(p.z()) - log_min) / log_range, 0.0, 1.0);
+            const auto r = static_cast<uint8_t>(255.0 * t);
+            const auto b = static_cast<uint8_t>(255.0 * (1.0 - t));
+            viz_landmarks.push_back(VizLandmark2D{
+                .x = u,
+                .y = v,
+                .color = {r, 32, b},
+                .depth = static_cast<float>(p.z()),
+            });
+        }
+
+        const auto& lod0_texture = textures.at(0);
+        const auto title = std::format(
+            "Landmarks ({}/{}, mean reproj {:.2f} px, rot {:.2f} deg{})",
+            tri.stats.landmark_count, tri.stats.input_matches,
+            tri.stats.mean_reprojection_error_px,
+            tri.stats.rotation_angle_rad * (180.0 / std::numbers::pi),
+            tri.stats.pose_recovered ? "" : ", no pose");
+
+        result.push_back(Resource{
+            .title = title,
+            .texture = lod0_texture,
+            .corner_style = std::nullopt,
+            .corners = std::nullopt,
+            .feature_style = std::nullopt,
+            .features = std::nullopt,
+            .brief_tests = std::nullopt,
+            .match_style = std::nullopt,
+            .feature_matches = std::nullopt,
+            .landmark_style = kDefaultLandmarkStyle,
+            .landmarks = std::move(viz_landmarks),
         });
     }
 
@@ -451,6 +548,10 @@ std::optional<std::string> VisualizeDataPass::drawResource(Resource res) {
         drawMatches(res);
     }
 
+    if (res.landmarks.has_value() && !res.landmarks->empty()) {
+        drawLandmarks(res);
+    }
+
     return std::nullopt;
 }
 
@@ -536,6 +637,34 @@ void VisualizeDataPass::drawMatches(const Resource& res) {
         .line_color = style.line_color,
         .point_a_color = style.point_a_color,
         .point_b_color = style.point_b_color,
+        .radius = style.radius,
+        .image_width = res.texture.value().width,
+        .image_height = res.texture.value().height,
+    });
+}
+
+void VisualizeDataPass::drawLandmarks(const Resource& res) {
+    const auto style = res.landmark_style.value_or(kDefaultLandmarkStyle);
+    const auto& landmarks = res.landmarks.value();
+
+    const float img_w = static_cast<float>(res.texture.value().width);
+    const float img_h = static_cast<float>(res.texture.value().height);
+
+    std::vector<VizColoredPoint> points;
+    points.reserve(landmarks.size());
+    for (const auto& lm : landmarks) {
+        if (lm.x < 0.0F || lm.x > img_w || lm.y < 0.0F || lm.y > img_h) {
+            continue;
+        }
+        points.push_back(VizColoredPoint{
+            .x = lm.x,
+            .y = lm.y,
+            .color = lm.color,
+        });
+    }
+
+    gui_->drawColoredPoints({
+        .points = points,
         .radius = style.radius,
         .image_width = res.texture.value().width,
         .image_height = res.texture.value().height,

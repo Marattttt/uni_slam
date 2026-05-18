@@ -19,6 +19,10 @@ namespace wslam {
 
 struct WslamConfig {
     bool enable_gui = false;
+
+    // Stop after this many top-level pipeline executions. 0 means run until
+    // the data provider is exhausted or a stage signals full stop.
+    uint64_t max_iterations = 0;
 };
 
 struct LOD {
@@ -119,6 +123,10 @@ constexpr std::string GetFeatureSetName(size_t keyframes_ago) {
 }
 constexpr std::string MatchedFeaturesName = "gen:feat:match";
 constexpr std::string RansacResultName = "gen:feat:ransac";
+constexpr std::string TriangulationResultName = "gen:tri";
+constexpr std::string GetCameraIntrinsicsName(uint32_t cam_idx) {
+    return std::format("res:cam:intrinsics:{}", cam_idx);
+}
 }  // namespace ResourceIdentifier
 
 class FillPyramidPass;

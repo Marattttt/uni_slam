@@ -39,6 +39,7 @@ add_executable(pc_wslam
     wslam/pose_estimate_cpu.cpp
     wslam/ransac_cpu.cpp
     wslam/sensor_loader.cpp
+    wslam/triangulate_cpu.cpp
     wslam/viz.cpp
     wslam/vizualize_data.cpp
     wslam/wslam.hpp

@@ -36,6 +36,21 @@ struct MatchStyle {
     float radius;
 };
 
+// Viz-only intermediate: pre-projected landmark + a depth-mapped color.
+// The pass that builds this resource is responsible for projecting each
+// 3D landmark back to LOD-0 pixel coordinates and assigning a color, so
+// the GUI layer stays purely 2D.
+struct VizLandmark2D {
+    float x;
+    float y;
+    std::array<uint8_t, 3> color;
+    float depth;
+};
+
+struct LandmarkStyle {
+    float radius;
+};
+
 struct Resource {
     std::string title;
     std::optional<wslam::compute::TextureData> texture;
@@ -47,6 +62,8 @@ struct Resource {
         brief_tests;
     std::optional<MatchStyle> match_style;
     std::optional<std::vector<FeaturePair>> feature_matches;
+    std::optional<LandmarkStyle> landmark_style;
+    std::optional<std::vector<VizLandmark2D>> landmarks;
 };
 
 constexpr CornerStyle kDefaultCornerStyle{.color = {255, 0, 0}, .thickness = 5};
@@ -67,6 +84,9 @@ constexpr MatchStyle kInlierMatchStyle{
     .point_a_color = {0, 200, 255},
     .point_b_color = {255, 128, 0},
     .radius = 4.0F,
+};
+constexpr LandmarkStyle kDefaultLandmarkStyle{
+    .radius = 5.0F,
 };
 constexpr auto kDefaultTextureName = "viz_texture";
 constexpr gpumodels::BRIEFTestSet kDefaultBRIEFTestSet{
@@ -105,6 +125,8 @@ class ReourceBuilder {
         .brief_tests = std::nullopt,
         .match_style = std::nullopt,
         .feature_matches = std::nullopt,
+        .landmark_style = std::nullopt,
+        .landmarks = std::nullopt,
     };
 };
 
@@ -172,6 +194,7 @@ class CpuResourceProvider : public ResourceProvider {
         bool load_features = false;
         bool load_matches = false;
         bool load_ransac_inliers = false;
+        bool load_landmarks = false;
     };
 
     explicit CpuResourceProvider(Opts opts)
@@ -180,7 +203,8 @@ class CpuResourceProvider : public ResourceProvider {
           lod_levels_(opts.lod_levels),
           load_features_(opts.load_features),
           load_matches_(opts.load_matches),
-          load_ransac_inliers_(opts.load_ransac_inliers) {}
+          load_ransac_inliers_(opts.load_ransac_inliers),
+          load_landmarks_(opts.load_landmarks) {}
 
     std::expected<ResourceVec, std::string> GetResources() override;
 
@@ -192,6 +216,7 @@ class CpuResourceProvider : public ResourceProvider {
     bool load_features_;
     bool load_matches_;
     bool load_ransac_inliers_;
+    bool load_landmarks_;
 };
 
 class VisualizeDataPass : public wslam::compute::Pass {
@@ -216,6 +241,7 @@ class VisualizeDataPass : public wslam::compute::Pass {
     void drawCorners(const Resource& res);
     void drawFeatures(const Resource& res);
     void drawMatches(const Resource& res);
+    void drawLandmarks(const Resource& res);
     void initCallbacks();
     void initNextResourceCallback();
 };

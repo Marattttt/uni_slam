@@ -157,6 +157,52 @@ void VizGUI::drawMatches(const VizMatchesOpts& opts) {
     glPopMatrix();
 }
 
+void VizGUI::drawColoredPoints(const VizColoredPointsOpts& opts) {
+    if (opts.points.empty() || opts.image_width == 0
+        || opts.image_height == 0) {
+        return;
+    }
+
+    display_cam_->Activate();
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, static_cast<double>(opts.image_width),
+            static_cast<double>(opts.image_height), 0.0, -1.0, 1.0);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    const bool depth_was_enabled = glIsEnabled(GL_DEPTH_TEST);
+    glDisable(GL_DEPTH_TEST);
+
+    constexpr int kSegments = 12;
+    constexpr float kTwoPi = 6.28318530718F;
+
+    glLineWidth(1.5F);
+    for (const auto& p : opts.points) {
+        glColor3ub(p.color[0], p.color[1], p.color[2]);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < kSegments; ++i) {
+            const float theta = kTwoPi * static_cast<float>(i) / kSegments;
+            glVertex2f(p.x + opts.radius * std::cos(theta),
+                       p.y + opts.radius * std::sin(theta));
+        }
+        glEnd();
+    }
+
+    if (depth_was_enabled) {
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+}
+
 void VizGUI::drawCorners(Corners corners) {
     if (corners.corners.empty() || corners.image_width == 0
         || corners.image_height == 0) {

@@ -5,6 +5,7 @@
 #include "load_features_cpu.hpp"
 #include "match_features_cpu.hpp"
 #include "ransac_cpu.hpp"
+#include "triangulate_cpu.hpp"
 #include "vizualize_data.hpp"
 
 using namespace wslam;
@@ -24,6 +25,8 @@ compute::Stage wslam::CreatePoseEstimateCPUStage(
 
     stage.add_pass(std::make_unique<RansacCPU>(shared, gpu));
 
+    stage.add_pass(std::make_unique<TriangulateCPU>(shared, gpu));
+
     if (config.enable_gui) {
         std::unique_ptr<viz::ResourceProvider> resource_provider
             = std::make_unique<viz::CpuResourceProvider>(
@@ -33,6 +36,7 @@ compute::Stage wslam::CreatePoseEstimateCPUStage(
                     .load_features = true,
                     .load_matches = true,
                     .load_ransac_inliers = true,
+                    .load_landmarks = true,
                 });
         stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
             gpu, std::move(resource_provider)));
