@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "presenter"
+version = "0.1.0"
+description = "rerun-based viewer for pc_wslam factor-graph maps"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "uni_slam" }]
+dependencies = [
+    "rerun-sdk>=0.20,<1.0",
+    "plyfile>=1.0,<2.0",
+    "numpy>=1.24",
+]
+
+[project.scripts]
+presenter = "presenter.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
