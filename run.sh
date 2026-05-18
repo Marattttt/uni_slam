@@ -10,6 +10,7 @@ for arg in "$@"; do
         awaiter)        LOG_AWAITER=ON ;;
         -gui)           RUN_ARGS+=("-gui") ;;
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
+        --map-out=*)    RUN_ARGS+=("$arg") ;;
     esac
 done
 

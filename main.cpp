@@ -10,6 +10,7 @@
 #include "euroc_provider.hpp"
 #include "provider_base.hpp"
 #include "wslam/common.hpp"
+#include "wslam/export.hpp"
 #include "wslam/wslam.hpp"
 
 using namespace wslam;
@@ -17,6 +18,7 @@ using namespace std::chrono_literals;
 
 WslamConfig parseArgs(std::span<char*> args) {
     constexpr std::string_view kIterFlag = "--max-iters=";
+    constexpr std::string_view kMapOutFlag = "--map-out=";
     WslamConfig config;
     for (std::string_view arg : args) {
         if (arg == "-gui") {
@@ -31,6 +33,9 @@ WslamConfig parseArgs(std::span<char*> args) {
                 continue;
             }
             config.max_iterations = parsed;
+        } else if (arg.starts_with(kMapOutFlag)) {
+            config.map_out_path = std::filesystem::path(
+                std::string(arg.substr(kMapOutFlag.size())));
         }
     }
     return config;
@@ -97,6 +102,14 @@ int main_test(WslamConfig config) {
                      config.max_iterations);
     }
 
+    if (!config.map_out_path.empty()) {
+        if (auto err = ExportMap(comp.getStorage(),
+                                 ExportOpts{.map_path = config.map_out_path})) {
+            spdlog::error("exporting map: {}", err.value());
+            return 1;
+        }
+    }
+
     return 0;
 }
 
@@ -106,8 +119,10 @@ int main(int argc, char* argv[]) {
 #endif
 
     const WslamConfig config = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});
-    spdlog::info("GUI: {}, max iterations: {}", config.enable_gui,
+    spdlog::info("GUI: {}, max iterations: {}, map_out: {}", config.enable_gui,
                  config.max_iterations == 0 ? std::string("unlimited")
-                                            : std::to_string(config.max_iterations));
+                                            : std::to_string(config.max_iterations),
+                 config.map_out_path.empty() ? std::string("(none)")
+                                             : config.map_out_path.string());
     return main_test(config);
 }

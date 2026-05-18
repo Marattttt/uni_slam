@@ -2,6 +2,7 @@
 
 #include <webgpu/webgpu_cpp.h>
 
+#include <filesystem>
 #include <string>
 
 #include "anybag.hpp"
@@ -23,6 +24,11 @@ struct WslamConfig {
     // Stop after this many top-level pipeline executions. 0 means run until
     // the data provider is exhausted or a stage signals full stop.
     uint64_t max_iterations = 0;
+
+    // Where the final map should be written when the pipeline exits. Must
+    // end in `.ply`; the JSON metadata sidecar is derived by replacing the
+    // extension. Empty means no export is performed.
+    std::filesystem::path map_out_path;
 };
 
 struct LOD {
