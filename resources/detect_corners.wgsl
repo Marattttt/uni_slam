@@ -13,7 +13,13 @@ struct FeatureBlock {
     values: array<u32, FEATURE_BLOCK_SZ>,
 };
 
-override THRESHOLD: f32 = 0.3;
+// FAST contrast threshold on normalised [0,1] pixel intensities. ORB-SLAM
+// defaults to 20/255 (≈0.078) with a 7/255 fallback in low-texture cells via
+// its quota-based extractor. We have no per-cell quota, so we sit slightly
+// higher: 0.15 ≈ 38/255 lands around ~1000–1500 raw FAST hits per frame across
+// the LoD pyramid on the EuRoC Machine Hall sequences, matching the reference
+// numbers in the ORB-SLAM paper.
+override THRESHOLD: f32 = 0.15;
 override N_SIMILLAR_MIN: u32 = 9;
 override WORKGROUP_SIZE: u32 = 8;
 
