@@ -130,6 +130,7 @@ class GPU {
     struct BgBinding {
         BufferType buf_type;
         wgpu::BindGroupEntry& bg_entry;
+        bool is_retained = false;
     };
     using BindingKey = std::string;
     using BindGroupBindings = std::unordered_map<BindingKey, BgBinding>;
@@ -139,6 +140,8 @@ class GPU {
     // be available for reuse after its lifetime ends
     [[nodiscard]] std::expected<BufferBindingMap, std::string>
     assignBuffersAndOffsets(BindGroupBindings&& bindings);
+
+    std::optional<std::string> clearBuffersAndOffsets();
 
     [[nodiscard]] const wgpu::Buffer& getBuffer(BufferType buftype) const;
     [[nodiscard]] Awaiter getAwaiter() const;
@@ -168,7 +171,7 @@ class GPU {
     [[nodiscard]] static std::optional<std::string> checkShaderModule(
         std::string_view module);
     [[nodiscard]] std::expected<BufferBinding, std::string> assignBufferRegion(
-        wgpu::BindGroupEntry& entry, BufferType buftype);
+        wgpu::BindGroupEntry& entry, BufferType buftype, bool is_retained);
 
     [[nodiscard]] std::optional<std::string> copyDataToOutput(
         const BufferBinding& binding);
@@ -191,6 +194,7 @@ class GPU {
 
     struct BufferRegion {
         bool is_free;
+        bool is_retained;
         size_t offset;
         size_t size;
     };

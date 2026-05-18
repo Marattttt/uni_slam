@@ -110,9 +110,9 @@ std::expected<GPU::BufferBindingMap, std::string> GPU::assignBuffersAndOffsets(
     std::expected<GPU::BufferBindingMap, std::string> result{};
 
     auto handle = [&](const GPU::BindingKey& key, wgpu::BindGroupEntry& entry,
-                      BufferType buf_type) -> bool {
+                      BufferType buf_type, bool is_retained) -> bool {
         entry.buffer = getBuffer(buf_type);
-        auto res = assignBufferRegion(entry, buf_type);
+        auto res = assignBufferRegion(entry, buf_type, is_retained);
 
         if (!res) {
             result = std::unexpected(std::format("{}", buf_type) + res.error());
@@ -125,13 +125,65 @@ std::expected<GPU::BufferBindingMap, std::string> GPU::assignBuffersAndOffsets(
     };
 
     for (auto& [key, binding] : bindings) {
-        bool ok = handle(key, binding.bg_entry, binding.buf_type);
+        bool ok = handle(key, binding.bg_entry, binding.buf_type,
+                         binding.is_retained);
         if (!ok) {
             return result;
         }
     }
 
     return result;
+}
+
+std::optional<std::string> GPU::clearBuffersAndOffsets() {
+    const auto buffers
+        = std::views::iota(0U, static_cast<size_t>(BufferType::COUNT));
+
+    const auto queue = device_.GetQueue();
+    const auto encoder = device_.CreateCommandEncoder();
+
+    for (const auto buf : buffers) {
+        auto regions = buf_regions_.at(buf);
+
+        auto to_free = regions | std::views::filter([](auto&& region) {
+                           return region.is_free && region.is_retained;
+                       });
+
+        for (auto reg : to_free) {
+            encoder.ClearBuffer(getBuffer(static_cast<BufferType>(buf)),
+                                reg.offset, reg.size);
+        }
+    }
+
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    std::string errormsg;
+
+    auto wait = [&] {
+        return queue.OnSubmittedWorkDone(
+            wgpu::CallbackMode::WaitAnyOnly,
+            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView sv,
+               std::string* msg) {
+                spdlog::debug(LOG_ID
+                              " Cleared occupied non-retained buffers. "
+                              "status:{} msg:'{}'",
+                              static_cast<int>(status),
+                              static_cast<std::string>(sv));
+
+                if (status != wgpu::QueueWorkDoneStatus::Success) {
+                    *msg = static_cast<std::string>(sv);
+                }
+            },
+            &errormsg);
+    };
+
+    return getAwaiter()
+        .addCall(std::move(wait), "wait to clear buffers")
+        .executeAll()
+        .transform([&](auto&& err) {
+            return std::format("errorsmsg:{} err:{}", errormsg, err);
+        });
 }
 
 const wgpu::Buffer& GPU::getBuffer(BufferType buftype) const {
@@ -167,7 +219,7 @@ const wgpu::Buffer& GPU::getBuffer(BufferType buftype) const {
 }
 
 std::expected<BufferBinding, std::string> GPU::assignBufferRegion(
-    wgpu::BindGroupEntry& entry, BufferType buftype) {
+    wgpu::BindGroupEntry& entry, BufferType buftype, bool is_retained) {
     std::vector<BufferRegion>& regions
         = buf_regions_.at(static_cast<size_t>(buftype));
 
@@ -198,12 +250,14 @@ std::expected<BufferBinding, std::string> GPU::assignBufferRegion(
 
     BufferRegion taken{
         .is_free = false,
+        .is_retained = is_retained,
         .offset = region->offset,
         .size = region_size,
     };
 
     BufferRegion free{
         .is_free = true,
+        .is_retained = false,
         .offset = region->offset + region_size,
         .size = region->size - region_size,
     };
