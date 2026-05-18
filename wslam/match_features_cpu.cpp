@@ -144,5 +144,5 @@ std::optional<std::string> MatchFeaturesCPU::execute() {
 
     storage.set(ResourceIdentifier::MatchedFeaturesName, std::move(matches));
 
-    throw std::logic_error("ehehehh");
+    return {};
 }

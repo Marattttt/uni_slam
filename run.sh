@@ -4,9 +4,13 @@ set -euo pipefail
 mkdir -p build
 
 LOG_AWAITER=OFF
-if [ "${1:-}" = "awaiter" ]; then
-    LOG_AWAITER=ON
-fi
+RUN_ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        awaiter) LOG_AWAITER=ON ;;
+        -gui)    RUN_ARGS+=("-gui") ;;
+    esac
+done
 
 cmake -S . -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Debug \
@@ -19,4 +23,4 @@ echo "BUILD FOR PROJECT pc_wslam SUCCESSFUL!!!"
 export WSLAM_SHADER_SRC_DIR="$PWD"
 
 source .env
-./build/pc_wslam
+./build/pc_wslam "${RUN_ARGS[@]}"

@@ -37,11 +37,12 @@ std::optional<std::string> SensorLoaderPass::execute() {
 
     std::vector<data::IMUReading> temp_imu{};
 
-    const int kMaxIterations = 1000;
+    const int kMaxIterations = 1000000;
     int iterLimit = kMaxIterations;
 
     ReadingType reading;
     for (; iter_ != generator_.end(); (*iter_)++) {
+        assert(iter_);
         assert(iterLimit > 0
                && "Up to a thousand IMU readings without a frame");
         iterLimit--;
@@ -59,7 +60,7 @@ std::optional<std::string> SensorLoaderPass::execute() {
         const auto is_empty
             = [](const auto& frame) { return !frame.has_value(); };
 
-        // If there is a frame, that means wer're done with collecting imu
+        // If there is a frame, that means we're done with collecting imu
         // readings
         if (std::ranges::none_of(reading->frames, is_empty)) {
             break;
@@ -97,7 +98,7 @@ std::optional<std::string> SensorLoaderPass::execute() {
 
         spdlog::debug(LOG_ID " Added new frame. name:'{}', size:{}x{}", name,
                       frame->width, frame->height);
-        storage_.set(name, frame.value());
+        storage_.set(name, std::move(frame).value());
     }
 
     return std::nullopt;

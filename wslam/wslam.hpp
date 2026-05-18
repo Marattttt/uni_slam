@@ -22,6 +22,7 @@ constexpr void CreateWslamPipeline(
             return gpu->clearBuffersAndOffsets();
         }));
 
+    compute.addStage(std::move(clearing_stage));
     compute.addStage(CreateFeatureDetectStage(compute, shared,
                                               std::move(provider), "features",
                                               config));

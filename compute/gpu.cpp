@@ -145,11 +145,11 @@ std::optional<std::string> GPU::clearBuffersAndOffsets() {
     for (const auto buf : buffers) {
         auto regions = buf_regions_.at(buf);
 
-        auto to_free = regions | std::views::filter([](auto&& region) {
-                           return region.is_free && region.is_retained;
-                       });
+        auto to_clear = regions | std::views::filter([](auto&& region) {
+                            return !region.is_free && !region.is_retained;
+                        });
 
-        for (auto reg : to_free) {
+        for (auto reg : to_clear) {
             encoder.ClearBuffer(getBuffer(static_cast<BufferType>(buf)),
                                 reg.offset, reg.size);
         }
@@ -179,7 +179,7 @@ std::optional<std::string> GPU::clearBuffersAndOffsets() {
     };
 
     return getAwaiter()
-        .addCall(std::move(wait), "wait to clear buffers")
+        .addCall(std::move(wait), "wait to clear buffers", false)
         .executeAll()
         .transform([&](auto&& err) {
             return std::format("errorsmsg:{} err:{}", errormsg, err);
@@ -726,36 +726,42 @@ std::optional<std::string> GPU::checkShaderModule(std::string_view module) {
 std::optional<std::string> GPU::initBufferRegions() {
     buf_regions_[static_cast<size_t>(BufferType::StorageA)] = {{
         .is_free = true,
+        .is_retained = false,
         .offset = 0,
         .size = storage_buf_a_.GetSize(),
     }};
 
     buf_regions_[static_cast<size_t>(BufferType::StorageB)] = {{
         .is_free = true,
+        .is_retained = false,
         .offset = 0,
         .size = storage_buf_b_.GetSize(),
     }};
 
     buf_regions_[static_cast<size_t>(BufferType::Input)] = {{
         .is_free = true,
+        .is_retained = false,
         .offset = 0,
         .size = input_buf_.GetSize(),
     }};
 
     buf_regions_[static_cast<size_t>(BufferType::Output)] = {{
         .is_free = true,
+        .is_retained = false,
         .offset = 0,
         .size = output_buf_.GetSize(),
     }};
 
     buf_regions_[static_cast<size_t>(BufferType::Uniform)] = {{
         .is_free = true,
+        .is_retained = false,
         .offset = 0,
         .size = uniform_buf_.GetSize(),
     }};
 
     buf_regions_[static_cast<size_t>(BufferType::SharedStorage)] = {{
         .is_free = true,
+        .is_retained = false,
         .offset = 0,
         .size = shared_buf_.GetSize(),
     }};

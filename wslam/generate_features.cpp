@@ -275,7 +275,8 @@ GenerateFeaturesPass::initCommonBindgroup() {
                 kBriefTestsBindingLabel,
                 compute::GPU::BgBinding{
                     .buf_type = compute::BufferType::Uniform,
-                    .bg_entry = entries.at(1)},
+                    .bg_entry = entries.at(1),
+                    .is_retained = true},
             },
             {
                 kFeaturesLabel,
@@ -328,7 +329,9 @@ std::expected<void, std::string> GenerateFeaturesPass::initPerPassBindgroups() {
     auto lod_bindings
         = gpu_->assignBuffersAndOffsets(compute::GPU::BindGroupBindings{
             {kLodValuesBindingLabel,
-             {.buf_type = compute::BufferType::Uniform, .bg_entry = lod_entry}},
+             {.buf_type = compute::BufferType::Uniform,
+              .bg_entry = lod_entry,
+              .is_retained = true}},
         });
     if (!lod_bindings) {
         return std::unexpected("assigning binding for LOD idxs: "
