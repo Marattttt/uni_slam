@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "load_features_cpu.hpp"
+#include "match_features_cpu.hpp"
 
 using namespace wslam;
 
@@ -16,6 +17,8 @@ compute::Stage wslam::CreatePoseEstimateCPUStage(
 
     stage.add_pass(std::make_unique<LoadDataCPUPass>(
         shared, gpu, std::move(features_binding_label)));
+
+    stage.add_pass(std::make_unique<MatchFeaturesCPU>(shared, gpu));
 
     return stage;
 }

@@ -27,14 +27,14 @@ class LoadDataCPUPass : public compute::Pass {
 
     GpuSharedBindings& shared_;
 
-    std::optional<compute::BufferBinding> features_binding_;
+    std::optional<compute::BufferBinding*> features_binding_;
     std::optional<std::array<wgpu::Texture, kLodCount>> textures_;
 
     std::optional<std::string> initBindings();
 
     std::expected<std::array<compute::TextureData, kLodCount>, std::string>
     loadTextureData();
-    std::expected<std::vector<Feature>, std::string> loadFeatures();
+    std::expected<FeatureSet, std::string> loadFeatures();
 
     void shiftFeatureSets();
 };

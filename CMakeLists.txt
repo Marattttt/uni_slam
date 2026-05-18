@@ -35,6 +35,7 @@ add_executable(pc_wslam
     wslam/fill_pyramid.cpp
     wslam/generate_features.cpp
     wslam/load_features_cpu.cpp
+    wslam/match_features_cpu.cpp
     wslam/pose_estimate_cpu.cpp
     wslam/sensor_loader.cpp
     wslam/viz.cpp

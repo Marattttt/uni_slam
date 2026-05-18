@@ -111,8 +111,9 @@ constexpr std::string GetProcessedFrameName(uint32_t keyframes_ago,
     return std::format("gen:frame:-{}:lod:{}", keyframes_ago, lod);
 }
 constexpr std::string GetFeatureSetName(size_t keyframes_ago) {
-    return std::format("gen:featureset:-{}", keyframes_ago);
+    return std::format("gen:feat:-{}", keyframes_ago);
 }
+constexpr std::string MatchedFeaturesName = "gen:feat:match";
 }  // namespace ResourceIdentifier
 
 class FillPyramidPass;

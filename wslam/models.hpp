@@ -38,6 +38,9 @@ struct alignas(16) Feature {
             descriptor[idx / 32] &= ~mask;
         }
     }
+
+    constexpr auto operator<=>(const Feature&) const = default;
+    constexpr bool operator==(const Feature&) const = default;
 };
 
 /*

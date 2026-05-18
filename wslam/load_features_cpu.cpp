@@ -31,13 +31,13 @@ std::optional<std::string> LoadDataCPUPass::initBindings() {
 
     auto& storage = shared_.getStorage();
 
-    auto features = storage.take<compute::BufferBinding>(kFeaturesGPULabel);
+    auto features = storage.getPtr<compute::BufferBinding>(kFeaturesGPULabel);
 
     if (!features) {
         return "could not get binding for features";
     }
 
-    features_binding_.emplace(std::move(features).value());
+    features_binding_.emplace(features.value());
 
     const auto textures
         = std::views::iota(0U, kLodCount) | std::views::transform([&](auto i) {
@@ -133,11 +133,10 @@ auto LoadDataCPUPass::loadTextureData()
     return result;
 }
 
-std::expected<std::vector<Feature>, std::string>
-LoadDataCPUPass::loadFeatures() {
+std::expected<FeatureSet, std::string> LoadDataCPUPass::loadFeatures() {
     assert(features_binding_);
 
-    auto data = gpu_->readBuffer(features_binding_.value());
+    auto data = gpu_->readBuffer(*features_binding_.value());
     if (!data) {
         return std::unexpected("reading features binding: "
                                + std::move(data).error());
@@ -148,6 +147,13 @@ LoadDataCPUPass::loadFeatures() {
     const auto* casted
         = reinterpret_cast<const gpumodels::FeatureArray<>*>(bytes);
 
-    return casted->values | std::views::take(casted->count)
-           | std::ranges::to<std::vector<Feature>>();
+    const auto features = casted->values | std::views::take(casted->count);
+
+    FeatureSet result;
+
+    for (const auto& f : features) {
+        result.at(f.lod).emplace_back(f);
+    }
+
+    return result;
 }
