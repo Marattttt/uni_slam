@@ -71,6 +71,22 @@ using FeaturePair = std::pair<Feature, Feature>;
 using MatchResult
     = std::array<std::flat_map<Feature, Feature>, GPUConst::levels_of_detail>;
 
+// Output of the RANSAC pass — a filtered MatchResult plus geometric model and
+// summary stats. The fundamental matrix is stored as a plain array so this
+// header does not need to depend on Eigen.
+struct RansacStats {
+    size_t total_matches = 0;
+    size_t inlier_count = 0;
+    size_t iterations_run = 0;
+    bool model_found = false;
+};
+
+struct RansacResult {
+    MatchResult inliers;
+    std::array<std::array<double, 3>, 3> fundamental_matrix{};
+    RansacStats stats;
+};
+
 namespace gpumodels {
 // NOLINTNEXTLINE(readability-magic-numbers)
 using BRIEFTestSet = std::array<int32_t, 4UZ * 256>;

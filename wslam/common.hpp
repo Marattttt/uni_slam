@@ -118,6 +118,7 @@ constexpr std::string GetFeatureSetName(size_t keyframes_ago) {
     return std::format("gen:feat:-{}", keyframes_ago);
 }
 constexpr std::string MatchedFeaturesName = "gen:feat:match";
+constexpr std::string RansacResultName = "gen:feat:ransac";
 }  // namespace ResourceIdentifier
 
 class FillPyramidPass;

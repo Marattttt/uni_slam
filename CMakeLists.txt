@@ -37,6 +37,7 @@ add_executable(pc_wslam
     wslam/load_features_cpu.cpp
     wslam/match_features_cpu.cpp
     wslam/pose_estimate_cpu.cpp
+    wslam/ransac_cpu.cpp
     wslam/sensor_loader.cpp
     wslam/viz.cpp
     wslam/vizualize_data.cpp

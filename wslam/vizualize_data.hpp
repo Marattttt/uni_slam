@@ -62,6 +62,12 @@ constexpr MatchStyle kDefaultMatchStyle{
     .point_b_color = {255, 0, 255},
     .radius = 4.0F,
 };
+constexpr MatchStyle kInlierMatchStyle{
+    .line_color = {0, 255, 0},
+    .point_a_color = {0, 200, 255},
+    .point_b_color = {255, 128, 0},
+    .radius = 4.0F,
+};
 constexpr auto kDefaultTextureName = "viz_texture";
 constexpr gpumodels::BRIEFTestSet kDefaultBRIEFTestSet{
 #include "brief_tests.inc"
@@ -165,6 +171,7 @@ class CpuResourceProvider : public ResourceProvider {
         std::initializer_list<LOD> lod_levels;
         bool load_features = false;
         bool load_matches = false;
+        bool load_ransac_inliers = false;
     };
 
     explicit CpuResourceProvider(Opts opts)
@@ -172,7 +179,8 @@ class CpuResourceProvider : public ResourceProvider {
           storage_(opts.storage),
           lod_levels_(opts.lod_levels),
           load_features_(opts.load_features),
-          load_matches_(opts.load_matches) {}
+          load_matches_(opts.load_matches),
+          load_ransac_inliers_(opts.load_ransac_inliers) {}
 
     std::expected<ResourceVec, std::string> GetResources() override;
 
@@ -183,6 +191,7 @@ class CpuResourceProvider : public ResourceProvider {
     std::vector<LOD> lod_levels_;
     bool load_features_;
     bool load_matches_;
+    bool load_ransac_inliers_;
 };
 
 class VisualizeDataPass : public wslam::compute::Pass {

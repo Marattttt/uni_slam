@@ -28,6 +28,9 @@ std::optional<std::string> SensorLoaderPass::execute() {
 
     if (iter_ == std::nullopt) {
         iter_ = generator_.begin();
+        if (auto err = skipInitialFrames(kInitialFramesToSkip)) {
+            return err;
+        }
     } else if (iter_.value() == generator_.end()) {
         spdlog::info(LOG_ID " No more sensor readings. Stopping execution");
         return compute::kComputeStopExecution;
@@ -100,6 +103,49 @@ std::optional<std::string> SensorLoaderPass::execute() {
                       frame->width, frame->height);
         storage_.set(name, std::move(frame).value());
     }
+
+    return std::nullopt;
+}
+
+std::optional<std::string> SensorLoaderPass::skipInitialFrames(uint32_t count) {
+    if (count == 0) {
+        return std::nullopt;
+    }
+
+    spdlog::info(
+        LOG_ID
+        " Skipping the first {} frames (cold-start stale frames discarded)",
+        count);
+
+    uint32_t skipped = 0;
+    while (skipped < count && iter_.value() != generator_.end()) {
+        ReadingType reading = std::move(*iter_.value());
+
+        if (!reading) {
+            return "skipping initial frames: " + reading.error();
+        }
+
+        const auto is_empty
+            = [](const auto& frame) { return !frame.has_value(); };
+
+        // Only frames count toward the skip budget; lone IMU samples between
+        // frames are discarded silently along with them.
+        if (std::ranges::none_of(reading->frames, is_empty)) {
+            skipped++;
+        }
+
+        (*iter_)++;
+    }
+
+    if (skipped < count) {
+        spdlog::warn(LOG_ID
+                     " Reached end of sensor stream while skipping initial "
+                     "frames ({} skipped out of {} requested)",
+                     skipped, count);
+        return compute::kComputeStopExecution;
+    }
+
+    spdlog::debug(LOG_ID " Done skipping {} initial frames", skipped);
 
     return std::nullopt;
 }

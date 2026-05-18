@@ -22,8 +22,15 @@ class SensorLoaderPass : public compute::Pass {
           generator_(std::move(generator)) {};
 
    private:
+    // Number of initial frames to drop on the first execute(). These come from
+    // a cold sensor/dataset and are often stale or low-quality, so skipping
+    // them stabilises downstream feature matching.
+    static constexpr uint32_t kInitialFramesToSkip = 200;
+
     AnyBag& storage_;
     std::generator<ReadingType> generator_;
     std::optional<decltype(generator_.begin())> iter_;
+
+    [[nodiscard]] std::optional<std::string> skipInitialFrames(uint32_t count);
 };
 };  // namespace wslam

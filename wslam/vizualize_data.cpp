@@ -251,15 +251,20 @@ CpuResourceProvider::GetResources() {
         result.push_back(std::move(res));
     }
 
-    if (matches_ptr != nullptr) {
-        const auto& lod0_texture = textures.at(0);
-
+    const auto flatten = [](const MatchResult& matches) {
         std::vector<FeaturePair> pairs;
-        for (const auto& lod_map : *matches_ptr) {
+        for (const auto& lod_map : matches) {
             for (const auto& [curr, prev] : lod_map) {
                 pairs.emplace_back(prev, curr);
             }
         }
+        return pairs;
+    };
+
+    if (matches_ptr != nullptr) {
+        const auto& lod0_texture = textures.at(0);
+
+        auto pairs = flatten(*matches_ptr);
 
         if (!pairs.empty()) {
             result.push_back(Resource{
@@ -274,6 +279,38 @@ CpuResourceProvider::GetResources() {
                 .feature_matches = std::move(pairs),
             });
         }
+    }
+
+    if (load_ransac_inliers_) {
+        const auto ptr = storage_.getPtr<RansacResult>(
+            ResourceIdentifier::RansacResultName);
+        if (!ptr) {
+            return std::unexpected(
+                "could not get RANSAC result from storage");
+        }
+        const auto& ransac = **ptr;
+        auto pairs = flatten(ransac.inliers);
+
+        const auto& lod0_texture = textures.at(0);
+
+        const auto title = std::format(
+            "RANSAC Inliers ({}/{}{})", ransac.stats.inlier_count,
+            ransac.stats.total_matches,
+            ransac.stats.model_found ? "" : ", no model");
+
+        // Always emit the resource — an empty inlier set still has a title
+        // that reports the upstream match count, which is informative.
+        result.push_back(Resource{
+            .title = title,
+            .texture = lod0_texture,
+            .corner_style = std::nullopt,
+            .corners = std::nullopt,
+            .feature_style = std::nullopt,
+            .features = std::nullopt,
+            .brief_tests = std::nullopt,
+            .match_style = kInlierMatchStyle,
+            .feature_matches = std::move(pairs),
+        });
     }
 
     return result;
