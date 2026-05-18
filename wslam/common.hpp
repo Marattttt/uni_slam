@@ -17,6 +17,10 @@
 
 namespace wslam {
 
+struct WslamConfig {
+    bool enable_gui = false;
+};
+
 struct LOD {
     uint8_t v;
     operator uint8_t() const { return v; }

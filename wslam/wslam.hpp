@@ -10,9 +10,11 @@
 #include "provider_base.hpp"
 
 namespace wslam {
+
 constexpr void CreateWslamPipeline(
     compute::Compute& compute, GpuSharedBindings& shared,
-    std::generator<std::expected<data::Reading<1>, std::string>> provider) {
+    std::generator<std::expected<data::Reading<1>, std::string>> provider,
+    WslamConfig config = {}) {
     compute::Stage clearing_stage{"[Clear bindings]", compute.getGPUPtr()};
     clearing_stage.add_pass(std::make_unique<compute::CustomPass>(
         compute.getGPUPtr(), "[Clear bindings pass]",
@@ -21,7 +23,8 @@ constexpr void CreateWslamPipeline(
         }));
 
     compute.addStage(CreateFeatureDetectStage(compute, shared,
-                                              std::move(provider), "features"));
+                                              std::move(provider), "features",
+                                              config));
 
     compute.addStage(CreatePoseEstimateCPUStage(compute, shared, "features"));
 }

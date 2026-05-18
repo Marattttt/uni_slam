@@ -2,6 +2,9 @@
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 
+#include <span>
+#include <string_view>
+
 #include "compute.hpp"
 #include "euroc_provider.hpp"
 #include "provider_base.hpp"
@@ -11,7 +14,17 @@
 using namespace wslam;
 using namespace std::chrono_literals;
 
-int main_test() {
+WslamConfig parseArgs(std::span<char*> args) {
+    WslamConfig config;
+    for (std::string_view arg : args) {
+        if (arg == "-gui") {
+            config.enable_gui = true;
+        }
+    }
+    return config;
+}
+
+int main_test(WslamConfig config) {
     compute::Compute comp;
     if (auto err = comp.preInitialize(compute::createPreInitializeOpts())) {
         spdlog::error("initializing: {}", err.value());
@@ -32,7 +45,7 @@ int main_test() {
 
     auto data_provider = data::AdaptProvider<1UL, 2UL>(euroc_generator);
 
-    CreateWslamPipeline(comp, shared, std::move(data_provider));
+    CreateWslamPipeline(comp, shared, std::move(data_provider), config);
 
     if (auto err = comp.initizalizeAllStages()) {
         spdlog::error("initializing stages: {}", err.value());
@@ -50,10 +63,12 @@ int main_test() {
     return 0;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
 #ifndef NDEBUG
     spdlog::set_level(spdlog::level::debug);
 #endif
 
-    return main_test();
+    const WslamConfig config = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});
+    spdlog::info("GUI: {}", config.enable_gui);
+    return main_test(config);
 }
