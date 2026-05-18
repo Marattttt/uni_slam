@@ -31,6 +31,7 @@ add_executable(pc_wslam
     wslam/common.cpp
     wslam/cull_corners.cpp
     wslam/detect_corners.cpp
+    wslam/export.cpp
     wslam/factor_builder.cpp
     wslam/feature_detect.cpp
     wslam/fill_pyramid.cpp
