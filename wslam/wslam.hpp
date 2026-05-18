@@ -27,6 +27,7 @@ constexpr void CreateWslamPipeline(
                                               std::move(provider), "features",
                                               config));
 
-    compute.addStage(CreatePoseEstimateCPUStage(compute, shared, "features"));
+    compute.addStage(
+        CreatePoseEstimateCPUStage(compute, shared, "features", config));
 }
 };  // namespace wslam

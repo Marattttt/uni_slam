@@ -30,9 +30,21 @@ constexpr uint32_t HammingDistance(Feature a, Feature b) {
     });
 }
 
+// Returns the LOD-0 pixel coordinates of a feature.
+constexpr std::pair<float, float> toLod0(const Feature& f) {
+    float scale = 1.0F;
+    for (uint32_t i = 0; i < f.lod; ++i) {
+        scale *= static_cast<float>(GPUConst::lod_scale_factor);
+    }
+    return {static_cast<float>(f.x) * scale, static_cast<float>(f.y) * scale};
+}
+
 constexpr std::vector<std::pair<Feature, Feature>> FindMatchesInLod(
     const std::vector<Feature>& set_a, const std::vector<Feature>& set_b) {
     static constexpr float kLoweTestThreshold = 0.75F;
+    static constexpr float kMaxDistX = 0.1F * GPUConst::frame_width;
+    static constexpr float kMaxDistY = 0.1F * GPUConst::frame_height;
+
     std::vector<std::pair<Feature, Feature>> matches;
     if (set_b.size() < 2) {
         return matches;
@@ -53,13 +65,18 @@ constexpr std::vector<std::pair<Feature, Feature>> FindMatchesInLod(
         }
         if (static_cast<float>(best_dist)
             < kLoweTestThreshold * static_cast<float>(second_best_dist)) {
+            const auto [cx, cy] = toLod0(curr);
+            const auto [bx, by] = toLod0(set_b[best_idx]);
+            if (std::abs(cx - bx) > kMaxDistX || std::abs(cy - by) > kMaxDistY) {
+                continue;
+            }
             matches.emplace_back(curr, set_b[best_idx]);
         }
     }
     return matches;
 }
 
-FeatureSet FindMatches(const FeatureSet& set_a, const FeatureSet& set_b) {
+MatchResult FindMatches(const FeatureSet& set_a, const FeatureSet& set_b) {
     constexpr size_t kNumLods = GPUConst::levels_of_detail;
     auto adjacent = [](const FeatureSet& set, size_t lod) {
         std::vector<Feature> out;
@@ -78,13 +95,14 @@ FeatureSet FindMatches(const FeatureSet& set_a, const FeatureSet& set_b) {
             b_to_a.emplace(b, a);
         }
     }
-    FeatureSet result;
+    // result[lod]: key = current-frame feature (b), value = prev-frame feature (a)
+    MatchResult result;
     for (size_t lod = 0; lod < kNumLods; lod++) {
         for (auto&& [a, b] :
              FindMatchesInLod(set_a[lod], adjacent(set_b, lod))) {
             const auto it = b_to_a.find(b);
             if (it != b_to_a.end() && it->second == a) {
-                result[lod].push_back(a);
+                result[lod].emplace(b, a);
             }
         }
     }
@@ -136,11 +154,15 @@ std::optional<std::string> MatchFeaturesCPU::execute() {
 
     auto matches = impl::FindMatches(**prev, **curr);
 
-    size_t match_feat_count = count_features(matches);
+    const auto count_matches = [](const MatchResult& m) {
+        return std::ranges::fold_left(m, 0UZ, [](size_t acc, const auto& map) {
+            return acc + map.size();
+        });
+    };
 
     spdlog::info(LOG_ID
                  " Finished comparing feature sets. {} against {}; common:{}",
-                 prev_feat_count, curr_feat_count, match_feat_count);
+                 prev_feat_count, curr_feat_count, count_matches(matches));
 
     storage.set(ResourceIdentifier::MatchedFeaturesName, std::move(matches));
 

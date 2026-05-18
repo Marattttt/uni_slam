@@ -10,7 +10,6 @@
 #include "generate_features.hpp"
 #include "provider_base.hpp"
 #include "sensor_loader.hpp"
-#include "vizualize_data.hpp"
 
 using namespace wslam;
 
@@ -65,20 +64,21 @@ compute::Stage wslam::CreateFeatureDetectStage(
     stage.add_pass(std::make_unique<GenerateFeaturesPass>(
         gpu, shared_bindings, "corners_out", feature_output_label));
 
-    if (config.enable_gui) {
-        std::unique_ptr<viz::ResourceProvider> resource_provider
-            = std::make_unique<viz::WgpuResourceProvider>(
-                viz::WgpuResourceProvider::Opts{
-                    .storage = compute.getStorage(),
-                    .shared = shared_bindings,
-                    .gpu = gpu,
-                    .lod_levels = {{0}, {1}, {2}, {3}, {4}},
-                    .corners_label = "corners_out",
-                    .features_label = feature_output_label,
-                });
-        stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
-            gpu, std::move(resource_provider)));
-    }
+    // if (config.enable_gui) {
+    //     std::unique_ptr<viz::ResourceProvider> resource_provider
+    //         = std::make_unique<viz::WgpuResourceProvider>(
+    //             viz::WgpuResourceProvider::Opts{
+    //                 .storage = compute.getStorage(),
+    //                 .shared = shared_bindings,
+    //                 .gpu = gpu,
+    //                 .lod_levels = {{0}, {1}, {2}, {3}, {4}},
+    //                 .corners_label = "corners_out",
+    //                 .features_label = feature_output_label,
+    //             });
+    //     stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
+    //         gpu, std::move(resource_provider)));
+    // }
+    (void)config;
 
     return stage;
 }

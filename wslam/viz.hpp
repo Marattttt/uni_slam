@@ -24,6 +24,11 @@ struct VizCorner {
     float y;
 };
 
+struct VizMatchLine {
+    VizCorner a;
+    VizCorner b;
+};
+
 class VizGUI {
     VizGUI(std::unique_ptr<pangolin::OpenGlRenderState> state_cam,
            std::unique_ptr<pangolin::Handler3D> handler,
@@ -68,6 +73,17 @@ class VizGUI {
         uint32_t image_height;
     };
     void drawFeatures(VizFeatures features);
+
+    struct VizMatchesOpts {
+        const std::vector<VizMatchLine>& matches;
+        std::array<uint8_t, 3> line_color;
+        std::array<uint8_t, 3> point_a_color;
+        std::array<uint8_t, 3> point_b_color;
+        float radius;
+        uint32_t image_width;
+        uint32_t image_height;
+    };
+    void drawMatches(const VizMatchesOpts& opts);
 
     void drawTestCube();
     void drawTexture(const VizTexture& texture);

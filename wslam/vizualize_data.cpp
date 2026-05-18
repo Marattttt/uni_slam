@@ -29,6 +29,12 @@ std::flat_map<size_t, std::vector<Feature>> ExtractFeatures(
 
 std::expected<WgpuResourceProvider::ResourceVec, std::string>
 WgpuResourceProvider::GetResources() {
+    if (matches_label_) {
+        return std::unexpected(
+            "feature matching is not supported by WgpuResourceProvider; "
+            "use CpuResourceProvider instead");
+    }
+
     std::flat_map<size_t, Resource> result;
 
     const auto debug_check_zero_values
@@ -56,6 +62,8 @@ WgpuResourceProvider::GetResources() {
                       .feature_style = kDefaultFeatureStyle,
                       .features = std::nullopt,
                       .brief_tests = kDefaultBRIEFTestSet,
+                      .match_style = std::nullopt,
+                      .feature_matches = std::nullopt,
                   }});
 
         auto& res = result.at(LOD{lod});
@@ -175,6 +183,97 @@ std::flat_map<size_t, std::vector<Feature>> utils::ExtractFeatures(
 
     for (const auto& feat : features) {
         result[feat.lod].emplace_back(feat);
+    }
+
+    return result;
+}
+
+#undef LOG_ID
+#define LOG_ID "[CPU Resource Provider]"
+
+std::expected<CpuResourceProvider::ResourceVec, std::string>
+CpuResourceProvider::GetResources() {
+    using TextureArray = std::array<compute::TextureData, kLodCount>;
+
+    const auto textures_ptr = storage_.getPtr<TextureArray>(
+        ResourceIdentifier::GetProcessedFrameName(0, 0));
+    if (!textures_ptr) {
+        return std::unexpected("could not get texture array from storage");
+    }
+    const auto& textures = **textures_ptr;
+
+    const FeatureSet* features_ptr = nullptr;
+    if (load_features_) {
+        const auto ptr = storage_.getPtr<FeatureSet>(
+            ResourceIdentifier::GetFeatureSetName(0));
+        if (!ptr) {
+            return std::unexpected("could not get feature set from storage");
+        }
+        features_ptr = *ptr;
+    }
+
+    const MatchResult* matches_ptr = nullptr;
+    if (load_matches_) {
+        const auto ptr = storage_.getPtr<MatchResult>(
+            ResourceIdentifier::MatchedFeaturesName);
+        if (!ptr) {
+            return std::unexpected(
+                "could not get feature match result from storage");
+        }
+        matches_ptr = *ptr;
+    }
+
+    ResourceVec result;
+
+    for (const auto lod : lod_levels_) {
+        if (lod.v >= kLodCount) {
+            return std::unexpected(
+                std::format("LOD {} is out of range (max {})", lod.v,
+                            kLodCount - 1));
+        }
+
+        Resource res{
+            .title = std::format("CPU Visualization for lod {}", lod.v),
+            .texture = textures.at(lod.v),
+            .corner_style = std::nullopt,
+            .corners = std::nullopt,
+            .feature_style = kDefaultFeatureStyle,
+            .features = std::nullopt,
+            .brief_tests = kDefaultBRIEFTestSet,
+            .match_style = std::nullopt,
+            .feature_matches = std::nullopt,
+        };
+
+        if (features_ptr != nullptr) {
+            res.features = features_ptr->at(lod.v);
+        }
+
+        result.push_back(std::move(res));
+    }
+
+    if (matches_ptr != nullptr) {
+        const auto& lod0_texture = textures.at(0);
+
+        std::vector<FeaturePair> pairs;
+        for (const auto& lod_map : *matches_ptr) {
+            for (const auto& [curr, prev] : lod_map) {
+                pairs.emplace_back(prev, curr);
+            }
+        }
+
+        if (!pairs.empty()) {
+            result.push_back(Resource{
+                .title = "Feature Matches",
+                .texture = lod0_texture,
+                .corner_style = std::nullopt,
+                .corners = std::nullopt,
+                .feature_style = std::nullopt,
+                .features = std::nullopt,
+                .brief_tests = std::nullopt,
+                .match_style = kDefaultMatchStyle,
+                .feature_matches = std::move(pairs),
+            });
+        }
     }
 
     return result;
@@ -311,6 +410,10 @@ std::optional<std::string> VisualizeDataPass::drawResource(Resource res) {
         drawFeatures(res);
     }
 
+    if (res.feature_matches.has_value() && !res.feature_matches->empty()) {
+        drawMatches(res);
+    }
+
     return std::nullopt;
 }
 
@@ -346,6 +449,56 @@ void VisualizeDataPass::drawFeatures(const Resource& res) {
         .feature_color = style.feature_color,
         .bit_one_color = style.bit_one_color,
         .bit_zero_color = style.bit_zero_color,
+        .radius = style.radius,
+        .image_width = res.texture.value().width,
+        .image_height = res.texture.value().height,
+    });
+}
+
+void VisualizeDataPass::drawMatches(const Resource& res) {
+    const auto style = res.match_style.value_or(kDefaultMatchStyle);
+    const auto& pairs = res.feature_matches.value();
+
+    const float img_w = static_cast<float>(res.texture.value().width);
+    const float img_h = static_cast<float>(res.texture.value().height);
+
+    auto lod_scale = [](uint32_t lod) -> float {
+        float scale = 1.0F;
+        for (uint32_t i = 0; i < lod; ++i) {
+            scale *= static_cast<float>(GPUConst::lod_scale_factor);
+        }
+        return scale;
+    };
+
+    std::vector<VizMatchLine> match_lines;
+    match_lines.reserve(pairs.size());
+    for (const auto& [prev, curr] : pairs) {
+        const float scale_prev = lod_scale(prev.lod);
+        const float scale_curr = lod_scale(curr.lod);
+        const float ax = static_cast<float>(prev.x) * scale_prev;
+        const float ay = static_cast<float>(prev.y) * scale_prev;
+        const float bx = static_cast<float>(curr.x) * scale_curr;
+        const float by = static_cast<float>(curr.y) * scale_curr;
+
+        if (ax < 0 || ax > img_w || ay < 0 || ay > img_h
+            || bx < 0 || bx > img_w || by < 0 || by > img_h) {
+            spdlog::warn(LOG_ID " match out of image bounds [{:.0f}x{:.0f}], "
+                         "skipping: prev({:.1f},{:.1f}) curr({:.1f},{:.1f})",
+                         img_w, img_h, ax, ay, bx, by);
+            continue;
+        }
+
+        match_lines.push_back({
+            .a = {.x = ax, .y = ay},
+            .b = {.x = bx, .y = by},
+        });
+    }
+
+    gui_->drawMatches({
+        .matches = match_lines,
+        .line_color = style.line_color,
+        .point_a_color = style.point_a_color,
+        .point_b_color = style.point_b_color,
         .radius = style.radius,
         .image_width = res.texture.value().width,
         .image_height = res.texture.value().height,

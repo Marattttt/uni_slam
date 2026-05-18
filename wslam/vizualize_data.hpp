@@ -29,6 +29,13 @@ struct FeatureStyle {
     float radius;
 };
 
+struct MatchStyle {
+    std::array<uint8_t, 3> line_color;
+    std::array<uint8_t, 3> point_a_color;
+    std::array<uint8_t, 3> point_b_color;
+    float radius;
+};
+
 struct Resource {
     std::string title;
     std::optional<wslam::compute::TextureData> texture;
@@ -38,6 +45,8 @@ struct Resource {
     std::optional<std::vector<Feature>> features;
     std::optional<std::reference_wrapper<const gpumodels::BRIEFTestSet>>
         brief_tests;
+    std::optional<MatchStyle> match_style;
+    std::optional<std::vector<FeaturePair>> feature_matches;
 };
 
 constexpr CornerStyle kDefaultCornerStyle{.color = {255, 0, 0}, .thickness = 5};
@@ -46,6 +55,12 @@ constexpr FeatureStyle kDefaultFeatureStyle{
     .bit_one_color = {255, 255, 255},
     .bit_zero_color = {0, 0, 255},
     .radius = 5.0F,
+};
+constexpr MatchStyle kDefaultMatchStyle{
+    .line_color = {255, 255, 0},
+    .point_a_color = {0, 255, 0},
+    .point_b_color = {255, 0, 255},
+    .radius = 4.0F,
 };
 constexpr auto kDefaultTextureName = "viz_texture";
 constexpr gpumodels::BRIEFTestSet kDefaultBRIEFTestSet{
@@ -82,6 +97,8 @@ class ReourceBuilder {
         .feature_style = std::nullopt,
         .features = std::nullopt,
         .brief_tests = std::nullopt,
+        .match_style = std::nullopt,
+        .feature_matches = std::nullopt,
     };
 };
 
@@ -110,6 +127,7 @@ class WgpuResourceProvider : public ResourceProvider {
         std::initializer_list<LOD> lod_levels;
         std::optional<std::string> corners_label = std::nullopt;
         std::optional<std::string> features_label = std::nullopt;
+        std::optional<std::string> matches_label = std::nullopt;
     };
 
     WgpuResourceProvider(Opts opts)
@@ -119,7 +137,8 @@ class WgpuResourceProvider : public ResourceProvider {
           gpu_(std::move(opts.gpu)),
           lod_levels_(opts.lod_levels),
           corners_label_(std::move(opts.corners_label)),
-          features_label_(std::move(opts.features_label)) {}
+          features_label_(std::move(opts.features_label)),
+          matches_label_(std::move(opts.matches_label)) {}
 
     std::expected<ResourceVec, std::string> GetResources() override;
 
@@ -130,12 +149,40 @@ class WgpuResourceProvider : public ResourceProvider {
     std::initializer_list<LOD> lod_levels_;
     std::optional<std::string> corners_label_;
     std::optional<std::string> features_label_;
+    std::optional<std::string> matches_label_;
 
     [[nodiscard]] std::expected<compute::TextureData, std::string> loadTexture(
         size_t lod);
 
     [[nodiscard]] ResourceVec resourceMapToVec(
         std::flat_map<LOD, Resource>& features);
+};
+
+class CpuResourceProvider : public ResourceProvider {
+   public:
+    struct Opts {
+        AnyBag& storage;
+        std::initializer_list<LOD> lod_levels;
+        bool load_features = false;
+        bool load_matches = false;
+    };
+
+    explicit CpuResourceProvider(Opts opts)
+        : ResourceProvider(),
+          storage_(opts.storage),
+          lod_levels_(opts.lod_levels),
+          load_features_(opts.load_features),
+          load_matches_(opts.load_matches) {}
+
+    std::expected<ResourceVec, std::string> GetResources() override;
+
+   private:
+    static constexpr size_t kLodCount = GPUConst::levels_of_detail;
+
+    AnyBag& storage_;
+    std::vector<LOD> lod_levels_;
+    bool load_features_;
+    bool load_matches_;
 };
 
 class VisualizeDataPass : public wslam::compute::Pass {
@@ -159,6 +206,7 @@ class VisualizeDataPass : public wslam::compute::Pass {
     std::optional<std::string> drawResource(Resource res);
     void drawCorners(const Resource& res);
     void drawFeatures(const Resource& res);
+    void drawMatches(const Resource& res);
     void initCallbacks();
     void initNextResourceCallback();
 };
@@ -225,6 +273,29 @@ struct std::formatter<wslam::viz::FeatureStyle> {
 };
 
 template <>
+struct std::formatter<wslam::viz::MatchStyle> {
+    static constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+    static constexpr auto format(const wslam::viz::MatchStyle& s,
+                                 std::format_context& ctx) {
+        return std::format_to(
+            ctx.out(),
+            "{{MatchStyle line_color:[{},{},{}] "
+            "point_a_color:[{},{},{}] point_b_color:[{},{},{}] radius:{} }}",
+            static_cast<unsigned>(s.line_color[0]),
+            static_cast<unsigned>(s.line_color[1]),
+            static_cast<unsigned>(s.line_color[2]),
+            static_cast<unsigned>(s.point_a_color[0]),
+            static_cast<unsigned>(s.point_a_color[1]),
+            static_cast<unsigned>(s.point_a_color[2]),
+            static_cast<unsigned>(s.point_b_color[0]),
+            static_cast<unsigned>(s.point_b_color[1]),
+            static_cast<unsigned>(s.point_b_color[2]), s.radius);
+    }
+};
+
+template <>
 struct std::formatter<wslam::viz::Resource> {
     static constexpr auto parse(std::format_parse_context& ctx) {
         return ctx.begin();
@@ -251,6 +322,14 @@ struct std::formatter<wslam::viz::Resource> {
         }
 
         out = std::format_to(out, " brief_tests:{}", !!r.brief_tests);
+
+        if (r.match_style) {
+            out = std::format_to(out, " match_style:{}", *r.match_style);
+        }
+        if (r.feature_matches) {
+            out = std::format_to(out, " feature_matches:{{ size:{} }}",
+                                 r.feature_matches->size());
+        }
 
         return std::format_to(out, " }}");
     }

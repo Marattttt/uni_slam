@@ -90,6 +90,73 @@ void VizGUI::drawTexture(const VizTexture& texture) {
 
 void VizGUI::endFrame() { pangolin::FinishFrame(); }
 
+void VizGUI::drawMatches(const VizMatchesOpts& opts) {
+    if (opts.matches.empty() || opts.image_width == 0
+        || opts.image_height == 0) {
+        return;
+    }
+
+    display_cam_->Activate();
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, static_cast<double>(opts.image_width),
+            static_cast<double>(opts.image_height), 0.0, -1.0, 1.0);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    const bool depth_was_enabled = glIsEnabled(GL_DEPTH_TEST);
+    glDisable(GL_DEPTH_TEST);
+
+    constexpr int kSegments = 8;
+    constexpr float kTwoPi = 6.28318530718F;
+
+    glColor3ub(opts.line_color[0], opts.line_color[1], opts.line_color[2]);
+    glLineWidth(1.0F);
+    glBegin(GL_LINES);
+    for (const auto& m : opts.matches) {
+        glVertex2f(m.a.x, m.a.y);
+        glVertex2f(m.b.x, m.b.y);
+    }
+    glEnd();
+
+    glColor3ub(opts.point_a_color[0], opts.point_a_color[1],
+               opts.point_a_color[2]);
+    for (const auto& m : opts.matches) {
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < kSegments; ++i) {
+            const float theta = kTwoPi * static_cast<float>(i) / kSegments;
+            glVertex2f(m.a.x + opts.radius * std::cos(theta),
+                       m.a.y + opts.radius * std::sin(theta));
+        }
+        glEnd();
+    }
+
+    glColor3ub(opts.point_b_color[0], opts.point_b_color[1],
+               opts.point_b_color[2]);
+    for (const auto& m : opts.matches) {
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < kSegments; ++i) {
+            const float theta = kTwoPi * static_cast<float>(i) / kSegments;
+            glVertex2f(m.b.x + opts.radius * std::cos(theta),
+                       m.b.y + opts.radius * std::sin(theta));
+        }
+        glEnd();
+    }
+
+    if (depth_was_enabled) {
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+}
+
 void VizGUI::drawCorners(Corners corners) {
     if (corners.corners.empty() || corners.image_width == 0
         || corners.image_height == 0) {

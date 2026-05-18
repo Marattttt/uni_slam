@@ -3,6 +3,7 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <flat_map>
 
 #include "common.hpp"
 
@@ -63,6 +64,12 @@ static_assert(offsetof(Feature, orientation) == 16);
 static_assert(offsetof(Feature, descriptor) == 20);
 // NOLINTEND(readability-magic-numbers)
 using FeatureSet = std::array<std::vector<Feature>, GPUConst::levels_of_detail>;
+
+using FeaturePair = std::pair<Feature, Feature>;
+
+// Per-LOD map from current-frame feature (key) to matched prev-frame feature (value).
+using MatchResult
+    = std::array<std::flat_map<Feature, Feature>, GPUConst::levels_of_detail>;
 
 namespace gpumodels {
 // NOLINTNEXTLINE(readability-magic-numbers)
