@@ -182,10 +182,22 @@ std::optional<std::string> KeyframeGatePass::execute() {
             const Eigen::Vector3d p_world
                 = delta.R_world_cam * lm.position_cam_curr + delta.t_world_cam;
             delta.new_landmarks_world.emplace_back(id, p_world);
+
+            // For new landmarks introduced after the first keyframe we also
+            // emit a feat_prev observation at the *previous* keyframe pose.
+            // Two views in the graph constrain the landmark's depth and keep
+            // the iSAM2 linear system well-posed without leaning on a tight
+            // position prior. On the first keyframe there is no prev pose in
+            // the graph, so the factor builder anchors first-keyframe
+            // landmarks with their triangulated positions instead.
+            if (delta.prev_pose_id.has_value()) {
+                delta.observations.push_back(LandmarkObservation{
+                    .pose = delta.prev_pose_id.value(),
+                    .landmark = id,
+                    .pixel_lod0 = ToLod0Pixel(lm.feat_prev),
+                });
+            }
         }
-        // We always emit an observation from the current keyframe. Earlier
-        // observations of the same landmark were emitted on the frames that
-        // first saw them.
         delta.observations.push_back(LandmarkObservation{
             .pose = delta.pose_id,
             .landmark = id,

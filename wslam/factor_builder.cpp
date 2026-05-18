@@ -147,20 +147,29 @@ std::optional<std::string> FactorBuilderPass::execute() {
             Diagonal::Sigmas(sigmas));
     }
 
-    // Add new landmark variables. Every newly inserted landmark gets a weak
-    // position prior so iSAM2 can solve the linear system at the frame where
-    // the landmark first appears (it would otherwise have only one projection
-    // observation — underdetermined in 3D). The very first landmark in the
-    // very first keyframe additionally gets a *tight* prior that pins the
-    // monocular scale.
+    // Add new landmark variables.
+    //
+    // On the first keyframe the prev camera pose is not in the graph (it
+    // pre-dates the gauge), so each new landmark has only one projection
+    // observation — underdetermined in depth. We therefore anchor every
+    // first-keyframe landmark with a tight prior set to its triangulated
+    // position. This freezes the initial map up to the monocular scale,
+    // which the scale_lock prior on the first landmark fixes.
+    //
+    // On subsequent keyframes the keyframe gate already arranges for every
+    // newly introduced landmark to have observations from both the prev and
+    // current poses (see KeyframeGatePass), so the linear system is well
+    // posed without any landmark prior at all.
     bool first_landmark_priored = false;
     for (const auto& [id, p_world] : delta.new_landmarks_world) {
         const auto k = MappingState::landmarkKey(id);
         new_values_.insert(k, gtsam::Point3(p_world));
 
+        const double sigma = delta.is_first_keyframe
+                                 ? opts_.first_keyframe_landmark_sigma
+                                 : opts_.landmark_anchor_sigma;
         new_factors_.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
-            k, gtsam::Point3(p_world),
-            Isotropic::Sigma(3, opts_.weak_landmark_prior_sigma));
+            k, gtsam::Point3(p_world), Isotropic::Sigma(3, sigma));
 
         if (delta.is_first_keyframe && !first_landmark_priored) {
             new_factors_.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(

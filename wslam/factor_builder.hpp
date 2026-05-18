@@ -36,13 +36,24 @@ class FactorBuilderPass : public compute::Pass {
         // monocular). Without this the global scale is unobservable.
         double prior_landmark_sigma = 1e-2;
 
-        // Weak position prior on every other newly inserted landmark. Each
-        // landmark only has one observation in the frame where it is first
-        // seen, which leaves it underdetermined (2 DoF for 3 unknowns) until
-        // another frame observes it. A loose prior regularises the linear
-        // system without preventing the optimiser from refining the estimate
-        // once more observations arrive.
-        double weak_landmark_prior_sigma = 10.0;
+        // Prior noise on every other landmark introduced *on the first
+        // keyframe*. Those landmarks only have one projection observation
+        // (the prev camera pose lives outside the graph), so we anchor
+        // them with their triangulated positions. The optimiser is still
+        // free to refine them once they get observations from later
+        // keyframes — but the linear system stays well posed in the
+        // meantime.
+        double first_keyframe_landmark_sigma = 0.5;
+
+        // Soft position prior attached to every *other* newly inserted
+        // landmark (those introduced on a later keyframe). Two projection
+        // observations are usually enough to triangulate, but in
+        // low-parallax cases the landmark's marginal Hessian becomes
+        // near-singular and iSAM2 throws an IndeterminantLinearSystem
+        // exception. A modest anchor on the triangulated position keeps
+        // the linear system well conditioned without significantly
+        // biasing the optimiser.
+        double landmark_anchor_sigma = 2.0;
 
         // Between-pose factor noise (rotation in radians, translation in
         // monocular scale units — typically dimensionless).
