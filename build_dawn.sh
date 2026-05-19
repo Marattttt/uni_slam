@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-BUILD_TYPE=Debug
+BUILD_TYPE=Release
 
 DAWN_DIR="$PWD/vendor/dawn"
 BUILD_DIR="$DAWN_DIR/build/$BUILD_TYPE"

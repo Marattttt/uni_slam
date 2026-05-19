@@ -96,6 +96,11 @@ function(tint_default_compile_options TARGET)
     -Wno-padded
     -Wno-switch-enum
     -Wno-unknown-pragmas
+    # GCC 16 added -Winvalid-constexpr (enabled by -Wpedantic); Tint binds
+    # non-constexpr inline function templates (MatchVec/MatchMat) to
+    # `constexpr auto` variables, which trips this. -pedantic-errors then
+    # promotes it to an error. Suppress for the GNU build only.
+    -Wno-invalid-constexpr
   )
   if (${DAWN_WERROR})
       list(APPEND COMMON_GNU_OPTIONS -Werror)

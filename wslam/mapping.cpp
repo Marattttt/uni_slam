@@ -34,6 +34,9 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
 
     auto updater = std::make_unique<Isam2UpdatePass>(*state, *builder_ptr, gpu);
     updater->setStorage(storage);
+    // Same lifetime argument as for builder_ptr above: the updater is added
+    // to `stage` below and lives as long as that stage does.
+    Isam2UpdatePass* updater_ptr = updater.get();
 
     stage.add_pass(std::move(gate));
     stage.add_pass(std::move(builder));
@@ -42,5 +45,7 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     return MappingStage{
         .state = std::move(state),
         .stage = std::move(stage),
+        .flush_async =
+            [updater_ptr]() { return updater_ptr->flush(); },
     };
 }

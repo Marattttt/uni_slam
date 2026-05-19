@@ -1,6 +1,9 @@
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 
 #include "common.hpp"
 #include "compute.hpp"
@@ -15,8 +18,15 @@ namespace wslam {
 // Long-lived handles created by CreateWslamPipeline that need to outlive
 // Compute (they own shared CPU state referenced by passes). The caller keeps
 // this struct in scope for as long as Compute runs.
+//
+// `flush_async` drains any in-flight iSAM2 worker job and publishes the
+// final MapSnapshot. Call it once after the main pipeline loop exits and
+// before any consumer (e.g. ExportMap) reads the snapshot — otherwise the
+// last frame's optimisation will be lost. Must be invoked while `compute`
+// is still alive because it references the iSAM update pass owned by it.
 struct WslamPipelineHandles {
     std::shared_ptr<MappingState> mapping_state;
+    std::function<std::optional<std::string>()> flush_async;
 };
 
 inline WslamPipelineHandles CreateWslamPipeline(
@@ -43,6 +53,7 @@ inline WslamPipelineHandles CreateWslamPipeline(
 
     return WslamPipelineHandles{
         .mapping_state = std::move(mapping.state),
+        .flush_async = std::move(mapping.flush_async),
     };
 }
 };  // namespace wslam

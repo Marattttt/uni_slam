@@ -206,16 +206,20 @@ std::optional<std::string> FactorBuilderPass::execute() {
 
 #ifndef NDEBUG
     // Every observation must reference either a value we just inserted in
-    // this update or one already present in iSAM2's linearisation point.
-    // iSAM2 throws if a factor references an unknown key, but failing this
-    // assert gives a much clearer signal at the source.
+    // this update or one that's been submitted to iSAM previously. We
+    // check `predicted_values` rather than `latest_values` because the
+    // worker may not have produced an optimised estimate for the most
+    // recent prior keyframe yet — but predicted_values is the source of
+    // truth for "has-been-submitted." iSAM2 throws if a factor references
+    // an unknown key, but failing this assert gives a much clearer signal
+    // at the source.
     for (const auto& obs : delta.observations) {
         const auto pk = MappingState::poseKey(obs.pose);
         const auto lk = MappingState::landmarkKey(obs.landmark);
         const bool pose_known = new_values_.exists(pk)
-                                 || state_.latest_values.exists(pk);
+                                 || state_.predicted_values.exists(pk);
         const bool lm_known = new_values_.exists(lk)
-                               || state_.latest_values.exists(lk);
+                               || state_.predicted_values.exists(lk);
         assert(pose_known && "projection factor references unknown pose key");
         assert(lm_known && "projection factor references unknown landmark key");
     }

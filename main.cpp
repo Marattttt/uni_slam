@@ -29,7 +29,8 @@ WslamConfig parseArgs(std::span<char*> args) {
             const auto [ptr, ec] = std::from_chars(
                 value.data(), value.data() + value.size(), parsed);
             if (ec != std::errc{} || ptr != value.data() + value.size()) {
-                spdlog::warn("Ignoring malformed --max-iters value '{}'", value);
+                spdlog::warn("Ignoring malformed --max-iters value '{}'",
+                             value);
                 continue;
             }
             config.max_iterations = parsed;
@@ -68,8 +69,8 @@ int main_test(WslamConfig config) {
     }
     for (uint32_t i = 0; i < sensor_params->cams.size(); ++i) {
         const auto& cam = sensor_params->cams[i];
-        spdlog::info("Camera {}: model={}, intrinsics=[{}], distortion=[{}]",
-                     i, cam.camera_model, cam.intrinsics,
+        spdlog::info("Camera {}: model={}, intrinsics=[{}], distortion=[{}]", i,
+                     cam.camera_model, cam.intrinsics,
                      cam.distortion_coefficients);
         comp.getStorage().set(ResourceIdentifier::GetCameraIntrinsicsName(i),
                               cam);
@@ -79,9 +80,8 @@ int main_test(WslamConfig config) {
 
     auto data_provider = data::AdaptProvider<1UL, 2UL>(euroc_generator);
 
-    auto handles = CreateWslamPipeline(comp, shared, std::move(data_provider),
-                                       config);
-    (void)handles;  // keep mapping state alive for the duration of the run
+    auto handles
+        = CreateWslamPipeline(comp, shared, std::move(data_provider), config);
 
     if (auto err = comp.initizalizeAllStages()) {
         spdlog::error("initializing stages: {}", err.value());
@@ -102,6 +102,17 @@ int main_test(WslamConfig config) {
                      config.max_iterations);
     }
 
+    // The iSAM2 update pass runs on a worker thread, lagging the main loop
+    // by one frame. Drain any pending optimisation so the snapshot under
+    // MapSnapshotName reflects every submitted keyframe before we read it
+    // for export.
+    if (handles.flush_async) {
+        if (auto err = handles.flush_async()) {
+            spdlog::error("flushing iSAM2 worker: {}", err.value());
+            return 1;
+        }
+    }
+
     if (!config.map_out_path.empty()) {
         if (auto err = ExportMap(comp.getStorage(),
                                  ExportOpts{.map_path = config.map_out_path})) {
@@ -118,10 +129,14 @@ int main(int argc, char* argv[]) {
     spdlog::set_level(spdlog::level::debug);
 #endif
 
-    const WslamConfig config = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});
+    spdlog::set_level(spdlog::level::warn);
+
+    const WslamConfig config
+        = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});
     spdlog::info("GUI: {}, max iterations: {}, map_out: {}", config.enable_gui,
-                 config.max_iterations == 0 ? std::string("unlimited")
-                                            : std::to_string(config.max_iterations),
+                 config.max_iterations == 0
+                     ? std::string("unlimited")
+                     : std::to_string(config.max_iterations),
                  config.map_out_path.empty() ? std::string("(none)")
                                              : config.map_out_path.string());
     return main_test(config);

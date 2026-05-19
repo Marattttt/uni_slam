@@ -95,6 +95,11 @@ if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wno-null-pointer-subtraction)
     if(CMAKE_COMPILER_IS_GNUCC)
         add_compile_options(-Werror=maybe-uninitialized)
+        # GCC 13+ emits false-positive -Warray-bounds inside libstdc++'s
+        # make_shared<...>() inplace control-block code (e.g. factory
+        # registration in pango_video), and -Werror promotes it to an error
+        # under -O2/-O3. Keep the warning, just don't make it fatal.
+        add_compile_options(-Wno-error=array-bounds)
     endif()
     add_compile_options(-Werror=vla)
 endif()

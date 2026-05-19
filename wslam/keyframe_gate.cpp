@@ -3,9 +3,11 @@
 #include <spdlog/spdlog.h>
 
 #include <Eigen/Geometry>
+#include <algorithm>
 #include <flat_set>
 #include <numbers>
 #include <utility>
+#include <vector>
 
 #include "common.hpp"
 #include "models.hpp"
@@ -92,15 +94,53 @@ std::optional<std::string> KeyframeGatePass::execute() {
     }
 
     const double rot_angle = RotationAngle(tri.R_prev_to_curr);
-    const bool tiny_motion = !state_.has_origin
-                                 ? false
-                                 : (rot_angle < opts_.min_rotation_rad);
-    if (tiny_motion) {
-        spdlog::debug(LOG_ID
-                      " Rotation {:.6f} rad below threshold {:.6f}; skipping",
-                      rot_angle, opts_.min_rotation_rad);
-        storage.set(ResourceIdentifier::MapDeltaName, std::move(delta));
-        return std::nullopt;
+
+    // Compute the gating signals we need for non-first keyframes in a
+    // single pass over the triangulation result: median pixel parallax
+    // between the matched feature pair, and the count of landmarks whose
+    // `feat_prev` is not yet tracked (i.e. genuinely new map content).
+    double median_parallax_px = 0.0;
+    size_t new_landmark_count = 0;
+    if (state_.has_origin) {
+        std::vector<double> parallaxes;
+        parallaxes.reserve(tri.landmarks.size());
+        for (const auto& lm : tri.landmarks) {
+            const auto pp = ToLod0Pixel(lm.feat_prev);
+            const auto pc = ToLod0Pixel(lm.feat_curr);
+            parallaxes.push_back((pc - pp).norm());
+            if (!state_.active_landmarks.contains(lm.feat_prev)) {
+                ++new_landmark_count;
+            }
+        }
+        const auto mid = parallaxes.begin()
+                         + static_cast<std::ptrdiff_t>(parallaxes.size() / 2);
+        std::nth_element(parallaxes.begin(), mid, parallaxes.end());
+        median_parallax_px = *mid;
+
+        // Motion gate: accept only if EITHER the recovered rotation OR the
+        // median pixel parallax is large enough. The OR is essential —
+        // pure-translation frames have ~zero rotation but real parallax.
+        const bool tiny_motion = (rot_angle < opts_.min_rotation_rad)
+                                  && (median_parallax_px < opts_.min_parallax_px);
+        if (tiny_motion) {
+            spdlog::debug(LOG_ID
+                          " Tiny motion: rot={:.4f} rad (< {:.4f}) AND "
+                          "median parallax={:.2f} px (< {:.2f}); skipping",
+                          rot_angle, opts_.min_rotation_rad,
+                          median_parallax_px, opts_.min_parallax_px);
+            storage.set(ResourceIdentifier::MapDeltaName, std::move(delta));
+            return std::nullopt;
+        }
+
+        // Novelty gate: a keyframe that adds no new landmarks just piles
+        // re-observation factors onto existing tracks. Skip it.
+        if (new_landmark_count < opts_.min_new_landmarks) {
+            spdlog::debug(LOG_ID
+                          " Only {} new landmarks (< {} required); skipping",
+                          new_landmark_count, opts_.min_new_landmarks);
+            storage.set(ResourceIdentifier::MapDeltaName, std::move(delta));
+            return std::nullopt;
+        }
     }
 
     // Allocate this frame's pose key.
@@ -108,8 +148,13 @@ std::optional<std::string> KeyframeGatePass::execute() {
     delta.pose_id = PoseId{state_.next_pose_id++};
 
     // World pose. We anchor the first accepted keyframe at the world origin
-    // and chain every subsequent one off the most recent latest_values
-    // estimate using the relative pose from triangulation.
+    // and chain every subsequent one off the previous keyframe's
+    // *predicted* (initial-guess) pose taken from `predicted_values`, not
+    // off `latest_values`. iSAM2 runs on a worker thread, so at this point
+    // the previous keyframe's optimised pose is typically still in flight
+    // and hasn't been written back to `latest_values` yet. Chaining off
+    // predicted_values keeps the front-end's pose chain deterministic and
+    // independent of back-end completion timing.
     if (!state_.has_origin) {
         delta.is_first_keyframe = true;
         delta.R_world_cam.setIdentity();
@@ -137,14 +182,14 @@ std::optional<std::string> KeyframeGatePass::execute() {
         //   t_wc = t_wp - R_wc * t_prev_to_curr
         // because t_prev_to_curr is expressed in the *previous* camera frame.
         const auto prev_key = MappingState::poseKey(prev);
-        if (!state_.latest_values.exists(prev_key)) {
+        if (!state_.predicted_values.exists(prev_key)) {
             return std::format(
-                "keyframe gate: latest_values has no entry for prev pose "
+                "keyframe gate: predicted_values has no entry for prev pose "
                 "id={}",
                 prev.v);
         }
         const auto& prev_pose
-            = state_.latest_values.at<gtsam::Pose3>(prev_key);
+            = state_.predicted_values.at<gtsam::Pose3>(prev_key);
         const Eigen::Matrix3d r_wp = prev_pose.rotation().matrix();
         const Eigen::Vector3d t_wp = prev_pose.translation();
         const Eigen::Matrix3d r_wc = r_wp * tri.R_prev_to_curr.transpose();
@@ -154,6 +199,13 @@ std::optional<std::string> KeyframeGatePass::execute() {
         delta.R_rel = tri.R_prev_to_curr;
         delta.t_rel = tri.t_prev_to_curr;
     }
+
+    // Record the new keyframe's initial pose in predicted_values so the
+    // next frame can chain off it without waiting for iSAM.
+    state_.predicted_values.insert(
+        MappingState::poseKey(delta.pose_id),
+        gtsam::Pose3(gtsam::Rot3(delta.R_world_cam),
+                     gtsam::Point3(delta.t_world_cam)));
 
     // Landmark association. Build the next active_landmarks map fresh: a
     // landmark observed *this* frame stays alive only if it's actually seen.
@@ -182,6 +234,12 @@ std::optional<std::string> KeyframeGatePass::execute() {
             const Eigen::Vector3d p_world
                 = delta.R_world_cam * lm.position_cam_curr + delta.t_world_cam;
             delta.new_landmarks_world.emplace_back(id, p_world);
+            // Mirror the landmark's initial position into predicted_values
+            // so downstream pre-iSAM consumers (factor builder asserts,
+            // future PnP front-ends) can rely on every submitted key being
+            // present without waiting on the worker.
+            state_.predicted_values.insert(MappingState::landmarkKey(id),
+                                           gtsam::Point3(p_world));
 
             // For new landmarks introduced after the first keyframe we also
             // emit a feat_prev observation at the *previous* keyframe pose.
@@ -216,7 +274,10 @@ std::optional<std::string> KeyframeGatePass::execute() {
 
 #ifndef NDEBUG
     // Invariant: observations always reference variables we either just
-    // declared (new) or that are already in latest_values from a prior frame.
+    // declared (new) or that are already in predicted_values from a prior
+    // frame. We use predicted_values (not latest_values) because iSAM2 runs
+    // async and may not yet have produced an optimised estimate for the
+    // most recent previous keyframe's landmarks.
     {
         std::flat_set<LandmarkId> known;
         for (const auto& [id, _] : delta.new_landmarks_world) {
@@ -224,7 +285,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
         }
         for (const auto& obs : delta.observations) {
             assert(known.contains(obs.landmark)
-                   || state_.latest_values.exists(
+                   || state_.predicted_values.exists(
                           MappingState::landmarkKey(obs.landmark)));
         }
     }

@@ -43,15 +43,22 @@ struct MappingState {
     boost::shared_ptr<gtsam::Cal3DS2> calibration;
     std::optional<data::CamSensorParams> intrinsics_cache;
 
-    // iSAM2 owns the graph and the current linearisation point. Wrapped in
-    // unique_ptr because the default constructor allocates internal state we
-    // want to delay until initialize().
-    std::unique_ptr<gtsam::ISAM2> isam;
-
-    // Latest computed estimate. Updated after every iSAM2 update so the
-    // keyframe-gate pass can chain new poses off the most recent solution
-    // rather than the stale initial guess.
+    // Latest computed estimate. Updated on the main thread by the iSAM
+    // update pass once it harvests a worker result; consumed by the
+    // snapshot builder. Lags one frame behind the most recently *submitted*
+    // keyframe because iSAM runs asynchronously.
     gtsam::Values latest_values;
+
+    // Mirror of every value (pose, landmark) that has been submitted to the
+    // iSAM2 worker so far, populated by the keyframe-gate pass as it builds
+    // each delta. The front-end uses this — not `latest_values` — to chain
+    // off the previous keyframe's pose, because at the moment the new
+    // keyframe is being gated, the previous frame's iSAM update is still in
+    // flight on the worker thread and has not yet written its optimised
+    // estimate back into `latest_values`. Carrying the initial guess in a
+    // dedicated structure keeps the front-end's pose chain decoupled from
+    // back-end completion timing.
+    gtsam::Values predicted_values;
 
     // Monotonic counters for new pose / landmark IDs.
     uint64_t next_pose_id = 0;

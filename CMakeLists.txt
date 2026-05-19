@@ -37,6 +37,7 @@ add_executable(pc_wslam
     wslam/fill_pyramid.cpp
     wslam/generate_features.cpp
     wslam/isam2_update.cpp
+    wslam/isam2_worker.cpp
     wslam/keyframe_gate.cpp
     wslam/load_features_cpu.cpp
     wslam/mapping.cpp

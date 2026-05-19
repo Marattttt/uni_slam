@@ -24,9 +24,21 @@ class KeyframeGatePass : public compute::Pass {
         // Reject frames whose triangulation produced fewer landmarks than
         // this. Below ~30 the optimisation becomes unstable on monocular.
         size_t min_landmarks = 30;
-        // Reject frames whose recovered relative rotation is essentially the
-        // identity (radians). Tiny inter-frame motion produces poor scale.
-        double min_rotation_rad = 1e-3;
+        // Minimum recovered relative rotation (radians) below which we
+        // *also* require sufficient pixel parallax. Combined with
+        // min_parallax_px the gate accepts EITHER significant rotation OR
+        // significant translation, so pure-translation frames are still
+        // admitted. ~0.02 rad ≈ 1.1°.
+        double min_rotation_rad = 0.02;
+        // Minimum median feature-pair pixel displacement (LOD-0 units)
+        // below which — together with the rotation gate above — the frame
+        // is considered too static to be useful.
+        double min_parallax_px = 10.0;
+        // Minimum number of *new* landmarks (i.e. tracks the previous
+        // keyframe never saw) the frame must contribute to be accepted.
+        // Stops admitting keyframes that are pure re-observations of
+        // existing landmarks; those add factors but no map content.
+        size_t min_new_landmarks = 5;
     };
 
     KeyframeGatePass(MappingState& state, std::shared_ptr<compute::GPU> gpu,

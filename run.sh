@@ -1,16 +1,38 @@
 #!/bin/bash
 set -euo pipefail
 
+print_help() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Configures, builds, and runs the pc_wslam binary against the dataset
+referenced in .env.
+
+Options:
+  -h, --help        Show this help and exit.
+  -gui              Enable the Pangolin visualization GUI.
+  awaiter           Enable verbose awaiter logging (LOG_AWAITER_CALLS=ON).
+  --max-iters=N     Stop after N top-level pipeline executions (0 = unlimited).
+  --map-out=PATH    Write the final factor-graph map to PATH. Must end in
+                    .ply; a sibling .json metadata file is derived
+                    automatically.
+EOF
+}
+
 mkdir -p build
 
 LOG_AWAITER=OFF
 RUN_ARGS=()
 for arg in "$@"; do
     case "$arg" in
+        -h|--help)      print_help; exit 0 ;;
         awaiter)        LOG_AWAITER=ON ;;
         -gui)           RUN_ARGS+=("-gui") ;;
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
         --map-out=*)    RUN_ARGS+=("$arg") ;;
+        *)              echo "error: unknown argument '$arg'" >&2
+                        print_help >&2
+                        exit 1 ;;
     esac
 done
 

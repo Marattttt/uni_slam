@@ -163,10 +163,12 @@ class AnyBag {
         return AnyCast<T>(&it->second);
     }
 
+#ifndef NDEBUG
     void logMsg(std::string msg) const {
         std::println(stderr, "{}", msg);
         logs_.emplace_back(std::move(msg));
     }
+#endif
 };
 
 #undef LOG_ID
