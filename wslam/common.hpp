@@ -135,6 +135,11 @@ constexpr std::string MapSnapshotName = "gen:map:snap";
 constexpr std::string GetCameraIntrinsicsName(uint32_t cam_idx) {
     return std::format("res:cam:intrinsics:{}", cam_idx);
 }
+constexpr std::string ImuParamsName = "res:imu:params";
+// Latest frame timestamp (nanoseconds, monotonic) of the frame the sensor
+// loader has just emitted. Mapping-stage passes read this to window the
+// per-keyframe IMU interval.
+constexpr std::string FrameTimestampNsName = "res:frame:ts_ns";
 }  // namespace ResourceIdentifier
 
 class FillPyramidPass;

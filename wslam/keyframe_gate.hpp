@@ -39,6 +39,14 @@ class KeyframeGatePass : public compute::Pass {
         // Stops admitting keyframes that are pure re-observations of
         // existing landmarks; those add factors but no map content.
         size_t min_new_landmarks = 5;
+        // Per-landmark minimum pixel parallax (LOD-0). NEW landmarks whose
+        // feat_prev ↔ feat_curr displacement is below this are dropped
+        // before entering the graph — they're depth-ambiguous (focus-of-
+        // expansion or distant points) and tend to give iSAM2 singular
+        // marginal Hessians even with a soft anchor prior. Re-observations
+        // are not filtered: a previously-triangulated landmark constrains
+        // the new pose regardless of inter-frame motion.
+        double min_landmark_parallax_px = 10.0;
     };
 
     KeyframeGatePass(MappingState& state, std::shared_ptr<compute::GPU> gpu,

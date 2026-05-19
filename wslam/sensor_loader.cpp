@@ -89,6 +89,7 @@ std::optional<std::string> SensorLoaderPass::execute() {
     storage_.set(ResourceIdentifier::GetImuVecName(), imu_vec.value());
 
     // SET FRAMES DATA
+    uint64_t latest_ts = 0;
     for (size_t i = 0; i < reading->frames.size(); i++) {
         const auto& frame = reading->frames[i];
 
@@ -101,8 +102,13 @@ std::optional<std::string> SensorLoaderPass::execute() {
 
         spdlog::debug(LOG_ID " Added new frame. name:'{}', size:{}x{}", name,
                       frame->width, frame->height);
+        latest_ts = frame->timestamp;
         storage_.set(name, std::move(frame).value());
     }
+
+    // Publish the current frame's timestamp so mapping-stage passes can
+    // window the IMU buffer to the [prev_kf, this_frame] interval.
+    storage_.set(ResourceIdentifier::FrameTimestampNsName, latest_ts);
 
     return std::nullopt;
 }

@@ -1,12 +1,17 @@
 #pragma once
 
+#include <gtsam/inference/Key.h>
+#include <gtsam/navigation/CombinedImuFactor.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "anybag.hpp"
 #include "mapping_state.hpp"
+#include "models.hpp"
 #include "pass.hpp"
 
 namespace wslam {
@@ -32,33 +37,17 @@ class FactorBuilderPass : public compute::Pass {
         double prior_pose_position_sigma = 1e-4;
         double prior_pose_rotation_sigma_rad = 1e-4;
 
-        // Prior noise on the very first landmark (tight — scale lock for
-        // monocular). Without this the global scale is unobservable.
-        double prior_landmark_sigma = 1e-2;
-
-        // Prior noise on every other landmark introduced *on the first
-        // keyframe*. Those landmarks only have one projection observation
-        // (the prev camera pose lives outside the graph), so we anchor
-        // them with their triangulated positions. The optimiser is still
-        // free to refine them once they get observations from later
-        // keyframes — but the linear system stays well posed in the
-        // meantime.
-        double first_keyframe_landmark_sigma = 0.5;
-
-        // Soft position prior attached to every *other* newly inserted
-        // landmark (those introduced on a later keyframe). Two projection
-        // observations are usually enough to triangulate, but in
-        // low-parallax cases the landmark's marginal Hessian becomes
-        // near-singular and iSAM2 throws an IndeterminantLinearSystem
-        // exception. A modest anchor on the triangulated position keeps
-        // the linear system well conditioned without significantly
-        // biasing the optimiser.
-        double landmark_anchor_sigma = 2.0;
-
-        // Between-pose factor noise (rotation in radians, translation in
-        // monocular scale units — typically dimensionless).
-        double between_rotation_sigma_rad = 0.05;
-        double between_translation_sigma = 0.10;
+        // Vision-only Between-pose factor noise. The CombinedImuFactor is
+        // the primary inter-pose constraint, but iSAM2's local cliques
+        // (landmark + two adjacent poses) need x-to-x information to
+        // avoid singular partial Cholesky when the landmark's depth axis
+        // is poorly observable. The visual BetweenFactor fills that gap.
+        // Sigmas are LOOSE — the IMU factor is the real source of truth
+        // for metric scale; this just regularises local conditioning.
+        // Translation is unit-norm from the essential matrix so its
+        // sigma is dimensionless relative to the visual chain.
+        double between_rotation_sigma_rad = 0.1;
+        double between_translation_sigma = 1.0;
 
         // Pixel noise (sigma) for projection factors at LOD-0.
         double projection_pixel_sigma = 1.5;
@@ -67,7 +56,29 @@ class FactorBuilderPass : public compute::Pass {
         // — outlier observations slipping past RANSAC otherwise pull the
         // optimisation off the global minimum.
         bool use_robust_projection = true;
-        double huber_threshold_px = 1.345;  // standard 95%-eff value
+        // Raised from the textbook 1.345 px because IMU-initialised
+        // poses in our hybrid VI-SLAM can produce reprojection residuals
+        // of several pixels until iSAM converges. A 5 px threshold keeps
+        // genuine outliers down-weighted while staying out of Huber
+        // saturation for typical initial guesses.
+        double huber_threshold_px = 5.0;
+
+        // Initial-velocity prior on the first keyframe. We assume the
+        // sequence starts approximately stationary; a tight prior locks
+        // V_0 ≈ 0 so the IMU has something to integrate against. Loosen
+        // if the dataset is known to start mid-motion.
+        double prior_velocity_sigma = 0.1;  // m/s
+        // Initial-bias prior on the first keyframe. The factor graph will
+        // refine both accel and gyro bias from observations; this just
+        // gauges the bias dimension away from a fully unobservable null
+        // space at start-up.
+        double prior_accel_bias_sigma = 0.1;   // m/s^2
+        double prior_gyro_bias_sigma = 0.01;   // rad/s
+
+        // Extra integration-noise added on top of the per-sample
+        // covariance built from IMU noise densities. Soaks up unmodelled
+        // discretisation error; 1e-8 is the textbook default.
+        double integration_sigma = 1e-4;  // m/s/sqrt(s)
     };
 
     FactorBuilderPass(MappingState& state, std::shared_ptr<compute::GPU> gpu,
@@ -86,6 +97,21 @@ class FactorBuilderPass : public compute::Pass {
     [[nodiscard]] const gtsam::Values& newValues() const { return new_values_; }
     [[nodiscard]] bool hasWork() const { return has_work_; }
 
+    // Indices (into the iSAM2 factor graph) of previously-inserted smart
+    // factors that we just superseded with a re-added version. Passed to
+    // ISAM2::update()'s remove list so the old version is dropped.
+    [[nodiscard]] const gtsam::FactorIndices& removeIndices() const {
+        return remove_indices_;
+    }
+    // Per smart factor we pushed into new_factors_: a pair of
+    // (position-in-new_factors, landmark_id). Used by the iSAM update
+    // pass to back-fill MappingState::smart_factor_indices once iSAM
+    // returns the new factor indices.
+    [[nodiscard]] const std::vector<std::pair<size_t, LandmarkId>>&
+    smartFactorPositions() const {
+        return smart_factor_positions_;
+    }
+
     void setStorage(AnyBag& storage) { storage_ = &storage; }
 
    private:
@@ -95,9 +121,20 @@ class FactorBuilderPass : public compute::Pass {
 
     gtsam::NonlinearFactorGraph new_factors_;
     gtsam::Values new_values_;
+    gtsam::FactorIndices remove_indices_;
+    std::vector<std::pair<size_t, LandmarkId>> smart_factor_positions_;
     bool has_work_ = false;
 
+    // Cached preintegration params (gravity, body_P_sensor, noise) used
+    // for every CombinedImuFactor built by this pass. Lazily initialised
+    // on the first keyframe so the gravity vector reflects the just-
+    // computed startup gravity estimate in MappingState.
+    boost::shared_ptr<gtsam::PreintegrationCombinedParams> imu_params_;
+
     [[nodiscard]] std::optional<std::string> ensureCalibration();
+    // Build `imu_params_` from MappingState's gravity + IMUSensorParams +
+    // camera extrinsics. Called once on the first accepted keyframe.
+    [[nodiscard]] std::optional<std::string> ensureImuParams();
 };
 
 }  // namespace wslam

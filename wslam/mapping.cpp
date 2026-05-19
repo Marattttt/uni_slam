@@ -38,6 +38,14 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // to `stage` below and lives as long as that stage does.
     Isam2UpdatePass* updater_ptr = updater.get();
 
+    // Drain pass goes FIRST so the keyframe gate and factor builder see
+    // up-to-date pose / smart-factor estimates from the previous iSAM
+    // round. Without this, the factor builder would read stale
+    // smart_factor_indices and schedule removal of factor indices iSAM
+    // had already replaced — yielding VariableIndex::remove failures.
+    auto drainer = std::make_unique<Isam2DrainPass>(*updater_ptr, gpu);
+
+    stage.add_pass(std::move(drainer));
     stage.add_pass(std::move(gate));
     stage.add_pass(std::move(builder));
     stage.add_pass(std::move(updater));

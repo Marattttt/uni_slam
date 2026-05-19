@@ -109,7 +109,13 @@ def show(snap: MapSnapshot, *, application_id: str = "uni_slam",
     # the input wasn't. iSAM2's calculateEstimate() returns Values in key
     # order, which already matches id order — this is a safety net.
     keyframes_sorted = sorted(snap.keyframes, key=lambda kf: kf.id)
+    # Drive a "keyframe" timeline so the rerun viewer's scrubber spans the
+    # full sequence instead of collapsing everything into the few ms it
+    # takes to issue the log calls. Each frustum only appears at its own
+    # keyframe index; the landmark cloud and trajectory remain static
+    # (logged with static=True) so they're visible at every timepoint.
     for kf in keyframes_sorted:
+        rr.set_time_sequence("keyframe", kf.id)
         log_camera(kf, snap.camera)
     log_trajectory(keyframes_sorted)
 

@@ -1,22 +1,39 @@
 #pragma once
 
 #include <gtsam/geometry/Cal3DS2.h>
+#include <gtsam/geometry/Cal3_S2.h>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
+#include <gtsam/navigation/ImuBias.h>
 #include <gtsam/nonlinear/ISAM2.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
+#include <gtsam/slam/SmartProjectionPoseFactor.h>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <cstdint>
 #include <flat_map>
+#include <memory>
 #include <optional>
 
 #include "models.hpp"
 #include "provider_base.hpp"
 
 namespace wslam {
+
+// One smart factor per landmark. SmartProjectionPoseFactor marginalises
+// the 3D point out of the optimisation: it stores a list of pixel
+// observations + the poses that observed them, and computes a pose-only
+// residual by triangulating the point internally at each linearisation.
+// This sidesteps iSAM2's depth-axis singularities on low-parallax
+// landmarks (which would otherwise crash partial Cholesky).
+//
+// We use Cal3_S2 (pinhole only) and pre-undistort observations upstream.
+// Cal3DS2's inverse-distortion `calibrate()` is iterative and can fail
+// to converge on edge-case pixels, which propagates as an unhandled
+// exception from the smart factor's internal triangulation.
+using SmartFactor = gtsam::SmartProjectionPoseFactor<gtsam::Cal3_S2>;
 
 // Persistent, CPU-side state shared by every pass in the mapping stage.
 //
@@ -27,9 +44,14 @@ namespace wslam {
 // Lifetime is owned by the stage factory; passes get an `&` to the same
 // instance — the same dependency-injection pattern as `GpuSharedBindings`.
 struct MappingState {
-    // Symbol scheme: 'x' for camera poses, 'l' for landmarks.
+    // Symbol scheme: 'x' for camera poses, 'l' for landmarks, 'v' for
+    // velocity-in-world, 'b' for IMU bias (accel + gyro). Velocity and
+    // bias share the keyframe's PoseId (one V_i, one B_i per accepted
+    // keyframe).
     static constexpr char kPoseChar = 'x';
     static constexpr char kLandmarkChar = 'l';
+    static constexpr char kVelChar = 'v';
+    static constexpr char kBiasChar = 'b';
 
     [[nodiscard]] static gtsam::Key poseKey(PoseId id) noexcept {
         return gtsam::Symbol(kPoseChar, id.v).key();
@@ -37,10 +59,18 @@ struct MappingState {
     [[nodiscard]] static gtsam::Key landmarkKey(LandmarkId id) noexcept {
         return gtsam::Symbol(kLandmarkChar, id.v).key();
     }
+    [[nodiscard]] static gtsam::Key velocityKey(PoseId id) noexcept {
+        return gtsam::Symbol(kVelChar, id.v).key();
+    }
+    [[nodiscard]] static gtsam::Key biasKey(PoseId id) noexcept {
+        return gtsam::Symbol(kBiasChar, id.v).key();
+    }
 
-    // Cached camera calibration (Pinhole + radial-tangential distortion).
-    // Populated on the first execute() once intrinsics land in AnyBag.
-    boost::shared_ptr<gtsam::Cal3DS2> calibration;
+    // Cached pinhole calibration shared by every smart factor. Observations
+    // are pre-undistorted by the keyframe gate before being added to the
+    // smart factors, so distortion coefficients live separately on
+    // intrinsics_cache (used for the upstream undistortion only).
+    boost::shared_ptr<gtsam::Cal3_S2> calibration;
     std::optional<data::CamSensorParams> intrinsics_cache;
 
     // Latest computed estimate. Updated on the main thread by the iSAM
@@ -75,6 +105,37 @@ struct MappingState {
     // to recognise re-observations: a Landmark whose `feat_prev` is in this
     // map continues an existing track.
     std::flat_map<Feature, LandmarkId> active_landmarks;
+
+    // One smart factor per landmark. The smart factor's `add()` is called
+    // on every observation; on re-observations the (mutated) factor is
+    // re-added to iSAM2 via the remove-and-readd pattern below.
+    std::flat_map<LandmarkId, SmartFactor::shared_ptr> smart_factors;
+    // iSAM2 factor index for the most recent insertion of each smart
+    // factor. Passed as `remove_factor_indices` on the next re-add so the
+    // old (stale, smaller-measurement-set) version is replaced cleanly.
+    // A landmark in `smart_factors` but not in this map has never been
+    // added to iSAM2 yet (still pending its first update).
+    std::flat_map<LandmarkId, gtsam::FactorIndex> smart_factor_indices;
+
+    // Gravity vector expressed in the world frame (which we anchor to the
+    // first accepted keyframe's camera frame). Set on the first accepted
+    // keyframe from a window of stationary IMU samples; consumed by the
+    // factor builder when configuring IMU preintegration. Default direction
+    // is "Z+ is up" so unset gravity reads as 9.81 m/s^2 along -Z.
+    Eigen::Vector3d gravity_world{0.0, 0.0, -9.81};
+    bool gravity_initialised = false;
+
+    // Timestamp (ns) of the most recently accepted keyframe. Used by the
+    // keyframe gate to window IMU samples between consecutive keyframes.
+    std::optional<uint64_t> last_keyframe_ts_ns;
+
+    // Latest IMU bias estimate, propagated forward as the initial guess
+    // for the next keyframe's bias variable. Filled from latest_values
+    // after each iSAM update; falls back to zero on the first frame.
+    gtsam::imuBias::ConstantBias last_bias;
+    // Latest velocity-in-world estimate, propagated forward as the initial
+    // guess for the next keyframe's velocity variable.
+    Eigen::Vector3d last_velocity = Eigen::Vector3d::Zero();
 };
 
 }  // namespace wslam

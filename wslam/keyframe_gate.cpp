@@ -11,6 +11,7 @@
 
 #include "common.hpp"
 #include "models.hpp"
+#include "provider_base.hpp"
 
 using namespace wslam;
 
@@ -57,6 +58,66 @@ constexpr Eigen::Vector2d ToLod0Pixel(const Feature& f) {
 double RotationAngle(const Eigen::Matrix3d& r) {
     const double trace = std::clamp(r.trace(), -1.0, 3.0);
     return std::acos(std::clamp(0.5 * (trace - 1.0), -1.0, 1.0));
+}
+
+// Inverse OpenCV radial-tangential distortion via fixed-point iteration.
+// Converts an observed (distorted) normalised image-plane coordinate
+// back to its ideal (undistorted) normalised coordinate. Mirrors the
+// helper in triangulate_cpu.cpp; duplicated to avoid a public header
+// dependency.
+Eigen::Vector2d UndistortNormalised(const Eigen::Vector2d& dist,
+                                    const Eigen::Vector4d& d) {
+    constexpr uint32_t kMaxIter = 8;
+    constexpr double kTol = 1e-9;
+    Eigen::Vector2d xy = dist;
+    for (uint32_t i = 0; i < kMaxIter; ++i) {
+        const double x = xy.x();
+        const double y = xy.y();
+        const double r2 = x * x + y * y;
+        const double radial = 1.0 + d[0] * r2 + d[1] * r2 * r2;
+        const double dx_t = 2.0 * d[2] * x * y + d[3] * (r2 + 2.0 * x * x);
+        const double dy_t = d[2] * (r2 + 2.0 * y * y) + 2.0 * d[3] * x * y;
+        const Eigen::Vector2d next((dist.x() - dx_t) / radial,
+                                   (dist.y() - dy_t) / radial);
+        if ((next - xy).norm() < kTol) {
+            xy = next;
+            break;
+        }
+        xy = next;
+    }
+    return xy;
+}
+
+// Convert a feature's LOD-0 distorted pixel to its undistorted LOD-0
+// pixel using camera intrinsics + radtan distortion coefficients.
+Eigen::Vector2d UndistortLod0Pixel(const Feature& f,
+                                   const Eigen::Vector4d& intrinsics,
+                                   const Eigen::Vector4d& distortion) {
+    const Eigen::Vector2d px = ToLod0Pixel(f);
+    const double fu = intrinsics[0];
+    const double fv = intrinsics[1];
+    const double cu = intrinsics[2];
+    const double cv = intrinsics[3];
+    const Eigen::Vector2d xy_dist((px.x() - cu) / fu, (px.y() - cv) / fv);
+    const Eigen::Vector2d xy = UndistortNormalised(xy_dist, distortion);
+    return {fu * xy.x() + cu, fv * xy.y() + cv};
+}
+
+// Mean accel reading (in IMU frame) across a window of samples. Used at
+// startup to estimate gravity-in-body before the IMU starts moving; the
+// caller is responsible for ensuring the window is taken from an
+// approximately stationary segment.
+Eigen::Vector3d MeanAccelImu(std::span<const data::IMUReading> w) {
+    if (w.empty()) {
+        return Eigen::Vector3d::Zero();
+    }
+    Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+    for (const auto& r : w) {
+        sum += Eigen::Vector3d(static_cast<double>(r.ax()),
+                               static_cast<double>(r.ay()),
+                               static_cast<double>(r.az()));
+    }
+    return sum / static_cast<double>(w.size());
 }
 
 }  // namespace
@@ -207,6 +268,114 @@ std::optional<std::string> KeyframeGatePass::execute() {
         gtsam::Pose3(gtsam::Rot3(delta.R_world_cam),
                      gtsam::Point3(delta.t_world_cam)));
 
+    // IMU windowing: copy the samples that fall in (prev_kf_ts, curr_kf_ts]
+    // into the delta, then trim the AnyBag buffer so the next gate doesn't
+    // double-count. The current frame's timestamp is published by the
+    // sensor loader at the top of every pipeline iteration.
+    {
+        const auto ts_ptr = storage.getPtr<uint64_t>(
+            ResourceIdentifier::FrameTimestampNsName);
+        if (!ts_ptr.has_value()) {
+            return "keyframe gate: missing current-frame timestamp under '"
+                   + ResourceIdentifier::FrameTimestampNsName + "'";
+        }
+        const uint64_t curr_ts = **ts_ptr;
+        delta.curr_kf_ts_ns = curr_ts;
+        delta.prev_kf_ts_ns = state_.last_keyframe_ts_ns.value_or(curr_ts);
+
+        // Take the IMU buffer by value so we can replace it with the
+        // post-window tail in one shot below.
+        auto imu_buf_opt = storage.get<std::vector<data::IMUReading>>(
+            ResourceIdentifier::GetImuVecName());
+        if (imu_buf_opt.has_value()) {
+            auto& imu_buf = imu_buf_opt.value();
+
+            // On the very first accepted keyframe, take a stationary-window
+            // average across the IMU samples we have so far to estimate
+            // gravity in the *body* (=IMU) frame, then rotate into the
+            // camera/world frame for downstream preintegration. Whether the
+            // dataset start is truly stationary is the caller's problem;
+            // EuRoC sequences typically start that way.
+            if (delta.is_first_keyframe && !imu_buf.empty()) {
+                const auto cam_ptr
+                    = storage.getPtr<data::CamSensorParams>(
+                        ResourceIdentifier::GetCameraIntrinsicsName(0));
+                if (cam_ptr.has_value()) {
+                    // T_body_cam.rotation(); world == first cam frame, so
+                    // gravity_in_world = R_cam_body * gravity_in_body.
+                    const Eigen::Matrix3d r_cam_body
+                        = (**cam_ptr).T_BS.block<3, 3>(0, 0).transpose();
+                    const Eigen::Vector3d g_body
+                        = MeanAccelImu(std::span<const data::IMUReading>(
+                            imu_buf.data(), imu_buf.size()));
+                    // The accel reading on a stationary IMU is the negative
+                    // of gravitational acceleration (specific force points
+                    // opposite to free-fall). Negate to recover the actual
+                    // gravity vector.
+                    state_.gravity_world = -r_cam_body * g_body;
+                    state_.gravity_initialised = true;
+                    spdlog::info(LOG_ID
+                                 " Initialised gravity in world from {} "
+                                 "stationary IMU samples: g_world="
+                                 "({:.3f},{:.3f},{:.3f}) "
+                                 "|g|={:.3f} m/s^2",
+                                 imu_buf.size(), state_.gravity_world.x(),
+                                 state_.gravity_world.y(),
+                                 state_.gravity_world.z(),
+                                 state_.gravity_world.norm());
+                } else {
+                    spdlog::warn(LOG_ID
+                                 " No camera params under '{}'; cannot "
+                                 "initialise gravity",
+                                 ResourceIdentifier::GetCameraIntrinsicsName(0));
+                }
+            }
+
+            // Slice out everything with ts in (prev_ts, curr_ts]. On the
+            // first keyframe we take an empty slice (no prev to integrate
+            // from) and drop everything older than curr_ts.
+            const uint64_t lo = delta.prev_kf_ts_ns;
+            const uint64_t hi = curr_ts;
+            if (!delta.is_first_keyframe) {
+                delta.imu_between.reserve(imu_buf.size());
+                for (const auto& r : imu_buf) {
+                    if (r.timestamp > lo && r.timestamp <= hi) {
+                        delta.imu_between.push_back(r);
+                    }
+                }
+            }
+            // Keep samples strictly after the current keyframe — they
+            // belong to the next integration window.
+            std::vector<data::IMUReading> tail;
+            tail.reserve(imu_buf.size());
+            for (auto& r : imu_buf) {
+                if (r.timestamp > hi) {
+                    tail.push_back(r);
+                }
+            }
+            storage.set(ResourceIdentifier::GetImuVecName(), std::move(tail));
+        }
+        state_.last_keyframe_ts_ns = curr_ts;
+    }
+
+    // Camera intrinsics + distortion are needed to pre-undistort
+    // observations before they're added to smart factors downstream
+    // (which use a pinhole Cal3_S2). Required: triangulation already
+    // depends on the same intrinsics being in AnyBag, so a missing entry
+    // would mean upstream failed.
+    const auto cam_for_undistort = storage.getPtr<data::CamSensorParams>(
+        ResourceIdentifier::GetCameraIntrinsicsName(0));
+    if (!cam_for_undistort.has_value()) {
+        return "keyframe gate: missing camera intrinsics under '"
+               + ResourceIdentifier::GetCameraIntrinsicsName(0) + "'";
+    }
+    const auto& intrinsics_vec = (**cam_for_undistort).intrinsics;
+    const auto& distortion_vec
+        = (**cam_for_undistort).distortion_coefficients;
+    const auto Undistort = [&](const Feature& f) {
+        return UndistortLod0Pixel(f, intrinsics_vec, distortion_vec);
+    };
+
     // Landmark association. Build the next active_landmarks map fresh: a
     // landmark observed *this* frame stays alive only if it's actually seen.
     std::flat_map<Feature, LandmarkId> next_active;
@@ -216,6 +385,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
                                                           : 0));
     delta.new_landmarks_world.reserve(tri.landmarks.size());
 
+    size_t dropped_low_parallax = 0;
     for (const auto& lm : tri.landmarks) {
         const auto it = state_.active_landmarks.find(lm.feat_prev);
         LandmarkId id{};
@@ -223,6 +393,19 @@ std::optional<std::string> KeyframeGatePass::execute() {
         if (it != state_.active_landmarks.end()) {
             id = it->second;
         } else {
+            // Per-landmark parallax gate: a new landmark whose feature
+            // displacement between prev and curr keyframe is below
+            // threshold can't be reliably triangulated and the resulting
+            // marginal Hessian is near-singular along the depth axis.
+            // Drop it rather than feed iSAM2 a degenerate variable. The
+            // feature may be re-acquired on a later keyframe where the
+            // baseline is bigger.
+            const auto pp = ToLod0Pixel(lm.feat_prev);
+            const auto pc = ToLod0Pixel(lm.feat_curr);
+            if ((pc - pp).norm() < opts_.min_landmark_parallax_px) {
+                ++dropped_low_parallax;
+                continue;
+            }
             id = LandmarkId{state_.next_landmark_id++};
             is_new = true;
         }
@@ -234,12 +417,10 @@ std::optional<std::string> KeyframeGatePass::execute() {
             const Eigen::Vector3d p_world
                 = delta.R_world_cam * lm.position_cam_curr + delta.t_world_cam;
             delta.new_landmarks_world.emplace_back(id, p_world);
-            // Mirror the landmark's initial position into predicted_values
-            // so downstream pre-iSAM consumers (factor builder asserts,
-            // future PnP front-ends) can rely on every submitted key being
-            // present without waiting on the worker.
-            state_.predicted_values.insert(MappingState::landmarkKey(id),
-                                           gtsam::Point3(p_world));
+            // With smart factors, landmarks are *not* graph variables —
+            // they're triangulated internally by SmartProjectionPoseFactor
+            // at each iSAM linearisation. So we don't insert into
+            // predicted_values for them.
 
             // For new landmarks introduced after the first keyframe we also
             // emit a feat_prev observation at the *previous* keyframe pose.
@@ -252,41 +433,43 @@ std::optional<std::string> KeyframeGatePass::execute() {
                 delta.observations.push_back(LandmarkObservation{
                     .pose = delta.prev_pose_id.value(),
                     .landmark = id,
-                    .pixel_lod0 = ToLod0Pixel(lm.feat_prev),
+                    .pixel_lod0 = Undistort(lm.feat_prev),
                 });
             }
         }
         delta.observations.push_back(LandmarkObservation{
             .pose = delta.pose_id,
             .landmark = id,
-            .pixel_lod0 = ToLod0Pixel(lm.feat_curr),
+            .pixel_lod0 = Undistort(lm.feat_curr),
         });
     }
 
     spdlog::info(LOG_ID
                  " Accepted keyframe pose_id={} (first={}, prev={}), "
-                 "obs={}, new_landmarks={}",
+                 "obs={}, new_landmarks={}, dropped_low_parallax={}",
                  delta.pose_id.v, delta.is_first_keyframe,
                  delta.prev_pose_id.has_value()
                      ? std::to_string(delta.prev_pose_id.value().v)
                      : std::string{"-"},
-                 delta.observations.size(), delta.new_landmarks_world.size());
+                 delta.observations.size(), delta.new_landmarks_world.size(),
+                 dropped_low_parallax);
 
 #ifndef NDEBUG
-    // Invariant: observations always reference variables we either just
-    // declared (new) or that are already in predicted_values from a prior
-    // frame. We use predicted_values (not latest_values) because iSAM2 runs
-    // async and may not yet have produced an optimised estimate for the
-    // most recent previous keyframe's landmarks.
+    // Invariant: every observation references a landmark that either was
+    // just declared this frame or was created on a previous keyframe.
+    // The active_landmarks map is updated below to contain the latter
+    // set, so checking against the union of (just-declared, prior tracks)
+    // covers it.
     {
         std::flat_set<LandmarkId> known;
         for (const auto& [id, _] : delta.new_landmarks_world) {
             known.insert(id);
         }
+        for (const auto& [_feat, id] : state_.active_landmarks) {
+            known.insert(id);
+        }
         for (const auto& obs : delta.observations) {
-            assert(known.contains(obs.landmark)
-                   || state_.predicted_values.exists(
-                          MappingState::landmarkKey(obs.landmark)));
+            assert(known.contains(obs.landmark));
         }
     }
 #endif

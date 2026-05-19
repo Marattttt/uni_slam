@@ -75,6 +75,16 @@ int main_test(WslamConfig config) {
         comp.getStorage().set(ResourceIdentifier::GetCameraIntrinsicsName(i),
                               cam);
     }
+    // IMU calibration (T_BS, noise densities, rate). Consumed by the
+    // factor builder to configure preintegration; by the keyframe gate to
+    // express gravity in the camera frame.
+    spdlog::info("IMU: rate={} Hz, gyro_nd={:.3e} rad/s/sqrt(Hz), "
+                 "accel_nd={:.3e} m/s^2/sqrt(Hz)",
+                 sensor_params->imu.rate_hz,
+                 sensor_params->imu.gyroscope_noise_density,
+                 sensor_params->imu.accelerometer_noise_density);
+    comp.getStorage().set(ResourceIdentifier::ImuParamsName,
+                          sensor_params->imu);
 
     auto euroc_generator = euroc_data->getReadings();
 

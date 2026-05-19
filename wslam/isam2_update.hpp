@@ -4,6 +4,10 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <utility>
+#include <vector>
+
+#include "models.hpp"
 
 #include "anybag.hpp"
 #include "factor_builder.hpp"
@@ -47,6 +51,13 @@ class Isam2UpdatePass : public compute::Pass {
 
     void setStorage(AnyBag& storage) { storage_ = &storage; }
 
+    // Drain any in-flight iSAM update and publish its result to
+    // MappingState + MapSnapshot. Public so a sibling Pass placed at the
+    // *start* of the mapping stage can run this before KeyframeGate /
+    // FactorBuilder run — that way the factor builder reads up-to-date
+    // smart_factor_indices and the gate chains off optimised poses.
+    [[nodiscard]] std::optional<std::string> drainPending();
+
     // Blocks until any in-flight iSAM update completes, applies the result
     // to MappingState, and publishes the final snapshot. Call once after
     // the main pipeline loop exits and before consumers (e.g. ExportMap)
@@ -62,12 +73,35 @@ class Isam2UpdatePass : public compute::Pass {
 
     std::unique_ptr<Isam2Worker> worker_;
     std::future<Isam2Worker::Result> pending_;
+    // Snapshot of FactorBuilderPass::smartFactorPositions() at the moment
+    // we submitted the previous frame's work. Held alongside `pending_`
+    // so drainPending can map iSAM's returned FactorIndex assignments
+    // back into per-landmark indices in MappingState.
+    std::vector<std::pair<size_t, LandmarkId>> pending_smart_factor_positions_;
     uint64_t frame_counter_ = 0;
+};
 
-    // Block on the previous frame's future (if any), apply its result to
-    // MappingState, and publish the resulting MapSnapshot. No-op when no
-    // submission is in flight.
-    [[nodiscard]] std::optional<std::string> drainPending();
+// Sibling pass that drains any in-flight iSAM2 result by delegating to
+// an existing Isam2UpdatePass. Placed at the start of the mapping stage
+// so the keyframe gate / factor builder see up-to-date estimates and
+// smart_factor_indices before they run.
+class Isam2DrainPass : public compute::Pass {
+   public:
+    Isam2DrainPass(Isam2UpdatePass& target, std::shared_ptr<compute::GPU> gpu)
+        : compute::Pass(std::move(gpu)), target_(target) {}
+
+    [[nodiscard]] std::optional<std::string> initialize() override {
+        return std::nullopt;
+    }
+    [[nodiscard]] std::optional<std::string> execute() override {
+        return target_.drainPending();
+    }
+    [[nodiscard]] std::string getId() const override {
+        return "[ISAM2 Drain pass]";
+    }
+
+   private:
+    Isam2UpdatePass& target_;
 };
 
 }  // namespace wslam

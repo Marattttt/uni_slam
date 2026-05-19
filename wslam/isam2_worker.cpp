@@ -17,18 +17,13 @@ using namespace wslam;
 Isam2Worker::Isam2Worker() {
     gtsam::ISAM2Params params;
     params.optimizationParams = gtsam::ISAM2GaussNewtonParams();
-    // Relinearise + re-eliminate the Bayes tree every N updates rather than
-    // every frame. The per-update cost of N==1 is dominated by re-elim of
-    // the entire affected subtree; batching to N==10 amortises that across
-    // many keyframes for an order-of-magnitude speedup in steady state.
-    // Map quality is essentially unaffected because the threshold below
-    // still gates which variables actually move when relin does fire.
-    params.relinearizeSkip = 10;
-    // Variable is queued for relinearisation when its delta exceeds this
-    // value. Raised from 0.01 so a smaller set of variables qualifies on
-    // each relin cycle; slightly slower convergence for variables that
-    // drift, but a meaningful per-update cost reduction.
-    params.relinearizeThreshold = 0.05;
+    // Visual-inertial dynamics are highly nonlinear (rotations + IMU
+    // preintegration), so we need to relinearise every update. Skipping
+    // even a few frames lets the Bayes tree drift far enough from the
+    // current operating point that partial-Cholesky on Schur-complemented
+    // landmarks goes singular at the depth axis.
+    params.relinearizeSkip = 1;
+    params.relinearizeThreshold = 0.01;
     isam_ = std::make_unique<gtsam::ISAM2>(params);
 
     thread_ = std::thread([this] { run(); });
@@ -78,17 +73,27 @@ void Isam2Worker::run() {
         Result result;
         try {
             spdlog::debug(LOG_ID
-                          " frame={}: submitting factors={}, new_values={}",
+                          " frame={}: submitting factors={}, new_values={}, "
+                          "remove={}",
                           item->first.frame_id,
                           item->first.new_factors.size(),
-                          item->first.new_values.size());
+                          item->first.new_values.size(),
+                          item->first.remove_factor_indices.size());
             const auto r = isam_->update(item->first.new_factors,
-                                         item->first.new_values);
+                                         item->first.new_values,
+                                         item->first.remove_factor_indices);
             for (uint32_t i = 0; i < item->first.extra_updates; ++i) {
                 isam_->update();
             }
             result.latest_values = isam_->calculateEstimate();
             result.factor_count = isam_->getFactorsUnsafe().size();
+            // ISAM2Result::newFactorsIndices is a vector mapping the
+            // position of each newly inserted factor (in order) to its
+            // FactorIndex in the underlying NonlinearFactorGraph. Copy
+            // it out so the main thread can update its per-landmark
+            // index map.
+            result.new_factor_indices.assign(r.newFactorsIndices.begin(),
+                                             r.newFactorsIndices.end());
             spdlog::info(
                 LOG_ID
                 " frame={} OK: relin={}, factors_recalc={}, total_factors={}, "

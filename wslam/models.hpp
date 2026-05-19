@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "common.hpp"
+#include "provider_base.hpp"
 
 namespace wslam {
 struct Corner {
@@ -177,6 +178,18 @@ struct MapDelta {
     // projection factors.
     std::vector<std::pair<LandmarkId, Eigen::Vector3d>> new_landmarks_world;
     std::vector<LandmarkObservation> observations;
+
+    // IMU samples spanning (prev_kf_ts, this_kf_ts], in order. Empty on the
+    // very first keyframe (no prev to integrate from). Consumed by the
+    // factor builder to construct a `CombinedImuFactor` between
+    // prev_pose_id and pose_id.
+    std::vector<data::IMUReading> imu_between;
+    // Timestamp (ns) of the previous and current keyframe. The factor
+    // builder uses these to seed the preintegration's first dt — the gap
+    // between `prev_kf_ts_ns` and the first IMU sample's timestamp — so
+    // the integration interval matches the inter-keyframe interval exactly.
+    uint64_t prev_kf_ts_ns = 0;
+    uint64_t curr_kf_ts_ns = 0;
 };
 
 // Per-keyframe pose recorded in the published snapshot.

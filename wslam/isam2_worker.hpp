@@ -30,6 +30,10 @@ class Isam2Worker {
     struct Work {
         gtsam::NonlinearFactorGraph new_factors;
         gtsam::Values new_values;
+        // Indices of previously-inserted factors to remove on this
+        // update — used by the smart-factor remove-and-readd pattern in
+        // factor_builder. Empty when no factors need replacing.
+        gtsam::FactorIndices remove_factor_indices;
         uint32_t extra_updates = 0;
         // Logging only — identifies which frame the submission came from.
         uint64_t frame_id = 0;
@@ -41,6 +45,11 @@ class Isam2Worker {
         gtsam::Values latest_values;
         // Total factors in the iSAM2 graph after this update.
         std::size_t factor_count = 0;
+        // For each entry in Work::new_factors (positionally), the
+        // FactorIndex iSAM2 assigned it. The factor builder uses this to
+        // record per-landmark factor indices for the next remove-and-
+        // readd cycle. Same size as Work::new_factors.
+        std::vector<gtsam::FactorIndex> new_factor_indices;
         // If non-empty, iSAM2 threw and the update was not applied.
         std::optional<std::string> error;
     };
