@@ -21,11 +21,11 @@ compute::Stage wslam::CreatePoseEstimateCPUStage(
     stage.add_pass(std::make_unique<LoadDataCPUPass>(
         shared, gpu, std::move(features_binding_label)));
 
-    stage.add_pass(std::make_unique<MatchFeaturesCPU>(shared, gpu));
+    stage.add_pass(std::make_unique<MatchFeaturesCPU>(shared));
 
-    stage.add_pass(std::make_unique<RansacCPU>(shared, gpu));
+    stage.add_pass(std::make_unique<RansacCPU>(shared));
 
-    stage.add_pass(std::make_unique<TriangulateCPU>(shared, gpu));
+    stage.add_pass(std::make_unique<TriangulateCPU>(shared));
 
     if (config.enable_gui) {
         std::unique_ptr<viz::ResourceProvider> resource_provider

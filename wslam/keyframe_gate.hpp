@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 
 #include "common.hpp"
 #include "mapping_state.hpp"
@@ -49,9 +48,8 @@ class KeyframeGatePass : public compute::Pass {
         double min_landmark_parallax_px = 10.0;
     };
 
-    KeyframeGatePass(MappingState& state, std::shared_ptr<compute::GPU> gpu,
-                     Opts opts);
-    KeyframeGatePass(MappingState& state, std::shared_ptr<compute::GPU> gpu);
+    KeyframeGatePass(MappingState& state, Opts opts);
+    KeyframeGatePass(MappingState& state);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;

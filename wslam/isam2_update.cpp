@@ -16,17 +16,12 @@ using namespace wslam;
 #define LOG_ID "[ISAM2 Update pass]"
 
 Isam2UpdatePass::Isam2UpdatePass(MappingState& state,
-                                 const FactorBuilderPass& builder,
-                                 std::shared_ptr<compute::GPU> gpu, Opts opts)
-    : compute::Pass(std::move(gpu)),
-      state_(state),
-      builder_(builder),
-      opts_(opts) {}
+                                 const FactorBuilderPass& builder, Opts opts)
+    : state_(state), builder_(builder), opts_(opts) {}
 
 Isam2UpdatePass::Isam2UpdatePass(MappingState& state,
-                                 const FactorBuilderPass& builder,
-                                 std::shared_ptr<compute::GPU> gpu)
-    : Isam2UpdatePass(state, builder, std::move(gpu), Opts{}) {}
+                                 const FactorBuilderPass& builder)
+    : Isam2UpdatePass(state, builder, Opts{}) {}
 
 std::string Isam2UpdatePass::getId() const { return LOG_ID; }
 

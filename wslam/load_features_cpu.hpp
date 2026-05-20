@@ -12,8 +12,8 @@ class LoadDataCPUPass : public compute::Pass {
    public:
     LoadDataCPUPass(GpuSharedBindings& shared,
                     std::shared_ptr<compute::GPU> gpu, std::string features)
-        : compute::Pass(std::move(gpu)),
-          kFeaturesGPULabel(std::move(features)),
+        : kFeaturesGPULabel(std::move(features)),
+          gpu_(std::move(gpu)),
           shared_(shared) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
@@ -25,6 +25,7 @@ class LoadDataCPUPass : public compute::Pass {
 
     const std::string kFeaturesGPULabel;
 
+    std::shared_ptr<compute::GPU> gpu_;
     GpuSharedBindings& shared_;
 
     std::optional<compute::BufferBinding*> features_binding_;

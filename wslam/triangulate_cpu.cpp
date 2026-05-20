@@ -17,13 +17,11 @@ using namespace wslam;
 
 #define LOG_ID "[Triangulate pass]"
 
-TriangulateCPU::TriangulateCPU(GpuSharedBindings& shared,
-                               std::shared_ptr<compute::GPU> gpu, Opts opts)
-    : compute::Pass(std::move(gpu)), shared_(shared), opts_(opts) {}
+TriangulateCPU::TriangulateCPU(GpuSharedBindings& shared, Opts opts)
+    : shared_(shared), opts_(opts) {}
 
-TriangulateCPU::TriangulateCPU(GpuSharedBindings& shared,
-                               std::shared_ptr<compute::GPU> gpu)
-    : TriangulateCPU(shared, std::move(gpu), Opts{}) {}
+TriangulateCPU::TriangulateCPU(GpuSharedBindings& shared)
+    : TriangulateCPU(shared, Opts{}) {}
 
 std::string TriangulateCPU::getId() const { return LOG_ID; }
 

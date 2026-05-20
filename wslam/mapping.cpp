@@ -21,10 +21,10 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
 
     compute::Stage stage{"Mapping", gpu};
 
-    auto gate = std::make_unique<KeyframeGatePass>(*state, gpu);
+    auto gate = std::make_unique<KeyframeGatePass>(*state);
     gate->setStorage(storage);
 
-    auto builder = std::make_unique<FactorBuilderPass>(*state, gpu);
+    auto builder = std::make_unique<FactorBuilderPass>(*state);
     builder->setStorage(storage);
 
     // The iSAM2 update pass needs to read the builder's per-frame factor /
@@ -32,7 +32,7 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // the same Stage, destroyed together).
     const FactorBuilderPass* builder_ptr = builder.get();
 
-    auto updater = std::make_unique<Isam2UpdatePass>(*state, *builder_ptr, gpu);
+    auto updater = std::make_unique<Isam2UpdatePass>(*state, *builder_ptr);
     updater->setStorage(storage);
     // Same lifetime argument as for builder_ptr above: the updater is added
     // to `stage` below and lives as long as that stage does.
@@ -43,7 +43,7 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // round. Without this, the factor builder would read stale
     // smart_factor_indices and schedule removal of factor indices iSAM
     // had already replaced — yielding VariableIndex::remove failures.
-    auto drainer = std::make_unique<Isam2DrainPass>(*updater_ptr, gpu);
+    auto drainer = std::make_unique<Isam2DrainPass>(*updater_ptr);
 
     stage.add_pass(std::move(drainer));
     stage.add_pass(std::move(gate));

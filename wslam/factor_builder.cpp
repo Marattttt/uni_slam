@@ -21,14 +21,11 @@ using namespace wslam;
 
 #define LOG_ID "[Factor Builder pass]"
 
-FactorBuilderPass::FactorBuilderPass(MappingState& state,
-                                     std::shared_ptr<compute::GPU> gpu,
-                                     Opts opts)
-    : compute::Pass(std::move(gpu)), state_(state), opts_(opts) {}
+FactorBuilderPass::FactorBuilderPass(MappingState& state, Opts opts)
+    : state_(state), opts_(opts) {}
 
-FactorBuilderPass::FactorBuilderPass(MappingState& state,
-                                     std::shared_ptr<compute::GPU> gpu)
-    : FactorBuilderPass(state, std::move(gpu), Opts{}) {}
+FactorBuilderPass::FactorBuilderPass(MappingState& state)
+    : FactorBuilderPass(state, Opts{}) {}
 
 std::string FactorBuilderPass::getId() const { return LOG_ID; }
 

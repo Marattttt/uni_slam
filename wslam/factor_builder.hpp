@@ -81,9 +81,8 @@ class FactorBuilderPass : public compute::Pass {
         double integration_sigma = 1e-4;  // m/s/sqrt(s)
     };
 
-    FactorBuilderPass(MappingState& state, std::shared_ptr<compute::GPU> gpu,
-                      Opts opts);
-    FactorBuilderPass(MappingState& state, std::shared_ptr<compute::GPU> gpu);
+    FactorBuilderPass(MappingState& state, Opts opts);
+    FactorBuilderPass(MappingState& state);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;

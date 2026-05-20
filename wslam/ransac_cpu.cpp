@@ -16,9 +16,7 @@ using namespace wslam;
 
 #define LOG_ID "[RANSAC Features pass]"
 
-RansacCPU::RansacCPU(GpuSharedBindings& shared,
-                     std::shared_ptr<compute::GPU> gpu)
-    : RansacCPU(shared, std::move(gpu), Opts{}) {}
+RansacCPU::RansacCPU(GpuSharedBindings& shared) : RansacCPU(shared, Opts{}) {}
 
 std::string RansacCPU::getId() const { return LOG_ID; }
 

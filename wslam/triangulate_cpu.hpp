@@ -3,7 +3,6 @@
 #include <cstdint>
 
 #include "common.hpp"
-#include "gpu.hpp"
 #include "pass.hpp"
 #include "provider_base.hpp"
 
@@ -54,13 +53,11 @@ class TriangulateCPU : public compute::Pass {
         uint32_t camera_index = 0;
     };
 
-    TriangulateCPU(GpuSharedBindings& shared,
-                   std::shared_ptr<compute::GPU> gpu, Opts opts);
+    TriangulateCPU(GpuSharedBindings& shared, Opts opts);
 
     // Forwarded to the Opts-taking constructor so default values aren't
     // duplicated.
-    TriangulateCPU(GpuSharedBindings& shared,
-                   std::shared_ptr<compute::GPU> gpu);
+    TriangulateCPU(GpuSharedBindings& shared);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;

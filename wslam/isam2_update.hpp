@@ -41,9 +41,8 @@ class Isam2UpdatePass : public compute::Pass {
     };
 
     Isam2UpdatePass(MappingState& state, const FactorBuilderPass& builder,
-                    std::shared_ptr<compute::GPU> gpu, Opts opts);
-    Isam2UpdatePass(MappingState& state, const FactorBuilderPass& builder,
-                    std::shared_ptr<compute::GPU> gpu);
+                    Opts opts);
+    Isam2UpdatePass(MappingState& state, const FactorBuilderPass& builder);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
@@ -87,8 +86,7 @@ class Isam2UpdatePass : public compute::Pass {
 // smart_factor_indices before they run.
 class Isam2DrainPass : public compute::Pass {
    public:
-    Isam2DrainPass(Isam2UpdatePass& target, std::shared_ptr<compute::GPU> gpu)
-        : compute::Pass(std::move(gpu)), target_(target) {}
+    Isam2DrainPass(Isam2UpdatePass& target) : target_(target) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override {
         return std::nullopt;

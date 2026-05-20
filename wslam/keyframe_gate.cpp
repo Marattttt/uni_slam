@@ -17,13 +17,11 @@ using namespace wslam;
 
 #define LOG_ID "[Keyframe Gate pass]"
 
-KeyframeGatePass::KeyframeGatePass(MappingState& state,
-                                   std::shared_ptr<compute::GPU> gpu, Opts opts)
-    : compute::Pass(std::move(gpu)), state_(state), opts_(opts) {}
+KeyframeGatePass::KeyframeGatePass(MappingState& state, Opts opts)
+    : state_(state), opts_(opts) {}
 
-KeyframeGatePass::KeyframeGatePass(MappingState& state,
-                                   std::shared_ptr<compute::GPU> gpu)
-    : KeyframeGatePass(state, std::move(gpu), Opts{}) {}
+KeyframeGatePass::KeyframeGatePass(MappingState& state)
+    : KeyframeGatePass(state, Opts{}) {}
 
 std::string KeyframeGatePass::getId() const { return LOG_ID; }
 

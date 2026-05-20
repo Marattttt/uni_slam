@@ -4,7 +4,6 @@
 #include <random>
 
 #include "common.hpp"
-#include "gpu.hpp"
 #include "pass.hpp"
 
 namespace wslam {
@@ -36,16 +35,12 @@ class RansacCPU : public compute::Pass {
         uint64_t rng_seed = 0xC0FFEE'1234ULL;
     };
 
-    RansacCPU(GpuSharedBindings& shared, std::shared_ptr<compute::GPU> gpu,
-              Opts opts)
-        : compute::Pass(std::move(gpu)),
-          shared_(shared),
-          opts_(opts),
-          rng_(opts.rng_seed) {}
+    RansacCPU(GpuSharedBindings& shared, Opts opts)
+        : shared_(shared), opts_(opts), rng_(opts.rng_seed) {}
 
     // Out-of-line so the Opts default member initializers (parsed only after
     // the enclosing class definition completes) can be value-initialised.
-    RansacCPU(GpuSharedBindings& shared, std::shared_ptr<compute::GPU> gpu);
+    RansacCPU(GpuSharedBindings& shared);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
