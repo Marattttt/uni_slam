@@ -30,7 +30,8 @@ class FillPyramidPass : public compute::GPUPass {
           shared_bindings_(shared_bindings) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
-    [[nodiscard]] std::optional<std::string> execute() override;
+    [[nodiscard]] std::optional<std::string> prepareExecute(
+        const wgpu::CommandEncoder& encoder) override;
     [[nodiscard]] std::string getId() const override;
 
    private:
@@ -54,6 +55,8 @@ class FillPyramidPass : public compute::GPUPass {
                GPUConst::levels_of_detail>
         texture_views_;
     std::array<wgpu::BindGroup, GPUConst::levels_of_detail - 1> bind_groups_;
+    wgpu::BindGroupLayout bind_group_layout_;
+    wgpu::ComputePipeline compute_pipeline_;
 
     [[nodiscard]] std::optional<std::string> initBindGroupLayout();
     [[nodiscard]] std::optional<std::string> initSampler();
@@ -62,7 +65,8 @@ class FillPyramidPass : public compute::GPUPass {
     [[nodiscard]] std::optional<std::string> initComputePipeline();
 
     [[nodiscard]] std::optional<std::string> writeBaseLayer();
-    [[nodiscard]] std::optional<std::string> writeNonBaseLayers();
+    [[nodiscard]] std::optional<std::string> writeNonBaseLayers(
+        const wgpu::CommandEncoder& encoder);
     [[nodiscard]] std::optional<std::string> writeLayerN(
         const wgpu::CommandEncoder& encoder, size_t lod);
 };

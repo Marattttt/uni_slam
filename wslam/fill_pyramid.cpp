@@ -181,15 +181,16 @@ std::optional<std::string> FillPyramidPass::initComputePipeline() {
         .bindGroupLayouts = &bind_group_layout_,
     };
 
+    wgpu::PipelineLayout layout;
+
     auto create_pipeline_layout = [&]() {
-        compute_pipeline_layout_
-            = gpu_->getDevice().CreatePipelineLayout(&layout_desc);
+        layout = gpu_->getDevice().CreatePipelineLayout(&layout_desc);
     };
 
     awaiter.addCall(std::move(create_pipeline_layout), "crate pipeline layout");
 
     wgpu::ComputePipelineDescriptor desc{
-        .layout = compute_pipeline_layout_,
+        .layout = layout,
         .compute = {.module = mod.value(), .entryPoint = "main"},
     };
 
@@ -202,15 +203,16 @@ std::optional<std::string> FillPyramidPass::initComputePipeline() {
     return awaiter.executeAll();
 }
 
-std::optional<std::string> FillPyramidPass::execute() {
+std::optional<std::string> FillPyramidPass::prepareExecute(
+    const wgpu::CommandEncoder& encoder) {
     spdlog::info(LOG_ID " Executing");
 
     if (auto err = writeBaseLayer()) {
-        return "writing base level (source frame): " + err.value();
+        return "writing base layer (source frame): " + err.value();
     }
 
-    if (auto err = writeNonBaseLayers()) {
-        return "writing pyramid mips: " + err.value();
+    if (auto err = writeNonBaseLayers(encoder)) {
+        return "writing pyramid layers: " + err.value();
     }
 
     return std::nullopt;
@@ -270,12 +272,9 @@ std::optional<std::string> FillPyramidPass::writeBaseLayer() {
     return std::nullopt;
 }
 
-std::optional<std::string> FillPyramidPass::writeNonBaseLayers() {
+std::optional<std::string> FillPyramidPass::writeNonBaseLayers(
+    const wgpu::CommandEncoder& encoder) {
     spdlog::info(LOG_ID " Writing LoDs");
-
-    const auto device = gpu_->getDevice();
-    const auto queue = device.GetQueue();
-    const wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
 
     for (uint32_t lod = 1; lod < GPUConst::levels_of_detail; ++lod) {
         if (auto err = writeLayerN(encoder, lod)) {
@@ -283,24 +282,7 @@ std::optional<std::string> FillPyramidPass::writeNonBaseLayers() {
         }
     }
 
-    auto commands = encoder.Finish();
-
-    queue.Submit(1, &commands);
-
-    auto wait_for_queue = [&]() -> wgpu::Future {
-        return queue.OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus st, wgpu::StringView m) {
-                spdlog::info(LOG_ID
-                             " Done writing all LoDs. status={} msg = '{}'",
-                             int(st), std::string(m));
-            });
-    };
-
-    return gpu_->getAwaiter()
-        .addCall(std::move(wait_for_queue), "Wait for all LoDs", false)
-        .executeAll()
-        .transform([](const auto& err) { return "waiting: " + err; });
+    return std::nullopt;
 }
 
 std::optional<std::string> FillPyramidPass::writeLayerN(
