@@ -13,23 +13,24 @@ because GTSAM 4.2.1 statically asserts `EIGEN_MAJOR_VERSION == 3` at consumer
 compile time.
 
 ```bash
-# Configure, build, and run (sets WSLAM_SHADER_SRC_DIR automatically)
+# Configure (Debug), build, and run (sources .env, sets WSLAM_SHADER_SRC_DIR)
 ./run.sh
 
-# Run and then launch the python presenter on the exported map
+# Same but Release build, then launch the python presenter on the exported map
 ./present_and_run.sh
 
 # Either script accepts the same flags
 ./run.sh -gui --max-iters=50 --map-out=/tmp/uniwslam_map.ply
 ./run.sh --help                       # full option list
-
-# awaiter:    verbose logging of GPU future add/complete events
-# -gui:       enable the Pangolin visualisation pass
-# --max-iters=N: stop after N pipeline iterations (0 = unlimited)
-# --map-out=PATH.ply: dump the final factor-graph map to disk
 ```
 
-Or manually:
+Flags:
+- `awaiter` — verbose logging of GPU future add/complete events (`-DLOG_AWAITER_CALLS=ON`).
+- `-gui` — enable the Pangolin visualisation pass.
+- `--max-iters=N` — stop after N pipeline iterations (0 = unlimited).
+- `--map-out=PATH.ply` — dump the final factor-graph map to disk.
+
+Manual configure/build:
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
@@ -38,33 +39,35 @@ WSLAM_SHADER_SRC_DIR="$PWD/resources" ./build/pc_wslam
 ```
 
 The `.env` file sets required environment variables:
-- `WSLAM_SHADER_SRC_DIR` — directory where `.wgsl` shaders are loaded from at runtime
-- `EUROC_DIR` — path to EuRoC MAV dataset (`mav0/` root)
-- `TUM_FR1_RGBD_DIR` — path to TUM RGB-D dataset (provider currently commented out)
+- `WSLAM_SHADER_SRC_DIR` — directory where `.wgsl` shaders are loaded from at runtime.
+- `EUROC_DIR` — path to EuRoC MAV dataset (`mav0/` root).
+- `TUM_FR1_RGBD_DIR` — path to TUM RGB-D dataset (provider currently not wired in `CMakeLists.txt`).
 
 Debug builds enable ASan + UBSan by default (`ENABLE_SANITIZERS=TRUE`).
 
 ## Lint
 
 ```bash
-# clang-tidy (config in .clang-tidy — excludes vendor/)
-clang-tidy -p build <file.cpp>
-
-# clang-format (config in .clang-format)
-clang-format -i <file.cpp>
+clang-tidy -p build <file.cpp>     # config in .clang-tidy — excludes vendor/
+clang-format -i <file.cpp>         # config in .clang-format
 ```
 
-There is no automated test suite. `wslam/brief_tests.inc` is static BRIEF descriptor data, not a test file.
+There is no automated test suite. `wslam/brief_tests.inc` is static BRIEF
+descriptor data, not a test file.
 
 ## Architecture
 
 ### Compute engine (`compute/`)
 
-The pipeline is `Compute` → `Stage` → `Pass`:
+Hierarchy: `Compute` → `Stage` → (`Pass` | `GPUPass`).
 
 - **`Compute`** owns a list of `Stage`s and a shared `AnyBag` storage. `execute()` runs every stage in order each frame. Returning the sentinel string `kComputeStopExecution` from a stage halts the loop.
-- **`Stage`** is a named sequence of `Pass`es. Returning `kStageStopExecution` stops that stage and bubbles up.
-- **`Pass`** is the leaf unit. `GPUPass` wraps a WebGPU compute pipeline with bind groups. `CustomPass` wraps an arbitrary CPU lambda — used for buffer clearing and CPU-side algorithm steps.
+- **`Stage`** is a named, ordered sequence of passes stored as `std::variant<unique_ptr<Pass>, unique_ptr<GPUPass>>`. Returning `kStageStopExecution` stops that stage and bubbles up.
+- **`Pass`** is a pure-CPU leaf. Implements `initialize()` and `execute()`.
+- **`GPUPass`** is a sibling class (NOT a subclass of `Pass`) for WebGPU compute work. Implements `initialize()` and `prepareExecute(const wgpu::CommandEncoder&)` — the encoder is owned by the stage, not the pass.
+- **`CustomPass`** wraps an arbitrary CPU lambda; used for buffer clearing and one-off algorithm steps.
+
+GPU dispatch is **batched per stage**: `Stage::execute()` walks its passes, collects every consecutive `GPUPass` into a single `wgpu::CommandEncoder`, then issues one `queue.Submit` and one `OnSubmittedWorkDone` await for the whole batch. A CPU `Pass` between two GPU passes flushes the in-progress batch first. This is why GPU passes no longer call `queue.Submit` themselves — they only record commands into the supplied encoder and return an error string on failure.
 
 ### GPU memory model (`compute/gpu.hpp`)
 
@@ -90,27 +93,37 @@ Sub-regions are allocated via `assignBuffersAndOffsets()` and returned as `Buffe
 
 Cross-pass payload types live in `wslam/models.hpp`: `Feature`, `FeatureSet`, `MatchResult`, `RansacResult`, `TriangulationResult`, plus the factor-graph types `PoseId`, `LandmarkId`, `LandmarkObservation`, `MapDelta`, `KeyframePose`, `LandmarkEstimate`, `MapStats`, `MapSnapshot`. New cross-pass types belong here unless they pull in heavy headers (GTSAM types live in `wslam/mapping_state.hpp` instead, behind a pImpl-style boundary).
 
+### Pass constructor convention
+
+CPU passes (`Pass` subclasses) must NOT take a `std::shared_ptr<compute::GPU>` in their constructor unless they actually call GPU APIs. The handful that do read back from the GPU (e.g. `LoadDataCPUPass` calls `gpu_->readTexture` / `readBuffer`, `VisualizeDataPass` uses the device for Pangolin texture upload) store `gpu_` as a private field — they do not inherit it. This was tidied across the codebase in the `refactor/bundle-gpu-passes-execution` work; preserve the convention when adding new passes.
+
+GPU passes (`GPUPass` subclasses) inherit `gpu_` from the base class.
+
 ### SLAM pipeline (`wslam/`)
 
-`CreateWslamPipeline()` in `wslam.hpp` assembles the pipeline. It accepts a `WslamConfig` (defined in `common.hpp`) that controls `enable_gui`, `max_iterations`, and `map_out_path`. It returns a `WslamPipelineHandles` struct holding `shared_ptr<MappingState>` — the caller must keep this alive for the duration of the run because the mapping stage's passes reference it.
+`CreateWslamPipeline()` in `wslam.hpp` assembles the pipeline from a `WslamConfig` (defined in `common.hpp`) that controls `enable_gui`, `max_iterations`, and `map_out_path`. It returns a `WslamPipelineHandles` struct holding `shared_ptr<MappingState>` and a `flush_async` callable — the caller must keep this alive for the duration of the run because the mapping stage's passes reference the state, and must call `flush_async()` after the loop exits but before consumers (e.g. `ExportMap`) read `MapSnapshotName`.
 
-0. **Clear bindings stage** — runs first every frame; calls `clearBuffersAndOffsets()` to zero non-retained GPU regions before new work is dispatched.
+0. **Clear bindings stage** — a single `CustomPass` runs first every frame; calls `clearBuffersAndOffsets()` to zero non-retained GPU regions before new work is dispatched.
+
 1. **Feature detect stage** (`CreateFeatureDetectStage`):
-   - `SensorLoader` pass — reads next frame from the `std::generator` data provider, uploads to GPU input buffer
-   - `FillPyramid` pass — builds a 6-level LoD image pyramid on GPU (scale 1.2× per level, hardcoded for 752×480)
-   - `DetectCorners` + `CullCorners` passes — GPU FAST-style corner detection and NMS
-   - `GenerateFeatures` pass — computes ORB-style BRIEF descriptors on GPU (bit patterns from `brief_tests.inc`)
-   - `LoadFeaturesCPU` pass — reads features back to CPU via `Awaiter`
+   - `SensorLoaderPass` (CPU) — pulls the next frame from the `std::generator` data provider, publishes the FrameBW to AnyBag, accumulates IMU samples into a vector under `GetImuVecName()`, and publishes the current frame's timestamp under `FrameTimestampNsName`. Drops the first few frames as cold-start stale data.
+   - `FillPyramidPass` (GPU) — builds a 6-level LoD image pyramid (scale 1.2× per level, hardcoded for 752×480).
+   - `PassDetectCorners` + `CullCornersPass` (GPU) — FAST-style corner detection and NMS.
+   - `GenerateFeaturesPass` (GPU) — computes ORB-style BRIEF descriptors (bit patterns from `brief_tests.inc`).
+   - `LoadDataCPUPass` runs in the *next* stage (see below); the feature detect stage ends after `GenerateFeaturesPass` so all GPU work batches into a single submission.
 
 2. **Pose estimate stage** (`CreatePoseEstimateCPUStage`):
-   - `MatchFeaturesCPU` pass — BRIEF descriptor matching on CPU with mutual cross-check, Lowe ratio test, and a 10%-frame spatial gate applied *before* the Hamming distance (so out-of-window candidates do not pollute the ratio test).
-   - `RansacCPU` pass — normalised 8-point fundamental-matrix RANSAC with a Sampson-distance inlier test.
-   - `TriangulateCPU` pass — undistorts the RANSAC inliers, re-fits the essential matrix on calibrated rays, decomposes into four (R, t) candidates, picks the one with the most cheirality passes, then runs linear DLT triangulation and a reprojection-error filter.
+   - `LoadDataCPUPass` — reads features and LoD textures back to CPU via `Awaiter`; shifts the previous frame's feature set forward so matchers can see frame N-1 and N.
+   - `MatchFeaturesCPU` — BRIEF descriptor matching on CPU with mutual cross-check, Lowe ratio test, and a 10%-frame spatial gate applied *before* the Hamming distance (so out-of-window candidates do not pollute the ratio test).
+   - `RansacCPU` — normalised 8-point fundamental-matrix RANSAC with a Sampson-distance inlier test.
+   - `TriangulateCPU` — undistorts the RANSAC inliers, re-fits the essential matrix on calibrated rays, decomposes into four (R, t) candidates, picks the one with the most cheirality passes, then runs linear DLT triangulation and a reprojection-error filter.
+   - `VisualizeDataPass` (when `enable_gui`) — Pangolin GUI for matches, RANSAC inliers, and projected landmarks.
 
-3. **Mapping stage** (`CreateMappingStage` in `wslam/mapping.hpp`) — incremental factor-graph SLAM via GTSAM iSAM2. State (the iSAM2 instance, the cached `Cal3DS2`, pose / landmark counters, the `flat_map<Feature, LandmarkId>` active-track map) lives in `MappingState`, injected by reference into all three passes:
-   - `KeyframeGatePass` — gates on min-landmarks and min-rotation; allocates a new `PoseId`; chains the world pose off the previous keyframe's `latest_values` estimate; associates landmarks against the previous keyframe's `feat_curr → LandmarkId` map; for *new* landmarks introduced after the first keyframe, emits observations at **both** the previous and current pose (the prev keyframe is already in the graph, so a new landmark immediately has two views — keeping the linear system well posed).
-   - `FactorBuilderPass` — constructs the per-frame `NonlinearFactorGraph` and `Values` delta: `PriorFactor<Pose3>` (gauge) on the first keyframe, `BetweenFactor<Pose3>` (odometry, with the inverse-transpose direction conversion that GTSAM's between convention requires), Huber-robust `GenericProjectionFactor<Pose3, Point3, Cal3DS2>` per observation, plus per-landmark anchor priors (tight on the first keyframe, soft on later ones — needed to regularise low-parallax cases).
-   - `Isam2UpdatePass` — `ISAM2::update(new_factors, new_values)`, optional extra updates, extracts `calculateEstimate()` into `MappingState::latest_values`, and publishes a GTSAM-free `MapSnapshot` to AnyBag. Catches `IndeterminantLinearSystemException` with the offending key formatted in the error message.
+3. **Mapping stage** (`CreateMappingStage` in `wslam/mapping.hpp`) — incremental visual-inertial SLAM via GTSAM iSAM2 with **smart projection factors**. State (the iSAM2 instance, the cached `Cal3_S2`, pose / landmark counters, the `flat_map<Feature, LandmarkId>` active-track map, IMU bias / velocity propagation, gravity estimate) lives in `MappingState`, injected by reference into all four passes. Stage order:
+   - `Isam2DrainPass` — runs **first** so the keyframe gate and factor builder see up-to-date pose / smart-factor estimates from the previous iSAM round. Without this, the factor builder would read stale `smart_factor_indices` and schedule removal of factor indices iSAM had already replaced.
+   - `KeyframeGatePass` — gates on min-landmarks, min-rotation OR min-parallax, and a min count of *new* landmarks. Allocates a new `PoseId`; chains the world pose off the previous keyframe's `predicted_values` (NOT `latest_values` — the previous iSAM update may still be in-flight on the worker). Associates landmarks against the previous keyframe's `feat_curr → LandmarkId` map. Initialises gravity from a window of stationary IMU samples on the first keyframe.
+   - `FactorBuilderPass` — constructs the per-frame `NonlinearFactorGraph` and `Values` delta: `PriorFactor<Pose3>` (gauge) on the first keyframe, `BetweenFactor<Pose3>` (vision-only odometry, with the inverse-transpose direction conversion that GTSAM's between convention requires), `CombinedImuFactor` between consecutive keyframes, priors on initial velocity and IMU bias, and one `SmartProjectionPoseFactor<Cal3_S2>` per landmark. Smart factors marginalise the 3D point out of the optimisation, sidestepping iSAM2's depth-axis singularities on low-parallax landmarks. Observations are **pre-undistorted upstream** (in the gate pass) so the smart factor sees a clean pinhole `Cal3_S2`. On re-observations, the existing smart factor is mutated (`add()`) and re-pushed to iSAM2 via the remove-and-readd pattern, with the old factor index drained out of `smart_factor_indices`.
+   - `Isam2UpdatePass` — submits `(new_factors, new_values, remove_indices)` to an `Isam2Worker` running on a dedicated thread. The pass is asynchronous: each `execute()` drains the *previous* frame's pending result (blocking only if iSAM hasn't caught up), applies it to `MappingState::latest_values`, publishes a GTSAM-free `MapSnapshot` under `MapSnapshotName`, then submits the current frame's work. Catches `IndeterminantLinearSystemException` with the offending key formatted in the error message. Drained explicitly by `Isam2DrainPass` at the top of the next frame's stage; `flush()` is called once after the main loop exits to absorb the final keyframe's optimisation.
 
 4. **Map export** (`wslam/export.hpp`, called from `main.cpp` *after* the pipeline loop exits, not as a pass): writes `MapSnapshot` and `CamSensorParams` to `<stem>.ply` (landmark point cloud, ASCII PLY with `x`, `y`, `z`, `landmark_id`) and `<stem>.json` (keyframes, intrinsics, stats, schema). Triggered only when `config.map_out_path` is non-empty.
 
