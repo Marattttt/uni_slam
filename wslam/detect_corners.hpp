@@ -12,18 +12,19 @@
 #include "pass.hpp"
 
 namespace wslam {
-class PassDetectCorners : public compute::Pass {
+class PassDetectCorners : public compute::GPUPass {
    public:
     PassDetectCorners(std::shared_ptr<compute::GPU> gpu,
                       GpuSharedBindings& shared_bindings,
                       std::string output_label)
-        : Pass(std::move(gpu)),
+        : GPUPass(std::move(gpu)),
           kCornersOutputLabel(std::move(output_label)),
           shared_bindings_(shared_bindings) {}
 
-    [[nodiscard]] std::optional<std::string> initialize() override;
-    [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
+    [[nodiscard]] std::optional<std::string> initialize() override;
+    [[nodiscard]] std::optional<std::string> prepareExecute(
+        const wgpu::CommandEncoder& encoder) override;
 
    private:
     struct PassParams {

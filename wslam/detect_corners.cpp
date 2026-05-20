@@ -351,27 +351,14 @@ void PassDetectCorners::saveOutputBindings() {
 
     shared_bindings_.getStorage().set(kCornersOutputLabel, std::move(binding));
 }
-std::optional<std::string> PassDetectCorners::execute() {
+
+std::optional<std::string> PassDetectCorners::prepareExecute(
+    const wgpu::CommandEncoder& encoder) {
     spdlog::info(LOG_ID " Executing");
 
-    const wgpu::Device device = gpu_->getDevice();
-    const wgpu::Queue queue = device.GetQueue();
-
-    std::array<wgpu::CommandBuffer, 2> command_buffers;
-
-    // WRITE PARAMS FOR ALL PASSES
-    const wgpu::CommandEncoderDescriptor params_desc{
-        .label = LOG_ID " write params for passes",
-    };
-    const auto write_params_encoder = device.CreateCommandEncoder(&params_desc);
-    if (auto err = writeGPUPassParams(write_params_encoder)) {
-        return "writing gpu pass parameters: " + err.value();
+    if (auto err = writeGPUPassParams(encoder)) {
+        return "writing pass params: " + std::move(err).value();
     }
-
-    command_buffers.at(0) = write_params_encoder.Finish();
-
-    // LAUNCH MAIN PASSES
-    const auto compute_encoder = device.CreateCommandEncoder();
 
     spdlog::debug(LOG_ID " Writing commands for LoDs");
 
@@ -379,7 +366,7 @@ std::optional<std::string> PassDetectCorners::execute() {
         const wgpu::ComputePassDescriptor pass_desc{
             .label = std::format("detect corners in LoD {}", i).c_str(),
         };
-        const auto pass = compute_encoder.BeginComputePass(&pass_desc);
+        const auto pass = encoder.BeginComputePass(&pass_desc);
 
         pass.SetPipeline(compute_pipeline_);
         pass.SetBindGroup(0, common_bind_group_);
@@ -394,38 +381,6 @@ std::optional<std::string> PassDetectCorners::execute() {
         pass.End();
     }
 
-    command_buffers.at(1) = compute_encoder.Finish();
-
-    queue.Submit(command_buffers.size(), command_buffers.data());
-
-    std::string status_error;
-
-    auto on_work_done = [&]() -> wgpu::Future {
-        return queue.OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg,
-               std::string* error) {
-                spdlog::info(LOG_ID " execution finished. status:{}, msg:{}",
-                             static_cast<int>(status),
-                             static_cast<std::string>(msg));
-                if (status != wgpu::QueueWorkDoneStatus::Success) {
-                    *error = msg;
-                }
-            },
-            &status_error);
-    };
-
-    auto awaiter = gpu_->getAwaiter();
-    awaiter.addCall(std::move(on_work_done), "execute gpu compute pass", false);
-
-    if (auto err = awaiter.executeAll(true, 30s)) {
-        return "awaiter: " + err.value();
-    }
-
-    if (status_error.length() > 0) {
-        return "unsuccessful exeuction: " + status_error;
-    }
-
     return std::nullopt;
 }
 
@@ -434,11 +389,11 @@ std::optional<std::string> PassDetectCorners::writeGPUPassParams(
     spdlog::debug(LOG_ID " Writing parameters for all passes");
 
     for (size_t i = 0; i < per_pass_bind_groups_.size(); i++) {
-        const auto binding = addLodBinding(kPassParamsBinding, i);
+        const auto binding_label = addLodBinding(kPassParamsBinding, i);
         const auto data = std::as_bytes(std::span(pass_params_).subspan(i, 1));
 
-        if (auto err = gpu_->fillNonInputBuffer(encoder, data,
-                                                buf_bindings_.at(binding))) {
+        if (auto err = gpu_->fillNonInputBuffer(
+                encoder, data, buf_bindings_.at(binding_label))) {
             return std::format("lod {}: {}", i, err.value());
         }
     }
