@@ -1,7 +1,5 @@
 #pragma once
 
-#include <memory>
-
 #include "anybag.hpp"
 #include "pass.hpp"
 #include "provider_base.hpp"
@@ -15,11 +13,8 @@ class SensorLoaderPass : public compute::Pass {
     [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
 
-    SensorLoaderPass(std::generator<ReadingType>&& generator,
-                     std::shared_ptr<compute::GPU> gpu, AnyBag& storage)
-        : compute::Pass(std::move(gpu)),
-          storage_(storage),
-          generator_(std::move(generator)) {};
+    SensorLoaderPass(std::generator<ReadingType>&& generator, AnyBag& storage)
+        : storage_(storage), generator_(std::move(generator)) {};
 
    private:
     // Number of initial frames to drop on the first execute(). These come from
