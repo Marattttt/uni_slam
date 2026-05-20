@@ -33,8 +33,8 @@ class GPUPass {
 
     [[nodiscard]] virtual std::string getId() const = 0;
     [[nodiscard]] virtual std::optional<std::string> initialize() = 0;
-    [[nodiscard]] virtual std::expected<wgpu::CommandBuffer, std::string>
-    prepareExecute(const wgpu::CommandEncoder& encoder) = 0;
+    [[nodiscard]] virtual std::optional<std::string> prepareExecute(
+        const wgpu::CommandEncoder& encoder) = 0;
 
    protected:
     std::shared_ptr<GPU> gpu_;

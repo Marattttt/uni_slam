@@ -96,19 +96,15 @@ std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
         return device.CreateCommandEncoder(&desc);
     });
 
-    std::vector<wgpu::CommandBuffer> commands;
-    commands.reserve(batch.size());
-
     for (auto* pass : batch) {
-        if (auto buffer = pass->prepareExecute(encoder)) {
-            commands.emplace_back(std::move(buffer).value());
-        } else {
+        if (auto err = pass->prepareExecute(encoder)) {
             return std::format("preparing pass {}: {}", pass->getId(),
-                               std::move(buffer).error());
+                               std::move(err).value());
         }
     }
 
-    queue.Submit(commands.size(), commands.data());
+    const auto commands = encoder.Finish();
+    queue.Submit(1, &commands);
 
     struct UserData {
         std::string error;
