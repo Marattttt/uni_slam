@@ -290,65 +290,12 @@ std::optional<std::string> CullCornersPass::initComputePipeline() {
     return std::nullopt;
 }
 
-std::optional<std::string> CullCornersPass::execute() {
+std::optional<std::string> CullCornersPass::prepareExecute(
+    const wgpu::CommandEncoder& encoder) {
     spdlog::info(LOG_ID " Executing");
-
-    const auto device = gpu_->getDevice();
-    const auto queue = device.GetQueue();
-    const auto encoder = device.CreateCommandEncoder();
 
     writeWorkflowPass(Workflow::Horizontal, encoder);
     writeWorkflowPass(Workflow::Vertical, encoder);
-
-    const auto commands = encoder.Finish();
-
-    queue.Submit(1, &commands);
-
-    std::string errormsg;
-
-    auto wait_submission = [&] -> wgpu::Future {
-        return queue.OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView sv,
-               std::string* err) {
-                spdlog::info(LOG_ID " gpu work done. status:{} msg:'{}'",
-                             static_cast<int>(status),
-                             static_cast<std::string>(sv));
-                if (status != wgpu::QueueWorkDoneStatus::Success) {
-                    *err = std::string(sv);
-                }
-            },
-            &errormsg);
-    };
-
-    const auto err
-        = gpu_->getAwaiter()
-              .addCall(std::move(wait_submission), "Wait GPU work", false)
-              .executeAll();
-
-    if (err) {
-        spdlog::error(LOG_ID "Error executing gpu pass: {}", errormsg);
-        return "executing: " + err.value();
-    }
-
-#ifndef NDEBUG
-    const auto* binding
-        = shared_bindings_.getStorage()
-              .getPtr<compute::BufferBinding>(kCulledCornersOutputLabel)
-              .value();
-    const auto culled_data = gpu_->readBuffer(*binding);
-
-    if (!culled_data) {
-        return "reading culled data: " + culled_data.error();
-    }
-
-    const auto nonzero = std::ranges::count_if(
-        culled_data.value(),
-        [](const auto x) { return static_cast<int>(x) > 0; });
-
-    spdlog::info(LOG_ID " Reading culled data. size:{} non-zero entries:{}",
-                 culled_data.value().size(), nonzero);
-#endif
 
     return std::nullopt;
 }
