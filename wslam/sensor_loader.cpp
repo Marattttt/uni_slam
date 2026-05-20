@@ -41,14 +41,14 @@ std::optional<std::string> SensorLoaderPass::execute() {
     std::vector<data::IMUReading> temp_imu{};
 
     const int kMaxIterations = 1000000;
-    int iterLimit = kMaxIterations;
+    int counter = 0;
 
     ReadingType reading;
-    for (; iter_ != generator_.end(); (*iter_)++) {
+    for (; iter_ != generator_.end() && counter < kMaxIterations;
+         (*iter_)++, counter++) {
         assert(iter_);
         assert(iterLimit > 0
                && "Up to a thousand IMU readings without a frame");
-        iterLimit--;
 
         reading = std::move(*iter_.value());
 
@@ -68,6 +68,12 @@ std::optional<std::string> SensorLoaderPass::execute() {
         if (std::ranges::none_of(reading->frames, is_empty)) {
             break;
         }
+    }
+
+    if (counter >= kMaxIterations) {
+        spdlog::error(
+            LOG_ID " Max numbre of iterations reached. cancelling execution");
+        return "too many readings without a frame";
     }
 
     spdlog::debug(LOG_ID
