@@ -20,7 +20,6 @@ add_executable(pc_wslam
     compute/compute.cpp
     compute/gpu.cpp
     compute/pass.cpp
-    compute/pass_hellowgsl.cpp
     compute/stage.cpp
 
     data/euroc_provider.cpp
