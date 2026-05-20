@@ -231,9 +231,8 @@ CpuResourceProvider::GetResources() {
 
     for (const auto lod : lod_levels_) {
         if (lod.v >= kLodCount) {
-            return std::unexpected(
-                std::format("LOD {} is out of range (max {})", lod.v,
-                            kLodCount - 1));
+            return std::unexpected(std::format(
+                "LOD {} is out of range (max {})", lod.v, kLodCount - 1));
         }
 
         Resource res{
@@ -293,18 +292,17 @@ CpuResourceProvider::GetResources() {
         const auto ptr = storage_.getPtr<RansacResult>(
             ResourceIdentifier::RansacResultName);
         if (!ptr) {
-            return std::unexpected(
-                "could not get RANSAC result from storage");
+            return std::unexpected("could not get RANSAC result from storage");
         }
         const auto& ransac = **ptr;
         auto pairs = flatten(ransac.inliers);
 
         const auto& lod0_texture = textures.at(0);
 
-        const auto title = std::format(
-            "RANSAC Inliers ({}/{}{})", ransac.stats.inlier_count,
-            ransac.stats.total_matches,
-            ransac.stats.model_found ? "" : ", no model");
+        const auto title
+            = std::format("RANSAC Inliers ({}/{}{})", ransac.stats.inlier_count,
+                          ransac.stats.total_matches,
+                          ransac.stats.model_found ? "" : ", no model");
 
         // Always emit the resource — an empty inlier set still has a title
         // that reports the upstream match count, which is informative.
@@ -372,11 +370,11 @@ CpuResourceProvider::GetResources() {
                 continue;
             }
             const auto [xd, yd] = distort(p.x() / p.z(), p.y() / p.z());
-            const float u = static_cast<float>(K[0] * xd + K[2]);
-            const float v = static_cast<float>(K[1] * yd + K[3]);
+            const auto u = static_cast<float>(K[0] * xd + K[2]);
+            const auto v = static_cast<float>(K[1] * yd + K[3]);
 
-            const double t = std::clamp(
-                (std::log(p.z()) - log_min) / log_range, 0.0, 1.0);
+            const double t
+                = std::clamp((std::log(p.z()) - log_min) / log_range, 0.0, 1.0);
             const auto r = static_cast<uint8_t>(255.0 * t);
             const auto b = static_cast<uint8_t>(255.0 * (1.0 - t));
             viz_landmarks.push_back(VizLandmark2D{
@@ -597,8 +595,8 @@ void VisualizeDataPass::drawMatches(const Resource& res) {
     const auto style = res.match_style.value_or(kDefaultMatchStyle);
     const auto& pairs = res.feature_matches.value();
 
-    const float img_w = static_cast<float>(res.texture.value().width);
-    const float img_h = static_cast<float>(res.texture.value().height);
+    const auto img_w = static_cast<float>(res.texture.value().width);
+    const auto img_h = static_cast<float>(res.texture.value().height);
 
     auto lod_scale = [](uint32_t lod) -> float {
         float scale = 1.0F;
@@ -618,9 +616,10 @@ void VisualizeDataPass::drawMatches(const Resource& res) {
         const float bx = static_cast<float>(curr.x) * scale_curr;
         const float by = static_cast<float>(curr.y) * scale_curr;
 
-        if (ax < 0 || ax > img_w || ay < 0 || ay > img_h
-            || bx < 0 || bx > img_w || by < 0 || by > img_h) {
-            spdlog::warn(LOG_ID " match out of image bounds [{:.0f}x{:.0f}], "
+        if (ax < 0 || ax > img_w || ay < 0 || ay > img_h || bx < 0 || bx > img_w
+            || by < 0 || by > img_h) {
+            spdlog::warn(LOG_ID
+                         " match out of image bounds [{:.0f}x{:.0f}], "
                          "skipping: prev({:.1f},{:.1f}) curr({:.1f},{:.1f})",
                          img_w, img_h, ax, ay, bx, by);
             continue;
@@ -647,8 +646,8 @@ void VisualizeDataPass::drawLandmarks(const Resource& res) {
     const auto style = res.landmark_style.value_or(kDefaultLandmarkStyle);
     const auto& landmarks = res.landmarks.value();
 
-    const float img_w = static_cast<float>(res.texture.value().width);
-    const float img_h = static_cast<float>(res.texture.value().height);
+    const auto img_w = static_cast<float>(res.texture.value().width);
+    const auto img_h = static_cast<float>(res.texture.value().height);
 
     std::vector<VizColoredPoint> points;
     points.reserve(landmarks.size());

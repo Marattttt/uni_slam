@@ -223,13 +223,15 @@ class VisualizeDataPass : public wslam::compute::Pass {
    public:
     VisualizeDataPass(const std::shared_ptr<wslam::compute::GPU>& gpu,
                       std::unique_ptr<ResourceProvider> res_provider)
-        : Pass(gpu), res_provider_(std::move(res_provider)) {}
+        : gpu_(gpu), res_provider_(std::move(res_provider)) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
 
    private:
+    std::shared_ptr<compute::GPU> gpu_;
+
     std::optional<wslam::viz::VizGUI> gui_;
     std::unique_ptr<ResourceProvider> res_provider_;
     size_t current_idx_ = 0;
