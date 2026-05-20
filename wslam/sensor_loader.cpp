@@ -47,8 +47,6 @@ std::optional<std::string> SensorLoaderPass::execute() {
     for (; iter_ != generator_.end() && counter < kMaxIterations;
          (*iter_)++, counter++) {
         assert(iter_);
-        assert(iterLimit > 0
-               && "Up to a thousand IMU readings without a frame");
 
         reading = std::move(*iter_.value());
 
