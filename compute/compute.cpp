@@ -10,7 +10,6 @@
 #include <print>
 #include <string_view>
 
-#include "pass_hellowgsl.hpp"
 #include "stage.hpp"
 using namespace wslam::compute;
 
@@ -37,7 +36,7 @@ void Compute::addStage(Stage stage) {
     stages_.emplace_back(std::move(stage));
 }
 
-PreinitOpts wslam::compute::createPreInitializeOpts(DefinedWorkflow workflow) {
+PreinitOpts wslam::compute::createPreInitializeOpts() {
     const char* shader_dir = std::getenv(WSLAM_SHADER_SRC_DIR_ENV);
     if (shader_dir == nullptr) {
         shader_dir = "";
@@ -47,7 +46,6 @@ PreinitOpts wslam::compute::createPreInitializeOpts(DefinedWorkflow workflow) {
         .deviceLostCallback_ = impl::print_device_unresponsive,
         .errorCallback_ = impl::print_device_captured_error,
         .shader_module_path_prefix_ = shader_dir,
-        .workflow = workflow,
     };
 }
 
@@ -64,27 +62,7 @@ std::optional<std::string> Compute::preInitialize(const PreinitOpts& opts) {
         return std::format("resources: {}", err.value());
     }
 
-    spdlog::debug("[Compute] initializing for hello wslam");
-    createStages(opts.workflow);
-
     return std::nullopt;
-}
-
-void Compute::createStages(DefinedWorkflow workflow) {
-    std::unique_ptr<Stage> stage;
-    switch (workflow) {
-        case DefinedWorkflow::HelloWGSL:
-            stage = std::make_unique<Stage>("Hello wgsl", gpu_);
-            stage->add_pass(std::make_unique<HelloWGSLPass>(gpu_));
-
-            stages_.emplace_back(std::move(*stage));
-            break;
-        case DefinedWorkflow::None:
-            break;
-        default:
-            throw std::logic_error(
-                std::format("invalid workflow {}", static_cast<int>(workflow)));
-    }
 }
 
 std::optional<std::string> Compute::initizalizeAllStages() {

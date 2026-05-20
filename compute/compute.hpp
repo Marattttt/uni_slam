@@ -3,7 +3,6 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include <any>
-#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -27,16 +26,13 @@ void print_device_captured_error(const wgpu::Device& device,
                                  wgpu::ErrorType errtype, wgpu::StringView msg);
 };  // namespace impl
 
-enum class DefinedWorkflow : uint8_t { None, HelloWGSL };
-
 struct PreinitOpts {
     const std::function<wgpu::DeviceLostCallback<void>> deviceLostCallback_;
     const std::function<wgpu::UncapturedErrorCallback<void>> errorCallback_;
     const std::filesystem::path shader_module_path_prefix_;
-    DefinedWorkflow workflow;
 };
 
-PreinitOpts createPreInitializeOpts(DefinedWorkflow = DefinedWorkflow::None);
+PreinitOpts createPreInitializeOpts();
 
 constexpr std::string kComputeStopExecution = "COMP_STOP";
 constexpr std::string kFullStopExecution = "FULL_STOP";
@@ -63,8 +59,6 @@ class Compute {
     constexpr std::shared_ptr<GPU> getGPUPtr() const { return gpu_; }
 
    private:
-    void createStages(DefinedWorkflow workflow);
-
     std::shared_ptr<GPU> gpu_;
     std::vector<Stage> stages_;
     AnyBag storage_;
