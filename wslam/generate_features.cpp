@@ -520,43 +520,15 @@ GenerateFeaturesPass::writeConstantValues() {
     return {};
 }
 
-std::optional<std::string> GenerateFeaturesPass::execute() {
+std::optional<std::string> GenerateFeaturesPass::prepareExecute(
+    const wgpu::CommandEncoder& encoder) {
     spdlog::info(LOG_ID " Executing");
-
-    const auto device = gpu_->getDevice();
-    const auto queue = device.GetQueue();
-    const auto encoder = device.CreateCommandEncoder();
 
     for (size_t p = 0; p < kPassCount; p++) {
         writeSinglePassCommands(encoder, p);
     }
 
-    const auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
-
-    std::string err;
-    auto wait_submission = [&] -> wgpu::Future {
-        return queue.OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg,
-               std::string* err_out) {
-                if (status == wgpu::QueueWorkDoneStatus::Success) {
-                    spdlog::info(LOG_ID " submitted GPU work done");
-                } else {
-                    spdlog::warn(LOG_ID
-                                 " Error waiting for submitted GPU work. "
-                                 "status:{} msg:'{}'",
-                                 static_cast<int>(status),
-                                 static_cast<std::string>(msg));
-                    *err_out = static_cast<std::string>(msg);
-                }
-            },
-            &err);
-    };
-
-    return gpu_->getAwaiter()
-        .addCall(std::move(wait_submission), "Wait for GPU work", false)
-        .executeAll();
+    return std::nullopt;
 }
 
 void GenerateFeaturesPass::writeSinglePassCommands(

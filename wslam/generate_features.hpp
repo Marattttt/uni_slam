@@ -10,19 +10,20 @@
 #include "pass.hpp"
 
 namespace wslam {
-class GenerateFeaturesPass : public compute::Pass {
+class GenerateFeaturesPass : public compute::GPUPass {
    public:
     GenerateFeaturesPass(std::shared_ptr<compute::GPU> gpu,
                          GpuSharedBindings& shared_bindings,
                          std::string corners_label, std::string output_label)
-        : Pass(std::move(gpu)),
+        : GPUPass(std::move(gpu)),
           kCornersLabel(std::move(corners_label)),
           kFeaturesLabel(std::move(output_label)),
           shared_(shared_bindings) {}
 
-    [[nodiscard]] std::optional<std::string> initialize() override;
-    [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
+    [[nodiscard]] std::optional<std::string> initialize() override;
+    [[nodiscard]] std::optional<std::string> prepareExecute(
+        const wgpu::CommandEncoder& encoder) override;
 
    private:
     static constexpr auto kPassCount = GPUConst::levels_of_detail;
