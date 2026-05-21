@@ -3,7 +3,7 @@
 The functions here are split into small helpers (`init`, `log_camera`,
 `log_landmarks`) so the same pieces can be reused when incremental
 streaming gets added: the caller would just wrap the per-keyframe log
-calls in `rr.set_time_sequence("keyframe", kf.id)` and feed entities
+calls in `rr.set_time("keyframe", sequence=kf.id)` and feed entities
 as they appear, instead of looping over a fully loaded snapshot.
 """
 
@@ -83,14 +83,19 @@ def log_camera(kf: Keyframe, cam: CameraIntrinsics, *,
 
 
 def log_trajectory(keyframes: list[Keyframe], *,
-                   entity: str = _TRAJECTORY) -> None:
-    """Log the polyline through the keyframe positions in chronological order."""
+                   entity: str = _TRAJECTORY, static: bool = True) -> None:
+    """Log the polyline through the keyframe positions in chronological order.
+
+    When `static=False` the polyline is logged at the current timeline
+    position so callers can grow it one keyframe at a time and have the
+    rerun scrubber replay the trajectory being tracked.
+    """
     if len(keyframes) < 2:
         return
     points = np.stack(
         [kf.t_world_cam.astype(np.float32) for kf in keyframes], axis=0
     )
-    rr.log(entity, rr.LineStrips3D(strips=[points]), static=True)
+    rr.log(entity, rr.LineStrips3D(strips=[points]), static=static)
 
 
 def show(snap: MapSnapshot, *, application_id: str = "uni_slam",
@@ -99,7 +104,8 @@ def show(snap: MapSnapshot, *, application_id: str = "uni_slam",
 
     For the incremental-loading use case, call `init` once and then
     `log_landmarks` / `log_camera` / `log_trajectory` directly as data
-    arrives, with `rr.set_time_sequence(...)` driving the timeline.
+    arrives, with `rr.set_time("keyframe", sequence=...)` driving the
+    timeline.
     """
     init(application_id, spawn=spawn,
          coordinate_system=snap.coordinate_system)
@@ -110,14 +116,14 @@ def show(snap: MapSnapshot, *, application_id: str = "uni_slam",
     # order, which already matches id order — this is a safety net.
     keyframes_sorted = sorted(snap.keyframes, key=lambda kf: kf.id)
     # Drive a "keyframe" timeline so the rerun viewer's scrubber spans the
-    # full sequence instead of collapsing everything into the few ms it
-    # takes to issue the log calls. Each frustum only appears at its own
-    # keyframe index; the landmark cloud and trajectory remain static
-    # (logged with static=True) so they're visible at every timepoint.
-    for kf in keyframes_sorted:
-        rr.set_time_sequence("keyframe", kf.id)
+    # full sequence. Each frustum is logged at its own keyframe index and
+    # the trajectory polyline grows by one segment per keyframe — scrubbing
+    # the timeline replays the trajectory being tracked. The landmark cloud
+    # stays static so the optimised map is visible at every timepoint.
+    for index, kf in enumerate(keyframes_sorted):
+        rr.set_time("keyframe", sequence=kf.id)
         log_camera(kf, snap.camera)
-    log_trajectory(keyframes_sorted)
+        log_trajectory(keyframes_sorted[: index + 1], static=False)
 
     logger.info(
         "logged map: %d landmarks, %d keyframes (factors=%s)",
