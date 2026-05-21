@@ -8,6 +8,7 @@
 #include <string_view>
 #include <variant>
 
+#include "compute.hpp"
 #include "pass.hpp"
 
 using namespace wslam::compute;
@@ -67,6 +68,14 @@ std::optional<std::string> Stage::execute() {
         gpu_batch.clear();
 
         if (auto err = cpu_pass->execute()) {
+            if (err.value() == kStageStopExecution) {
+                spdlog::info("[Stage] {} stage-stop from {}", getId(),
+                             cpu_pass->getId());
+                return std::nullopt;
+            }
+            if (err.value() == kComputeStopExecution) {
+                return err;
+            }
             return std::format("pass {}: {}", cpu_pass->getId(),
                                std::move(err).value());
         }
@@ -86,14 +95,11 @@ std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
 
     const std::string pass_names = CollectPassNames(batch);
 
-    const auto device = gpu_->getDevice();
-    const auto queue = device.GetQueue();
-
     const auto encoder = std::invoke([&] {
         const std::string label
             = std::format("command encoder for passes {{ {} }}", pass_names);
         const wgpu::CommandEncoderDescriptor desc{.label = label.c_str()};
-        return device.CreateCommandEncoder(&desc);
+        return gpu_->getDevice().CreateCommandEncoder(&desc);
     });
 
     for (auto* pass : batch) {
@@ -104,45 +110,9 @@ std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
     }
 
     const auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
 
-    struct UserData {
-        std::string error;
-        std::string stage_id;
-    };
-
-    UserData data{
-        .error = "",
-        .stage_id = getId(),
-    };
-
-    auto wait = [&] {
-        return queue.OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg,
-               UserData* data) {
-                spdlog::info(
-                    "[{}] finished batched gpu work. status:{}, msg:'{}'",
-                    data->stage_id, static_cast<int>(status),
-                    static_cast<std::string>(msg));
-            },
-            &data);
-    };
-
-    auto err
-        = gpu_->getAwaiter()
-              .addCall(std::move(wait), "execute gpu passes")
-              .executeAll(false)
-              .transform([&](auto&& err) {
-                  return std::format("executing {{ {} }}: {}", pass_names, err);
-              });
-
-    if (data.error != "") {
-        spdlog::error("[Stage] Error executing gpu passes {{ {} }}: '{}'",
-                      pass_names, data.error);
-    }
-
-    return err;
+    return gpu_->submitAndWait(
+        commands, std::format("stage passes {{ {} }}", pass_names));
 }
 
 void Stage::add_pass(PassPtr pass) { passes_.emplace_back(std::move(pass)); }

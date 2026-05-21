@@ -98,7 +98,7 @@ std::optional<std::string> CullCornersPass::initBindingLayout() {
     };
 
     return gpu_->getAwaiter()
-        .addCall(std::move(create), "Create bind group layout")
+        .runChecked(create, "Create bind group layout")
         .executeAll();
 }
 
@@ -179,8 +179,8 @@ std::optional<std::string> CullCornersPass::initBindGroups() {
     };
 
     if (auto err = gpu_->getAwaiter()
-                       .addCall(std::move(create_horizontal),
-                                "Create bind group for horizontal culling")
+                       .runChecked(create_horizontal,
+                                   "Create bind group for horizontal culling")
                        .executeAll()) {
         return "horizontal: " + err.value();
     }
@@ -198,8 +198,8 @@ std::optional<std::string> CullCornersPass::initBindGroups() {
     };
 
     if (auto err = gpu_->getAwaiter()
-                       .addCall(std::move(create_vertical),
-                                "Create bind group for vertical cullinng")
+                       .runChecked(create_vertical,
+                                   "Create bind group for vertical cullinng")
                        .executeAll()) {
         return "vertical: " + err.value();
     }
@@ -231,10 +231,9 @@ std::optional<std::string> CullCornersPass::initComputePipeline() {
             = gpu_->getDevice().CreatePipelineLayout(&layout_desc);
     };
 
-    if (auto err
-        = gpu_->getAwaiter()
-              .addCall(std::move(create_layout), "Create pipeline layout")
-              .executeAll()) {
+    if (auto err = gpu_->getAwaiter()
+                       .runChecked(create_layout, "Create pipeline layout")
+                       .executeAll()) {
         return "pipeline layout: " + err.value();
     }
 
@@ -278,10 +277,10 @@ std::optional<std::string> CullCornersPass::initComputePipeline() {
 
     auto awaiter = gpu_->getAwaiter();
 
-    awaiter.addCall(create_pipeline(horizontal_desc, Workflow::Horizontal),
-                    "Horizontal pass pipeline");
-    awaiter.addCall(create_pipeline(vertical_desc, Workflow::Vertical),
-                    "Vertical pass pipeline");
+    awaiter.runChecked(create_pipeline(horizontal_desc, Workflow::Horizontal),
+                       "Horizontal pass pipeline");
+    awaiter.runChecked(create_pipeline(vertical_desc, Workflow::Vertical),
+                       "Vertical pass pipeline");
 
     if (auto err = awaiter.executeAll()) {
         return "crating compute pipelines: " + err.value();

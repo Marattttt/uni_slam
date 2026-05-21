@@ -78,11 +78,11 @@ int main_test(WslamConfig config) {
     // IMU calibration (T_BS, noise densities, rate). Consumed by the
     // factor builder to configure preintegration; by the keyframe gate to
     // express gravity in the camera frame.
-    spdlog::info("IMU: rate={} Hz, gyro_nd={:.3e} rad/s/sqrt(Hz), "
-                 "accel_nd={:.3e} m/s^2/sqrt(Hz)",
-                 sensor_params->imu.rate_hz,
-                 sensor_params->imu.gyroscope_noise_density,
-                 sensor_params->imu.accelerometer_noise_density);
+    spdlog::info(
+        "IMU: rate={} Hz, gyro_nd={:.3e} rad/s/sqrt(Hz), "
+        "accel_nd={:.3e} m/s^2/sqrt(Hz)",
+        sensor_params->imu.rate_hz, sensor_params->imu.gyroscope_noise_density,
+        sensor_params->imu.accelerometer_noise_density);
     comp.getStorage().set(ResourceIdentifier::ImuParamsName,
                           sensor_params->imu);
 
@@ -103,7 +103,7 @@ int main_test(WslamConfig config) {
         auto err = comp.execute();
         if (err) {
             spdlog::error("executing: {}", err.value());
-            std::terminate();
+            return 1;
         }
     }
 
@@ -137,9 +137,9 @@ int main_test(WslamConfig config) {
 int main(int argc, char* argv[]) {
 #ifndef NDEBUG
     spdlog::set_level(spdlog::level::debug);
+#else
+    spdlog::set_level(spdlog::level::info);
 #endif
-
-    spdlog::set_level(spdlog::level::warn);
 
     const WslamConfig config
         = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});

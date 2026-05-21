@@ -96,69 +96,6 @@ void AwaiterTasks::clear() {
     is_completion_logged_.clear();
 }
 
-Awaiter& Awaiter::addCallVoid(const std::function<void()>& callback,
-                              std::string error_label, bool catch_errors) {
-    // If we already have a hard error we still need to drain cleanly,
-    // but we skip invoking new factories to avoid compounding side-effects.
-    if (pending_error_) {
-        return *this;
-    }
-
-    if (error_label.length() == 0) {
-        assert(false && "This should not happen");
-    }
-
-    if (catch_errors) {
-        device_.PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
-        device_.PushErrorScope(wgpu::ErrorFilter::Validation);
-    }
-
-#ifdef LOG_AWAITER_CALLS
-    spdlog::debug(LOG_ID " Started call {}", error_label);
-#endif
-
-    callback();
-
-    if (catch_errors) {
-        addErrorHandlers(std::move(error_label));
-    }
-
-    return *this;
-}
-
-Awaiter& Awaiter::addCallFuture(std::function<wgpu::Future()>&& factory,
-                                std::string error_label, bool catch_errors) {
-    addCallVoid(
-        [&, this]() {
-            tasks_.add(FutureInfo{
-                .future = factory(),
-                .error_label = std::string(error_label),
-            });
-        },
-        std::string(error_label), catch_errors);
-    return *this;
-}
-
-Awaiter& Awaiter::addFuture(wgpu::Future&& future, std::string error_label,
-                            bool catch_errors) {
-    if (catch_errors) {
-        device_.PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
-        device_.PushErrorScope(wgpu::ErrorFilter::Validation);
-    }
-
-    tasks_.add(FutureInfo{.future = future, .error_label = error_label});
-
-#ifdef LOG_AWAITER_CALLS
-    spdlog::debug(LOG_ID " Added future {}", error_label);
-#endif
-
-    if (catch_errors) {
-        addErrorHandlers(std::move(error_label));
-    }
-
-    return *this;
-}
-
 void Awaiter::addErrorHandlers(std::string error_label) {
     wgpu::Future validation = device_.PopErrorScope(
         wgpu::CallbackMode::WaitAnyOnly,
@@ -199,6 +136,49 @@ void Awaiter::addErrorHandlers(std::string error_label) {
         .future = out_of_mem,
         .error_label = std::format("{}, out of memory errscope", error_label)});
 }
+
+Awaiter& Awaiter::runChecked(const std::function<void()>& callback,
+                             std::string label) {
+    if (pending_error_) {
+        return *this;
+    }
+
+    assert(label.length() > 0 && "label must be non-empty");
+
+    device_.PushErrorScope(wgpu::ErrorFilter::OutOfMemory);
+    device_.PushErrorScope(wgpu::ErrorFilter::Validation);
+
+#ifdef LOG_AWAITER_CALLS
+    spdlog::debug(LOG_ID " Started runChecked call {}", label);
+#endif
+
+    callback();
+
+    addErrorHandlers(std::move(label));
+
+    return *this;
+}
+
+Awaiter& Awaiter::addFuture(const std::function<wgpu::Future()>& factory,
+                            std::string label) {
+    if (pending_error_) {
+        return *this;
+    }
+
+    assert(label.length() > 0 && "label must be non-empty");
+
+#ifdef LOG_AWAITER_CALLS
+    spdlog::debug(LOG_ID " Started addFuture call {}", label);
+#endif
+
+    tasks_.add(FutureInfo{
+        .future = factory(),
+        .error_label = std::move(label),
+    });
+
+    return *this;
+}
+
 std::optional<std::string> Awaiter::executeAll(
     bool stop_on_error, std::chrono::nanoseconds timeout) {
     if (pending_error_) {
@@ -211,10 +191,10 @@ std::optional<std::string> Awaiter::executeAll(
     }
 
     const auto start_time = std::chrono::steady_clock::now();
+    const auto timeout_time = start_time + timeout;
     const auto is_timeout_exceeded = [&]() -> bool {
         const auto now = std::chrono::steady_clock::now();
-        const auto passed = now - start_time;
-        return passed > timeout;
+        return now > timeout_time;
     };
 
     std::optional<std::string> error;
@@ -222,7 +202,7 @@ std::optional<std::string> Awaiter::executeAll(
     do {
         instance_.ProcessEvents();
 
-        auto res = waitAny();
+        auto res = waitAny(timeout_time - std::chrono::steady_clock::now());
 
         if (!res) {
             error = res.error();
@@ -268,8 +248,10 @@ std::optional<std::string> Awaiter::executeAll(
     return error;
 }
 
-std::expected<bool, std::string> Awaiter::waitAny() {
-    instance_.WaitAny(tasks_.size(), tasks_.getWaitInfos().data(), 0);
+std::expected<bool, std::string> Awaiter::waitAny(
+    std::chrono::nanoseconds timeout) {
+    instance_.WaitAny(tasks_.size(), tasks_.getWaitInfos().data(),
+                      static_cast<uint64_t>(timeout.count()));
 
     bool are_all_completed = true;
     for (size_t i = 0; i < tasks_.size(); i++) {

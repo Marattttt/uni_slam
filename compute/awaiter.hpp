@@ -48,29 +48,26 @@ class AwaiterTasks {
 
 const int kDefaultTimeoutSeconds = 10;
 
+// Don't mix runChecked and addFuture in the same Awaiter with a non-zero
+// executeAll timeout: PopErrorScope is a WaitListEvent, OnSubmittedWorkDone
+// / MapAsync are queue-serial, and Dawn rejects mixed-source timed waits
+// (EventManager.cpp:211). For the submit-and-wait pattern, use
+// GPU::submitAndWait.
 class Awaiter {
    public:
     Awaiter(wgpu::Instance instance, wgpu::Device device)
         : instance_(std::move(instance)), device_(std::move(device)) {};
 
-    // The factory is invoked immediately
-    template <typename T>
-        requires std::is_same_v<std::invoke_result_t<T>, wgpu::Future>
-                 || std::is_same_v<std::invoke_result_t<T>, void>
-    Awaiter& addCall(const T&& callback, std::string error_label,
-                     bool catch_errors = true) {
-        if constexpr (std::is_same_v<std::invoke_result_t<T>, wgpu::Future>) {
-            return addCallFuture(std::move(callback), error_label,
-                                 catch_errors);
-        } else if constexpr (std::is_same_v<std::invoke_result_t<T>, void>) {
-            return addCallVoid(std::move(callback), error_label, catch_errors);
-        } else {
-            static_assert(false, "Could not determine callback type");
-        }
-    }
+    // Run an API call inside PushErrorScope/PopErrorScope. The two pop
+    // futures are tracked. The callback is invoked synchronously here.
+    Awaiter& runChecked(const std::function<void()>& callback,
+                        std::string label);
 
-    Awaiter& addFuture(wgpu::Future&& future, std::string error_label,
-                       bool catch_errors = true);
+    // Call the factory, track the returned future. No error scope wrapping.
+    // Use for OnSubmittedWorkDone, MapAsync, RequestAdapter,
+    // CreatePipelineAsync.
+    Awaiter& addFuture(const std::function<wgpu::Future()>& factory,
+                       std::string label);
 
     // Block until every enqueued future resolves or the timeout elapses.
     // Returns the first error encountered (label + detail), or
@@ -91,15 +88,10 @@ class Awaiter {
     }
 
    private:
-    Awaiter& addCallFuture(std::function<wgpu::Future()>&& factory,
-                           std::string error_label, bool catch_errors = true);
-
-    Awaiter& addCallVoid(const std::function<void()>& callback,
-                         std::string error_label, bool catch_errors = true);
-
     void addErrorHandlers(std::string error_label);
 
-    [[nodiscard]] std::expected<bool, std::string> waitAny();
+    [[nodiscard]] std::expected<bool, std::string> waitAny(
+        std::chrono::nanoseconds timeout);
 
     wgpu::Instance instance_;
     wgpu::Device device_;

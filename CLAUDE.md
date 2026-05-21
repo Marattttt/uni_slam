@@ -69,6 +69,8 @@ Hierarchy: `Compute` → `Stage` → (`Pass` | `GPUPass`).
 
 GPU dispatch is **batched per stage**: `Stage::execute()` walks its passes, collects every consecutive `GPUPass` into a single `wgpu::CommandEncoder`, then issues one `queue.Submit` and one `OnSubmittedWorkDone` await for the whole batch. A CPU `Pass` between two GPU passes flushes the in-progress batch first. This is why GPU passes no longer call `queue.Submit` themselves — they only record commands into the supplied encoder and return an error string on failure.
 
+The `Awaiter` (in `compute/awaiter.hpp`) splits async work into two methods that must not be mixed in one chain when `executeAll` uses a non-zero timeout: `runChecked(callback, label)` wraps a synchronous API call in `PushErrorScope`/`PopErrorScope` (producing `WaitListEvent` futures) for validation-prone init code, while `addFuture(factory, label)` records a `wgpu::Future` returned by the factory (queue-serial for `OnSubmittedWorkDone`/`MapAsync`, no error scopes). Dawn rejects a `WaitAny` whose future set mixes those two sources (`EventManager.cpp` "Mixed source waits with timeouts are not currently supported"). For the common "submit a command buffer and wait for it" pattern, call `GPU::submitAndWait(commands, label, timeout)` instead of assembling it from an `Awaiter` by hand.
+
 ### GPU memory model (`compute/gpu.hpp`)
 
 `GPU` pre-allocates fixed slabs at startup:

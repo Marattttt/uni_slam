@@ -70,7 +70,7 @@ std::optional<std::string> FillPyramidPass::initBindGroupLayout() {
     };
 
     auto awaiter = gpu_->getAwaiter();
-    awaiter.addCall(std::move(callback), LOG_ID " create bind group");
+    awaiter.runChecked(callback, LOG_ID " create bind group");
 
     return awaiter.executeAll();
 }
@@ -88,7 +88,7 @@ std::optional<std::string> FillPyramidPass::initSampler() {
         = [&]() { sampler_ = gpu_->getDevice().CreateSampler(&sampler_desc); };
 
     auto awaiter = gpu_->getAwaiter();
-    awaiter.addCall(std::move(callback), LOG_ID " creating sampler");
+    awaiter.runChecked(callback, LOG_ID " creating sampler");
 
     return awaiter.executeAll();
 }
@@ -124,8 +124,8 @@ std::optional<std::string> FillPyramidPass::initTextureViews() {
                 shared_bindings_.getTexture(i).CreateView(&dest_desc));
         };
 
-        awaiter.addCall(std::move(callback),
-                        std::format("create view pair for lod {}", i));
+        awaiter.runChecked(callback,
+                           std::format("create view pair for lod {}", i));
     }
 
     return awaiter.executeAll();
@@ -158,7 +158,7 @@ std::optional<std::string> FillPyramidPass::initBindGroups() {
             bind_groups_.at(lod - 1) = gpu_->getDevice().CreateBindGroup(&desc);
         };
 
-        awaiter.addCall(std::move(callback), LOG_ID " creating bind group");
+        awaiter.runChecked(callback, LOG_ID " creating bind group");
     }
 
     return awaiter.executeAll();
@@ -187,14 +187,14 @@ std::optional<std::string> FillPyramidPass::initComputePipeline() {
         layout = gpu_->getDevice().CreatePipelineLayout(&layout_desc);
     };
 
-    awaiter.addCall(std::move(create_pipeline_layout), "crate pipeline layout");
+    awaiter.runChecked(create_pipeline_layout, "crate pipeline layout");
 
     wgpu::ComputePipelineDescriptor desc{
         .layout = layout,
         .compute = {.module = mod.value(), .entryPoint = "main"},
     };
 
-    awaiter.addCall(
+    awaiter.runChecked(
         [&]() {
             compute_pipeline_ = gpu_->getDevice().CreateComputePipeline(&desc);
         },
@@ -263,13 +263,9 @@ std::optional<std::string> FillPyramidPass::writeBaseLayer() {
                            &copy_layout, &extent);
     };
 
-    awaiter.addCall(std::move(callback), LOG_ID " write texture source");
-
-    if (auto err = awaiter.executeAll()) {
-        return "write source texture: " + err.value();
-    }
-
-    return std::nullopt;
+    return awaiter.runChecked(callback, LOG_ID " write texture source")
+        .executeAll(false)
+        .transform([](auto&& err) { return "write source texture: " + err; });
 }
 
 std::optional<std::string> FillPyramidPass::writeNonBaseLayers(
@@ -312,7 +308,7 @@ std::optional<std::string> FillPyramidPass::writeLayerN(
     };
 
     return gpu_->getAwaiter()
-        .addCall(std::move(write_lod), std::format(LOG_ID "fill lod {}", lod))
+        .runChecked(write_lod, std::format(LOG_ID "fill lod {}", lod))
         .executeAll()
         .transform([](const auto& err) { return "awaiter: " + err; });
 }

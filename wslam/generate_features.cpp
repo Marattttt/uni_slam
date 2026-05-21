@@ -105,7 +105,7 @@ std::expected<void, std::string> GenerateFeaturesPass::initSampler() {
     auto create = [&] { sampler_ = gpu_->getDevice().CreateSampler(&desc); };
 
     return gpu_->getAwaiter()
-        .addCall(std::move(create), "Create sampler")
+        .runChecked(create, "Create sampler")
         .execute();
 }
 
@@ -176,7 +176,7 @@ GenerateFeaturesPass::initCommonBindgroupLayout() {
     };
 
     return gpu_->getAwaiter()
-        .addCall(std::move(create), "Create layout for common bind group")
+        .runChecked(create, "Create layout for common bind group")
         .execute();
 }
 
@@ -214,7 +214,7 @@ GenerateFeaturesPass::initPerPassBindgroupLayout() {
     };
 
     return gpu_->getAwaiter()
-        .addCall(std::move(create), "Create layout for per pass bind group")
+        .runChecked(create, "Create layout for per pass bind group")
         .execute();
 }
 
@@ -311,7 +311,7 @@ GenerateFeaturesPass::initCommonBindgroup() {
     };
 
     return gpu_->getAwaiter()
-        .addCall(std::move(create), "create bind group")
+        .runChecked(create, "create bind group")
         .execute()
         .transform_error(
             [](const auto& err) { return "creating bind groups: " + err; });
@@ -373,8 +373,8 @@ std::expected<void, std::string> GenerateFeaturesPass::initPerPassBindgroups() {
             bind_groups_.at(lod).at(1)
                 = gpu_->getDevice().CreateBindGroup(&group_desc);
         };
-        awaiter.addCall(std::move(create),
-                        std::format("create bg for pass {}", lod));
+        awaiter.runChecked(create,
+                           std::format("create bg for pass {}", lod));
     }
 
     return awaiter.execute();
@@ -408,7 +408,7 @@ std::expected<void, std::string> GenerateFeaturesPass::initComputePipeline() {
 
     if (auto res
         = gpu_->getAwaiter()
-              .addCall(std::move(create_layout), "create pipeline layout")
+              .runChecked(create_layout, "create pipeline layout")
               .execute()
               .transform_error([](auto&& err) { return "layout: " + err; });
         !res) {
@@ -430,7 +430,7 @@ std::expected<void, std::string> GenerateFeaturesPass::initComputePipeline() {
 
     if (auto res
         = gpu_->getAwaiter()
-              .addCall(std::move(create_pipeline), "create compute pipeline")
+              .runChecked(create_pipeline, "create compute pipeline")
               .execute()
               .transform_error([](auto&& err) { return "pipeline: " + err; });
         !res) {
@@ -447,9 +447,7 @@ GenerateFeaturesPass::writeConstantValues() {
     assert(lod_idxs_binding_);
     assert(brief_tests_binding_);
 
-    const auto device = gpu_->getDevice();
-    const auto queue = device.GetQueue();
-    const auto encoder = device.CreateCommandEncoder();
+    const auto encoder = gpu_->getDevice().CreateCommandEncoder();
 
     constinit static const gpumodels::BRIEFTestSet tests{
 #include "brief_tests.inc"
@@ -480,41 +478,9 @@ GenerateFeaturesPass::writeConstantValues() {
     }
 
     const auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
 
-    std::string error_msg;
-
-    auto wait_submission = [&] -> wgpu::Future {
-        return queue.OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView sv,
-               std::string* err) {
-                spdlog::info(LOG_ID
-                             " finished writing BRIEF test values. "
-                             "status:{} msg:'{}'",
-                             static_cast<int>(status),
-                             static_cast<std::string>(sv));
-                if (status != wgpu::QueueWorkDoneStatus::Success) {
-                    *err = static_cast<std::string>(sv);
-                }
-            },
-            &error_msg);
-    };
-
-    const auto res = gpu_->getAwaiter()
-                         .addCall(std::move(wait_submission),
-                                  "Wait writing on the GPU", false)
-                         .execute();
-
-    if (error_msg.length() > 0) {
-        spdlog::error(
-            LOG_ID
-            " Error message when writing BRIEF values: '{}', binding: {}",
-            error_msg, brief_tests_binding_.value());
-    }
-
-    if (!res) {
-        return std::unexpected("gpu: " + std::move(res).error());
+    if (auto err = gpu_->submitAndWait(commands, "write BRIEF test values")) {
+        return std::unexpected("gpu: " + err.value());
     }
 
     return {};

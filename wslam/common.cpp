@@ -59,5 +59,5 @@ void GpuSharedBindings::initTexture(compute::Awaiter& awaiter, uint32_t lod) {
     auto create_texture
         = [&]() { textures_.at(lod) = device.CreateTexture(&texture_desc); };
 
-    awaiter.addCall(std::move(create_texture), LOG_ID " create texture");
+    awaiter.runChecked(create_texture, LOG_ID " create texture");
 }

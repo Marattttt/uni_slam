@@ -442,23 +442,19 @@ std::optional<std::string> FactorBuilderPass::execute() {
     has_work_ = true;
 
 #ifndef NDEBUG
-    // Every observation must reference either a value we just inserted in
-    // this update or one that's been submitted to iSAM previously. We
-    // check `predicted_values` rather than `latest_values` because the
-    // worker may not have produced an optimised estimate for the most
-    // recent prior keyframe yet — but predicted_values is the source of
-    // truth for "has-been-submitted." iSAM2 throws if a factor references
-    // an unknown key, but failing this assert gives a much clearer signal
-    // at the source.
+    // Every observation's pose key must already exist in either the just-
+    // inserted values for this update or `predicted_values` (the
+    // submitted-but-maybe-not-yet-optimised source of truth). Landmarks
+    // are NOT graph variables when using SmartProjectionPoseFactor — the
+    // 3D point is triangulated and marginalised inside the factor — so we
+    // don't check landmark keys here. iSAM2 throws if a factor references
+    // an unknown key; this assert just gives a clearer signal at the
+    // source for the pose-key case.
     for (const auto& obs : delta.observations) {
         const auto pk = MappingState::poseKey(obs.pose);
-        const auto lk = MappingState::landmarkKey(obs.landmark);
         const bool pose_known = new_values_.exists(pk)
                                  || state_.predicted_values.exists(pk);
-        const bool lm_known = new_values_.exists(lk)
-                               || state_.predicted_values.exists(lk);
         assert(pose_known && "projection factor references unknown pose key");
-        assert(lm_known && "projection factor references unknown landmark key");
     }
 #endif
 

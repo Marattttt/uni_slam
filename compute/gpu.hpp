@@ -146,6 +146,15 @@ class GPU {
     [[nodiscard]] const wgpu::Buffer& getBuffer(BufferType buftype) const;
     [[nodiscard]] Awaiter getAwaiter() const;
 
+    // Submits the command buffer, registers OnSubmittedWorkDone, blocks
+    // until done or timeout exceeded. Prefer this over hand-rolling the
+    // submit-then-wait dance (avoids the queue-serial vs WaitListEvent
+    // mixing trap — see awaiter.hpp).
+    [[nodiscard]] std::optional<std::string> submitAndWait(
+        const wgpu::CommandBuffer& commands, std::string label,
+        std::chrono::nanoseconds timeout
+        = std::chrono::seconds(kDefaultTimeoutSeconds));
+
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string>
     readOutputbuffer(size_t size, size_t offset);
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string> readBuffer(

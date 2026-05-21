@@ -83,8 +83,8 @@ std::optional<std::string> PassDetectCorners::initTextureViews() {
                 = shared_bindings_.getTexture(i).CreateView(&desc);
         };
 
-        awaiter.addCall(std::move(create_view),
-                        std::format("create view into LoD {}", i));
+        awaiter.runChecked(create_view,
+                           std::format("create view into LoD {}", i));
     }
 
     return awaiter.executeAll().transform(
@@ -126,7 +126,7 @@ std::optional<std::string> PassDetectCorners::initCornersBindGroupLayout(
         .entries = bindings.data(),
     };
 
-    awaiter.addCall(
+    awaiter.runChecked(
         [&]() {
             bind_group_layouts_.corners
                 = gpu_->getDevice().CreateBindGroupLayout(&desc);
@@ -162,7 +162,7 @@ std::optional<std::string> PassDetectCorners::initPassDataBindGroupLayout(
         .entries = bindings.data(),
     };
 
-    awaiter.addCall(
+    awaiter.runChecked(
         [&]() {
             bind_group_layouts_.pass_data
                 = gpu_->getDevice().CreateBindGroupLayout(&desc);
@@ -204,7 +204,7 @@ std::optional<std::string> PassDetectCorners::initCommonBindGroup() {
     };
 
     return gpu_->getAwaiter()
-        .addCall(std::move(create_bg), "create bind group for corners")
+        .runChecked(create_bg, "create bind group for corners")
         .executeAll()
         .transform([](const auto& err) { return "awaiter: " + err; });
 }
@@ -274,8 +274,8 @@ std::optional<std::string> PassDetectCorners::initPerPassBindGroups() {
                 = gpu_->getDevice().CreateBindGroup(&desc);
         };
 
-        awaiter.addCall(std::move(create_bg),
-                        "create bind group for LoD " + std::to_string(i));
+        awaiter.runChecked(create_bg,
+                           "create bind group for LoD " + std::to_string(i));
     }
 
     return awaiter.executeAll();
@@ -324,7 +324,7 @@ std::optional<std::string> PassDetectCorners::initComputePipeline() {
             = gpu_->getDevice().CreatePipelineLayout(&layout_desc);
     };
 
-    awaiter.addCall(std::move(create_layout), "create pipeline layout");
+    awaiter.runChecked(create_layout, "create pipeline layout");
 
     wgpu::ComputePipelineDescriptor compute_desc{
         .label = LOG_ID " compute pipeline",
@@ -336,7 +336,7 @@ std::optional<std::string> PassDetectCorners::initComputePipeline() {
         compute_pipeline_
             = gpu_->getDevice().CreateComputePipeline(&compute_desc);
     };
-    awaiter.addCall(std::move(create_pipeline), "create compute pipeline");
+    awaiter.runChecked(create_pipeline, "create compute pipeline");
 
     return awaiter.executeAll().transform(
         [](const auto& err) { return "awaiter: " + err; });

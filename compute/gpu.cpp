@@ -139,7 +139,6 @@ std::optional<std::string> GPU::clearBuffersAndOffsets() {
     const auto buffers
         = std::views::iota(0U, static_cast<size_t>(BufferType::COUNT));
 
-    const auto queue = device_.GetQueue();
     const auto encoder = device_.CreateCommandEncoder();
 
     for (const auto buf : buffers) {
@@ -156,34 +155,32 @@ std::optional<std::string> GPU::clearBuffersAndOffsets() {
     }
 
     const auto commands = encoder.Finish();
+
+    return submitAndWait(commands, "clear buffers");
+}
+
+std::optional<std::string> GPU::submitAndWait(
+    const wgpu::CommandBuffer& commands, std::string label,
+    std::chrono::nanoseconds timeout) {
+    const auto queue = device_.GetQueue();
+
     queue.Submit(1, &commands);
 
-    std::string errormsg;
-
-    auto wait = [&] {
+    auto wait = [&queue]() -> wgpu::Future {
         return queue.OnSubmittedWorkDone(
             wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView sv,
-               std::string* msg) {
+            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg) {
                 spdlog::debug(LOG_ID
-                              " Cleared occupied non-retained buffers. "
+                              " submitAndWait OnSubmittedWorkDone fired. "
                               "status:{} msg:'{}'",
                               static_cast<int>(status),
-                              static_cast<std::string>(sv));
-
-                if (status != wgpu::QueueWorkDoneStatus::Success) {
-                    *msg = static_cast<std::string>(sv);
-                }
-            },
-            &errormsg);
+                              static_cast<std::string>(msg));
+            });
     };
 
     return getAwaiter()
-        .addCall(std::move(wait), "wait to clear buffers", false)
-        .executeAll()
-        .transform([&](auto&& err) {
-            return std::format("errorsmsg:{} err:{}", errormsg, err);
-        });
+        .addFuture(wait, std::move(label))
+        .executeAll(true, timeout);
 }
 
 const wgpu::Buffer& GPU::getBuffer(BufferType buftype) const {
@@ -648,9 +645,10 @@ std::expected<wgpu::ShaderModule, std::string> GPU::loadShaderModule(
 
     wgpu::ShaderModule module;
     auto awaiter = getAwaiter();
-    awaiter.addCall([&]() { module = device_.CreateShaderModule(&descriptor); },
-                    "Creating shader module");
-    awaiter.addCall(
+    awaiter.runChecked(
+        [&]() { module = device_.CreateShaderModule(&descriptor); },
+        "Creating shader module");
+    awaiter.addFuture(
         [&]() -> wgpu::Future {
             return module.GetCompilationInfo(
                 wgpu::CallbackMode::WaitAnyOnly,
@@ -870,7 +868,7 @@ std::optional<std::string> GPU::fillInputBuffer(std::span<const std::byte> data,
 
     Awaiter awaiter{instance_, device_};
 
-    awaiter.addCall(std::move(future), "Map and copy data to input buffer");
+    awaiter.addFuture(future, "Map and copy data to input buffer");
 
     if (auto err = awaiter.executeAll()) {
         return err;
@@ -915,32 +913,15 @@ std::optional<std::string> GPU::copyDataToOutput(const BufferBinding& binding) {
         throw std::out_of_range("reading large buffers is not implemented");
     }
 
-    const auto queue = device_.GetQueue();
     const auto encoder = device_.CreateCommandEncoder();
 
     encoder.CopyBufferToBuffer(buf, binding.getOffset(), output_buf_, 0,
                                binding.getSize());
 
     const auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
 
-    auto wait_copy = [&]() -> wgpu::Future {
-        return queue.OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg) {
-                spdlog::debug(
-                    LOG_ID
-                    " finished copying to output buffer. status: {}, msg: '{}'",
-                    static_cast<int>(status), std::string(msg));
-            });
-    };
-
-    auto err
-        = getAwaiter()
-              .addCall(std::move(wait_copy),
-                       std::format("copy {} to output buf", binding), false)
-              .executeAll();
-    if (err) {
+    if (auto err = submitAndWait(
+            commands, std::format("copy {} to output buf", binding))) {
         return "wgpu: " + err.value();
     }
 
@@ -989,7 +970,6 @@ std::expected<TextureData, std::string> GPU::readTexture(
         = (unpadded_bytes_per_row + kBytesPerRowAlignment - 1)
           & ~(kBytesPerRowAlignment - 1);
 
-    const auto queue = device_.GetQueue();
     const auto encoder = device_.CreateCommandEncoder();
     const wgpu::TexelCopyTextureInfo texture_src{
         .texture = texture,
@@ -1013,25 +993,8 @@ std::expected<TextureData, std::string> GPU::readTexture(
     encoder.CopyTextureToBuffer(&texture_src, &buffer_dst, &extent);
 
     const auto commands = encoder.Finish();
-    queue.Submit(1, &commands);
 
-    auto wait_copy = [&]() -> wgpu::Future {
-        return queue.OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg) {
-                spdlog::debug(LOG_ID
-                              " Finished copying texture to output buffer. "
-                              "status:{} msg:'{}'",
-                              static_cast<int>(status), std::string(msg));
-            });
-    };
-
-    const auto err = getAwaiter()
-                         .addCall(std::move(wait_copy),
-                                  "Copy texture to output buffer", false)
-                         .executeAll();
-
-    if (err) {
+    if (auto err = submitAndWait(commands, "copy texture to output buffer")) {
         return std::unexpected("copying to output buffer: " + err.value());
     }
 
@@ -1105,7 +1068,7 @@ std::expected<std::vector<std::byte>, std::string> GPU::readOutputbuffer(
     };
 
     auto awaiter = getAwaiter();
-    awaiter.addCall(std::move(future_cb), "Reading output buffer", false);
+    awaiter.addFuture(future_cb, "Reading output buffer");
     const auto err = awaiter.executeAll();
 
     output_buf_.Unmap();
