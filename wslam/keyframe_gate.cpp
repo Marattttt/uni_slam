@@ -474,6 +474,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
 
     state_.active_landmarks = std::move(next_active);
     state_.last_accepted_pose = delta.pose_id;
+    state_.keyframe_timestamps_ns.emplace(delta.pose_id, delta.curr_kf_ts_ns);
     if (!state_.has_origin) {
         state_.has_origin = true;
     }

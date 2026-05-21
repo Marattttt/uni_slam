@@ -80,7 +80,12 @@ def _parse_keyframe(payload: dict) -> Keyframe:
     if trans.shape != (3,):
         msg = f"t_world_cam for keyframe {payload.get('id')} must be (3,), got {trans.shape}"
         raise ValueError(msg)
-    return Keyframe(id=int(payload["id"]), R_world_cam=rot, t_world_cam=trans)
+    return Keyframe(
+        id=int(payload["id"]),
+        R_world_cam=rot,
+        t_world_cam=trans,
+        timestamp_ns=int(payload.get("timestamp_ns", 0)),
+    )
 
 
 def load_map(ply_path: str | Path) -> MapSnapshot:

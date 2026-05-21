@@ -38,6 +38,9 @@ class Keyframe:
     id: int
     R_world_cam: np.ndarray  # shape (3, 3), float64
     t_world_cam: np.ndarray  # shape (3,), float64
+    # Source-frame timestamp in nanoseconds. 0 means the export predates
+    # the timestamp field (format_version=1 maps written before that change).
+    timestamp_ns: int = 0
 
 
 @dataclass(frozen=True)

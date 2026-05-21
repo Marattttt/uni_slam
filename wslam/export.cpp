@@ -79,6 +79,7 @@ json poseToJson(const KeyframePose& kf) {
     }
     return json{
         {"id", kf.id.v},
+        {"timestamp_ns", kf.timestamp_ns},
         {"R_world_cam", r},
         {"t_world_cam",
          json::array({kf.t_world_cam.x(), kf.t_world_cam.y(),

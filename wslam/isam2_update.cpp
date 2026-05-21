@@ -58,8 +58,19 @@ MapSnapshot Snapshot(const MappingState& state) {
             continue;
         }
         const auto& pose = state.latest_values.at<gtsam::Pose3>(kv.key);
+        const PoseId pose_id{sym.index()};
+        // Every accepted pose was registered by the keyframe gate before
+        // it ever reached iSAM, so a miss here is a state inconsistency.
+        // Fall back to 0 (rather than throwing) so the snapshot still
+        // publishes; downstream consumers can detect the missing timestamp.
+        const auto timestamp_it = state.keyframe_timestamps_ns.find(pose_id);
+        const uint64_t timestamp_ns
+            = timestamp_it == state.keyframe_timestamps_ns.end()
+                  ? 0
+                  : timestamp_it->second;
         s.keyframes.push_back(KeyframePose{
-            .id = PoseId{sym.index()},
+            .id = pose_id,
+            .timestamp_ns = timestamp_ns,
             .R_world_cam = pose.rotation().matrix(),
             .t_world_cam = pose.translation(),
         });

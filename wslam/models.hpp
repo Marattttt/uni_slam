@@ -195,6 +195,10 @@ struct MapDelta {
 // Per-keyframe pose recorded in the published snapshot.
 struct KeyframePose {
     PoseId id;
+    // Source-frame timestamp the keyframe was captured at. Carried through
+    // so trajectory-evaluation tools (`evo`, TUM benchmark scripts) can
+    // associate poses with ground truth.
+    uint64_t timestamp_ns = 0;
     Eigen::Matrix3d R_world_cam = Eigen::Matrix3d::Identity();
     Eigen::Vector3d t_world_cam = Eigen::Vector3d::Zero();
 };

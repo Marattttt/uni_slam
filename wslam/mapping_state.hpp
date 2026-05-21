@@ -129,6 +129,12 @@ struct MappingState {
     // keyframe gate to window IMU samples between consecutive keyframes.
     std::optional<uint64_t> last_keyframe_ts_ns;
 
+    // PoseId -> source-frame timestamp (ns) for every accepted keyframe.
+    // Populated by the keyframe gate at acceptance time and read by the
+    // snapshot builder so exported KeyframePose entries carry a timestamp
+    // that downstream evaluation tools can align with ground truth.
+    std::flat_map<PoseId, uint64_t> keyframe_timestamps_ns;
+
     // Latest IMU bias estimate, propagated forward as the initial guess
     // for the next keyframe's bias variable. Filled from latest_values
     // after each iSAM update; falls back to zero on the first frame.
