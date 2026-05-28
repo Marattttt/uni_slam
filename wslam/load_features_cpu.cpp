@@ -144,15 +144,15 @@ std::expected<FeatureSet, std::string> LoadDataCPUPass::loadFeatures() {
 
     const auto* bytes = data.value().data();
 
-    const auto* casted
-        = reinterpret_cast<const gpumodels::FeatureArray<>*>(bytes);
-
-    const auto features = casted->values | std::views::take(casted->count);
+    const auto* features
+        = reinterpret_cast<const gpumodels::FeatureArray*>(bytes);
 
     FeatureSet result;
 
-    for (const auto& f : features) {
-        result.at(f.lod).emplace_back(f);
+    for (const auto& lod : *features) {
+        for (const auto& f : lod.values | std::views::take(lod.count)) {
+            result.at(f.lod).emplace_back(f);
+        }
     }
 
     return result;

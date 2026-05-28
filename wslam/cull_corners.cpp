@@ -27,7 +27,7 @@ std::array<compute::GPU::ShaderOverride, 2> GetShaderOverrides() {
         },
 
         compute::GPU::ShaderOverride{
-            "FEATURE_BLOCK_SZ",
+            "CORNER_BLOCK_SZ",
             std::format("{}u", GPUConst::frame_height * GPUConst::frame_width)},
     };
 }

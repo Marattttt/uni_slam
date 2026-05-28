@@ -4,6 +4,7 @@
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>
 
+#include <cstddef>
 #include <expected>
 #include <ranges>
 #include <span>
@@ -20,6 +21,16 @@ using namespace wslam;
 namespace {
 namespace CONSTANTS {
 constexpr std::string_view kShaderPath = "generate_features.wgsl";
+constexpr auto kLodValuesBindingSize = 256 * GPUConst::levels_of_detail;
+constexpr auto kBriefTestsBindingSize
+    = sizeof(std::array<std::array<int32_t, 4>, 256>);
+constexpr auto kFeaturesBindingSize
+    = AddPadding(sizeof(gpumodels::FeatureArray), 256);
+constexpr auto kCornersBindingSize = AddPadding(
+    sizeof(
+        gpumodels::CornersBlock<GPUConst::frame_width, GPUConst::frame_height>)
+        * GPUConst::levels_of_detail,
+    256);
 
 constexpr size_t kWgSize = 8;
 constexpr std::array<wgpu::ConstantEntry, 2> kShaderOverrides{
@@ -33,27 +44,22 @@ constexpr std::array<wgpu::ConstantEntry, 2> kShaderOverrides{
     },
 };
 
-std::array<compute::GPU::ShaderOverride, 2> kTextShaderOverrides{
+std::array<compute::GPU::ShaderOverride, 3> kTextShaderOverrides{
     compute::GPU::ShaderOverride{
         "LOD_COUNT",
         std::format("{}u", GPUConst::levels_of_detail),
     },
     compute::GPU::ShaderOverride{
+        "CORNER_BLOCK_SZ",
+        std::format("{}u", kCornersBindingSize),
+    },
+    compute::GPU::ShaderOverride{
         "FEATURE_BLOCK_SZ",
-        std::format("{}u", GPUConst::frame_height* GPUConst::frame_width),
+        std::format("{}u", GPUConst::max_features_per_lod),
+
     },
 };
 
-constexpr auto kCornersBindingSize = AddPadding(
-    sizeof(
-        gpumodels::CornersBlock<GPUConst::frame_width, GPUConst::frame_height>)
-        * GPUConst::levels_of_detail,
-    256);
-
-constexpr auto kLodValuesBindingSize = 256 * GPUConst::levels_of_detail;
-constexpr auto kBriefTestsBindingSize
-    = sizeof(std::array<std::array<int32_t, 4>, 256>);
-constexpr auto kFeatureArrayBindingSize = sizeof(gpumodels::FeatureArray<>);
 };  // namespace CONSTANTS
 };  // namespace
 
@@ -104,9 +110,7 @@ std::expected<void, std::string> GenerateFeaturesPass::initSampler() {
 
     auto create = [&] { sampler_ = gpu_->getDevice().CreateSampler(&desc); };
 
-    return gpu_->getAwaiter()
-        .runChecked(create, "Create sampler")
-        .execute();
+    return gpu_->getAwaiter().runChecked(create, "Create sampler").execute();
 }
 
 std::expected<void, std::string> GenerateFeaturesPass::initBindGroupLayouts() {
@@ -265,7 +269,7 @@ GenerateFeaturesPass::initCommonBindgroup() {
         wgpu::BindGroupEntry{.binding = 1,
                              .size = CONSTANTS::kBriefTestsBindingSize},
         wgpu::BindGroupEntry{.binding = 2,
-                             .size = CONSTANTS::kFeatureArrayBindingSize},
+                             .size = CONSTANTS::kFeaturesBindingSize},
         wgpu::BindGroupEntry{.binding = 3, .sampler = sampler_},
     };
 
@@ -373,8 +377,7 @@ std::expected<void, std::string> GenerateFeaturesPass::initPerPassBindgroups() {
             bind_groups_.at(lod).at(1)
                 = gpu_->getDevice().CreateBindGroup(&group_desc);
         };
-        awaiter.runChecked(create,
-                           std::format("create bg for pass {}", lod));
+        awaiter.runChecked(create, std::format("create bg for pass {}", lod));
     }
 
     return awaiter.execute();

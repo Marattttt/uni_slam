@@ -70,7 +70,8 @@ using FeatureSet = std::array<std::vector<Feature>, GPUConst::levels_of_detail>;
 
 using FeaturePair = std::pair<Feature, Feature>;
 
-// Per-LOD map from current-frame feature (key) to matched prev-frame feature (value).
+// Per-LOD map from current-frame feature (key) to matched prev-frame feature
+// (value).
 using MatchResult
     = std::array<std::flat_map<Feature, Feature>, GPUConst::levels_of_detail>;
 
@@ -156,8 +157,8 @@ struct LandmarkObservation {
 // keyframe to the factor-builder pass — including its initial pose guess in
 // world coordinates and any new landmarks that need a Point3 variable.
 struct MapDelta {
-    bool accepted = false;             // false ⇒ frame skipped, no-op downstream
-    bool is_first_keyframe = false;    // true ⇒ initialise gauge with priors
+    bool accepted = false;           // false ⇒ frame skipped, no-op downstream
+    bool is_first_keyframe = false;  // true ⇒ initialise gauge with priors
     PoseId pose_id{};
     // Initial pose estimate (T_world_camera) for the new keyframe. Composed
     // from the previous keyframe pose and the triangulation R/t.
@@ -243,12 +244,12 @@ struct CornersBlock {
     }
 };
 
-template <std::size_t MaxFeatures
-          = GPUConst::frame_width * GPUConst::frame_height>
-struct FeatureArray {
+struct alignas(16) FeatureBlocK {
     uint32_t count;
-    std::array<Feature, MaxFeatures> values;
+    std::array<Feature, GPUConst::max_features_per_lod> values;
 };
+
+using FeatureArray = std::array<FeatureBlocK, GPUConst::levels_of_detail>;
 }  // namespace gpumodels
 };  // namespace wslam
 

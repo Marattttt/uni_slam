@@ -1,13 +1,15 @@
 // A replacement must be put at shader reading time (before compilation)
 // as 'override' values are not yet supported as array sizes at the moment
 const LOD_COUNT = 0x69u;
+const CORNER_BLOCK_SZ = 0x69u;
 const FEATURE_BLOCK_SZ = 0x69u;
 
 struct CornerBlock {
     width: u32,
     height: u32,
-    values: array<u32, FEATURE_BLOCK_SZ>,
+    values: array<u32, CORNER_BLOCK_SZ>,
 };
+
 
 struct PointPair {
     ax: i32,
@@ -25,10 +27,12 @@ struct Feature {
     descriptor: Descriptor,
 };
 
-struct FeatureArray {
+struct FeatureBlock {
     count: atomic<u32>,
-    values: array<Feature>,
+    values: array<Feature, FEATURE_BLOCK_SZ>,
 };
+
+alias FeatureArray = array<FeatureBlock, LOD_COUNT>;
 
 @group(0) @binding(0) var<storage, read> corners: array<CornerBlock, LOD_COUNT>;
 @group(0) @binding(1) var<uniform> brief_tests: array<PointPair, 256>;
@@ -49,11 +53,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if lod >= LOD_COUNT { return; }
 
-    let block = &corners[lod];
+    let corner_block = &corners[lod];
 
-    if x >= block.width || y >= block.height { return; }
+    if x >= corner_block.width || y >= corner_block.height { return; }
 
-    let strength = block.values[block.width * y + x];
+    let strength = corner_block.values[corner_block.width * y + x];
     
     if strength == 0 { return; }
 
@@ -61,15 +65,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let descriptor = computeDescriptor(vec2(i32(gid.x), i32(gid.y)), orientation);
 
-    let feature = Feature(
+    let idx = atomicAdd(&features[lod].count, 1u);
+
+    features[lod].values[idx] = Feature(
         vec3(gid.x, gid.y, lod),
         strength,
         orientation,
         descriptor,
     );
-
-    let idx = atomicAdd(&features.count, 1u);
-    features.values[idx] = feature;
 }
 
 fn getOrientation(coord: vec2<u32>) -> f32 {

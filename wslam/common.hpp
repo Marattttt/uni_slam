@@ -43,6 +43,9 @@ constexpr uint32_t pixel_size = sizeof(float);
 constexpr uint32_t levels_of_detail = 6;
 constexpr uint32_t min_uniform_buffer_alignment = 256;
 
+// Assumed value
+constexpr uint32_t max_features_per_lod = frame_width * frame_height / 250;
+
 constexpr uint32_t featuesets_stored = 2;
 
 constexpr double lod_scale_factor = 1.2;

@@ -1,12 +1,12 @@
 // A replacement must be put at shader reading time (before compilation)
 // as 'override' values are not yet supported as array sizes at the moment
 const LOD_COUNT = 0x69u;
-const FEATURE_BLOCK_SZ = 0x69u;
+const CORNER_BLOCK_SZ = 0x69u;
 
 struct FeatureBlock {
     width: u32,
     height: u32,
-    values: array<u32, FEATURE_BLOCK_SZ>,
+    values: array<u32, CORNER_BLOCK_SZ>,
 };
 
 @group(0) @binding(0) var<storage, read> src: array<FeatureBlock, LOD_COUNT>;
@@ -99,7 +99,7 @@ fn main_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // Start must be less than full block size
 fn getVerticalEnd(start: u32, block: ptr<storage, FeatureBlock>) -> u32 {
-    let len = FEATURE_BLOCK_SZ;
+    let len = CORNER_BLOCK_SZ;
     let left = len - start;
 
     let step = block.width;

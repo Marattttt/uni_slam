@@ -5,12 +5,12 @@ struct Params {
 // A replacement must be put at shader reading time (before compilation)
 // as 'override' values are not yet supported as array sizes at the moment
 const LOD_COUNT = 0x69u;
-const FEATURE_BLOCK_SZ = 0x69u;
+const CORNER_BLOCK_SZ = 0x69u;
 
 struct FeatureBlock {
     width: u32,
     height: u32,
-    values: array<u32, FEATURE_BLOCK_SZ>,
+    values: array<u32, CORNER_BLOCK_SZ>,
 };
 
 // FAST contrast threshold on normalised [0,1] pixel intensities. ORB-SLAM
