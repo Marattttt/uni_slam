@@ -24,13 +24,13 @@ constexpr std::string_view kShaderPath = "generate_features.wgsl";
 constexpr auto kLodValuesBindingSize = 256 * GPUConst::levels_of_detail;
 constexpr auto kBriefTestsBindingSize
     = sizeof(std::array<std::array<int32_t, 4>, 256>);
-constexpr auto kFeaturesBindingSize
-    = AddPadding(sizeof(gpumodels::FeatureArray), 256);
 constexpr auto kCornersBindingSize = AddPadding(
     sizeof(
         gpumodels::CornersBlock<GPUConst::frame_width, GPUConst::frame_height>)
         * GPUConst::levels_of_detail,
     256);
+constexpr auto kFeaturesBindingSize
+    = AddPadding(sizeof(gpumodels::FeatureArray), 256);
 
 constexpr size_t kWgSize = 8;
 constexpr std::array<wgpu::ConstantEntry, 2> kShaderOverrides{

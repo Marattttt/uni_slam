@@ -10,7 +10,6 @@ struct CornerBlock {
     values: array<u32, CORNER_BLOCK_SZ>,
 };
 
-
 struct PointPair {
     ax: i32,
     ay: i32,
@@ -21,7 +20,7 @@ struct PointPair {
 alias Descriptor = array<u32, 8>; // 256 bit string
 
 struct Feature {
-    coords: vec3<u32>,
+    coords: vec2<f32>,
     strength: u32,
     orientation: f32,
     descriptor: Descriptor,
@@ -68,7 +67,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = atomicAdd(&features[lod].count, 1u);
 
     features[lod].values[idx] = Feature(
-        vec3(gid.x, gid.y, lod),
+        vec2(f32(gid.x), f32(gid.y)),
         strength,
         orientation,
         descriptor,

@@ -149,9 +149,10 @@ std::expected<FeatureSet, std::string> LoadDataCPUPass::loadFeatures() {
 
     FeatureSet result;
 
-    for (const auto& lod : *features) {
-        for (const auto& f : lod.values | std::views::take(lod.count)) {
-            result.at(f.lod).emplace_back(f);
+    for (uint32_t lod = 0; lod < features->size(); lod++) {
+        const auto& block = features->at(lod);
+        for (const auto& f : block.values | std::views::take(block.count)) {
+            result.at(lod).emplace_back(FromGpuModel(f, lod));
         }
     }
 

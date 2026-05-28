@@ -11,14 +11,79 @@
 #include "provider_base.hpp"
 
 namespace wslam {
+namespace gpumodels {
+// NOLINTNEXTLINE(readability-magic-numbers)
+using BRIEFTestSet = std::array<int32_t, 4UZ * 256>;
+
+template <std::size_t IMG_WIDTH, std::size_t IMG_HEIGHT>
+struct CornersBlock {
+    uint32_t width;
+    uint32_t height;
+    std::array<uint32_t, IMG_WIDTH * IMG_HEIGHT> strengths;
+
+    [[nodiscard]] constexpr uint32_t operator[](std::size_t x,
+                                                std::size_t y) const {
+        return strengths.at(y * width + x);
+    }
+};
+
+// NOLINTBEGIN(readability-magic-numbers)
+struct alignas(8) Feature {
+    float x;
+    float y;
+    uint32_t strength;
+    float orientation;
+    std::array<uint32_t, 8> descriptor;
+    static constexpr size_t kDescriptorBits = 256;
+    [[nodiscard]] constexpr bool getBit(size_t idx) const noexcept {
+        assert(idx < kDescriptorBits);
+        return ((descriptor[idx / 32] >> (idx % 32)) & 1U) != 0U;
+    }
+    constexpr void setBit(size_t idx, bool value) noexcept {
+        assert(idx < kDescriptorBits);
+        const uint32_t mask = uint32_t{1} << (idx % 32);
+        if (value) {
+            descriptor[idx / 32] |= mask;
+        } else {
+            descriptor[idx / 32] &= ~mask;
+        }
+    }
+    constexpr auto operator<=>(const Feature&) const = default;
+    constexpr bool operator==(const Feature&) const = default;
+};
+/*
+Alignment offset checks against
+alias Descriptor = array<u32, 8>; // 256 bit string
+struct Feature {
+    coords: vec2<f32>,
+    strength: u32,
+    orientation: f32,
+    descriptor: Descriptor,
+};
+*/
+static_assert(sizeof(Feature) == 48);
+static_assert(alignof(Feature) == 8);
+static_assert(offsetof(Feature, x) == 0);
+static_assert(offsetof(Feature, strength) == 8);
+static_assert(offsetof(Feature, orientation) == 12);
+static_assert(offsetof(Feature, descriptor) == 16);
+// NOLINTEND(readability-magic-numbers)
+
+struct alignas(8) FeatureBlocK {
+    uint32_t count;
+    std::array<Feature, GPUConst::max_features_per_lod> values;
+};
+
+using FeatureArray = std::array<FeatureBlocK, GPUConst::levels_of_detail>;
+}  // namespace gpumodels
+
 struct Corner {
     uint32_t x;
     uint32_t y;
     uint32_t strength;
 };
 
-// NOLINTBEGIN(readability-magic-numbers)
-struct alignas(16) Feature {
+struct Feature {
     uint32_t x;
     uint32_t y;
     uint32_t lod;
@@ -32,7 +97,6 @@ struct alignas(16) Feature {
         assert(idx < kDescriptorBits);
         return ((descriptor[idx / 32] >> (idx % 32)) & 1U) != 0U;
     }
-
     constexpr void setBit(size_t idx, bool value) noexcept {
         assert(idx < kDescriptorBits);
         const uint32_t mask = uint32_t{1} << (idx % 32);
@@ -42,30 +106,19 @@ struct alignas(16) Feature {
             descriptor[idx / 32] &= ~mask;
         }
     }
-
     constexpr auto operator<=>(const Feature&) const = default;
     constexpr bool operator==(const Feature&) const = default;
 };
 
-/*
-Alignment offset checks agsinst
+constexpr Feature FromGpuModel(gpumodels::Feature f, uint32_t lod) {
+    return Feature{.x = static_cast<uint32_t>(f.x),
+                   .y = static_cast<uint32_t>(f.y),
+                   .lod = lod,
+                   .strength = f.strength,
+                   .orientation = f.orientation,
+                   .descriptor = f.descriptor};
+}
 
-alias Descriptor = array<u32, 8>; // 256 bit string
-
-struct Feature {
-    coords: vec3<u32>,
-    strength: u32,
-    orientation: f32,
-    descriptor: Descriptor,
-};
-*/
-static_assert(sizeof(Feature) == 64);
-static_assert(alignof(Feature) == 16);
-static_assert(offsetof(Feature, x) == 0);
-static_assert(offsetof(Feature, strength) == 12);
-static_assert(offsetof(Feature, orientation) == 16);
-static_assert(offsetof(Feature, descriptor) == 20);
-// NOLINTEND(readability-magic-numbers)
 using FeatureSet = std::array<std::vector<Feature>, GPUConst::levels_of_detail>;
 
 using FeaturePair = std::pair<Feature, Feature>;
@@ -227,30 +280,6 @@ struct MapSnapshot {
     std::vector<LandmarkEstimate> landmarks;
     MapStats stats;
 };
-
-namespace gpumodels {
-// NOLINTNEXTLINE(readability-magic-numbers)
-using BRIEFTestSet = std::array<int32_t, 4UZ * 256>;
-
-template <std::size_t IMG_WIDTH, std::size_t IMG_HEIGHT>
-struct CornersBlock {
-    uint32_t width;
-    uint32_t height;
-    std::array<uint32_t, IMG_WIDTH * IMG_HEIGHT> strengths;
-
-    [[nodiscard]] constexpr uint32_t operator[](std::size_t x,
-                                                std::size_t y) const {
-        return strengths.at(y * width + x);
-    }
-};
-
-struct alignas(16) FeatureBlocK {
-    uint32_t count;
-    std::array<Feature, GPUConst::max_features_per_lod> values;
-};
-
-using FeatureArray = std::array<FeatureBlocK, GPUConst::levels_of_detail>;
-}  // namespace gpumodels
 };  // namespace wslam
 
 template <>
