@@ -9,6 +9,7 @@
 #include <flat_map>
 #include <memory>
 #include <numbers>
+#include <ranges>
 #include <span>
 #include <vector>
 
@@ -181,12 +182,13 @@ std::flat_map<size_t, std::vector<Feature>> utils::ExtractFeatures(
     std::flat_map<size_t, std::vector<Feature>> result;
 
     const auto* array
-        = reinterpret_cast<const gpumodels::FeatureArray<>*>(data.data());
+        = reinterpret_cast<const gpumodels::FeatureArray*>(data.data());
 
-    std::span<const Feature> features{array->values.data(), array->count};
-
-    for (const auto& feat : features) {
-        result[feat.lod].emplace_back(feat);
+    for (uint32_t lod = 0; lod < array->size(); lod++) {
+        const auto& block = array->at(lod);
+        for (const auto& f : block.values | std::views::take(block.count)) {
+            result[lod].emplace_back(FromGpuModel(f, lod));
+        }
     }
 
     return result;

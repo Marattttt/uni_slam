@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <flat_map>
+#include <numeric>
 #include <utility>
 
 #include "common.hpp"
@@ -85,6 +86,17 @@ std::vector<std::pair<Feature, Feature>> FindMatchesInLod(
         b_px.push_back(toLod0(f));
     }
 
+    // Candidate indices sorted by LOD-0 x. The spatial window then
+    // reduces to a binary-searched contiguous slice per query instead of
+    // a full scan with a per-candidate rejection test — the x-gate alone
+    // culls ~90% of candidates, so this removes the dominant share of
+    // the pairwise work.
+    std::vector<uint32_t> order(set_b.size());
+    std::ranges::iota(order, 0U);
+    std::ranges::sort(order, [&](uint32_t lhs, uint32_t rhs) {
+        return b_px[lhs].first < b_px[rhs].first;
+    });
+
     matches.reserve(set_a.size());
     for (const auto& curr : set_a) {
         const auto [cx, cy] = toLod0(curr);
@@ -92,18 +104,25 @@ std::vector<std::pair<Feature, Feature>> FindMatchesInLod(
         uint32_t second_best_dist = std::numeric_limits<uint32_t>::max();
         size_t best_idx = 0;
         bool best_found = false;
-        for (size_t i = 0; i < set_b.size(); i++) {
-            const auto& [bx, by] = b_px.at(i);
-            // Spatial pre-filter: any feature outside the search window
-            // both wastes Hamming cycles and skews the Lowe ratio test,
-            // since a distant but descriptor-similar feature can become
-            // an artificially good "second best". Gating here is cheap.
-            if (std::abs(cx - bx) > kMaxDistX
-                || std::abs(cy - by) > kMaxDistY) {
+        const auto slice_begin = std::ranges::lower_bound(
+            order, cx - kMaxDistX, std::less<float>{},
+            [&](uint32_t idx) { return b_px[idx].first; });
+        for (auto it = slice_begin; it != order.end(); ++it) {
+            const size_t i = *it;
+            const auto& [bx, by] = b_px[i];
+            if (bx > cx + kMaxDistX) {
+                break;  // sorted by x — nothing further can be in window
+            }
+            // Spatial pre-filter (y axis; x is handled by the slice):
+            // features outside the search window both waste Hamming
+            // cycles and skew the Lowe ratio test, since a distant but
+            // descriptor-similar feature can become an artificially good
+            // "second best".
+            if (std::abs(cy - by) > kMaxDistY) {
                 continue;
             }
             const auto distance
-                = HammingDistanceBounded(curr, set_b.at(i), second_best_dist);
+                = HammingDistanceBounded(curr, set_b[i], second_best_dist);
             if (distance < best_dist) {
                 second_best_dist = best_dist;
                 best_dist = distance;

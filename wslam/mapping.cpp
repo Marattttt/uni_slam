@@ -13,7 +13,7 @@ using namespace wslam;
 #define LOG_ID "[Mapping stage]"
 
 MappingStage wslam::CreateMappingStage(compute::Compute& compute,
-                                       AnyBag& storage, WslamConfig /*config*/) {
+                                       AnyBag& storage, WslamConfig config) {
     spdlog::info(LOG_ID " Constructing mapping stage");
 
     const auto gpu = compute.getGPUPtr();
@@ -32,7 +32,14 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // the same Stage, destroyed together).
     const FactorBuilderPass* builder_ptr = builder.get();
 
-    auto updater = std::make_unique<Isam2UpdatePass>(*state, *builder_ptr);
+    // Headless runs have no consumer of intermediate snapshots — the map
+    // export only reads the post-flush one — so rebuild the (O(map size))
+    // snapshot rarely. The GUI reads it every frame.
+    Isam2UpdatePass::Opts updater_opts{};
+    updater_opts.snapshot_every_n_drains = config.enable_gui ? 1 : 25;
+
+    auto updater = std::make_unique<Isam2UpdatePass>(*state, *builder_ptr,
+                                                     updater_opts);
     updater->setStorage(storage);
     // Same lifetime argument as for builder_ptr above: the updater is added
     // to `stage` below and lives as long as that stage does.

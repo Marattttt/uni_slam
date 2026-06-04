@@ -38,6 +38,15 @@ class Isam2UpdatePass : public compute::Pass {
         // its own. Bump to 1–2 only if profiling shows large post-relin
         // residuals.
         uint32_t extra_updates = 0;
+
+        // Publish a fresh MapSnapshot every N successful drains. Building
+        // the snapshot re-triangulates every smart factor ever created
+        // (O(map size), growing without bound) on the main thread, so
+        // headless runs — whose only snapshot consumer is the post-loop
+        // map export — should keep this large. The GUI reads the snapshot
+        // every frame and wants 1. flush() always publishes regardless,
+        // so the exported map never lags.
+        uint32_t snapshot_every_n_drains = 1;
     };
 
     Isam2UpdatePass(MappingState& state, const FactorBuilderPass& builder,
@@ -70,8 +79,19 @@ class Isam2UpdatePass : public compute::Pass {
     Opts opts_;
     AnyBag* storage_ = nullptr;
 
+    // Rebuild the MapSnapshot from MappingState and publish it under
+    // MapSnapshotName. Factored out so drainPending (throttled) and
+    // flush (always) share one implementation.
+    void publishSnapshot();
+
     std::unique_ptr<Isam2Worker> worker_;
     std::future<Isam2Worker::Result> pending_;
+    // Drains applied since the last published snapshot, compared against
+    // Opts::snapshot_every_n_drains.
+    uint32_t drains_since_snapshot_ = 0;
+    // Factor count reported by the most recent worker result; stamped
+    // into snapshots built outside drainPending (e.g. at flush time).
+    std::size_t last_factor_count_ = 0;
     // Snapshot of FactorBuilderPass::smartFactorPositions() at the moment
     // we submitted the previous frame's work. Held alongside `pending_`
     // so drainPending can map iSAM's returned FactorIndex assignments

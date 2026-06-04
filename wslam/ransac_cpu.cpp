@@ -5,6 +5,7 @@
 #include <Eigen/Dense>
 #include <Eigen/SVD>
 #include <algorithm>
+#include <cmath>
 #include <numbers>
 #include <unordered_set>
 #include <vector>
@@ -294,7 +295,13 @@ std::optional<std::string> RansacCPU::execute() {
 
     uint32_t iter = 0;
     uint32_t degenerate_samples = 0;
-    for (; iter < opts_.max_iterations; ++iter) {
+    // Standard adaptive RANSAC bound: after finding a model with inlier
+    // ratio w, the number of draws needed to have sampled at least one
+    // all-inlier 8-tuple with probability `confidence` is
+    //   log(1 - confidence) / log(1 - w^8).
+    // Re-tightened every time the best model improves.
+    uint32_t needed_iterations = opts_.max_iterations;
+    for (; iter < needed_iterations; ++iter) {
         const auto sample = impl::SampleEight(flat.size(), rng_);
 
         std::vector<Eigen::Vector2d> sample_prev(8);
@@ -319,6 +326,22 @@ std::optional<std::string> RansacCPU::execute() {
                           best_inliers.size());
             best_inliers = std::move(inliers);
             best_f = *f_opt;
+
+            const double inlier_ratio
+                = static_cast<double>(best_inliers.size())
+                  / static_cast<double>(flat.size());
+            const double all_inlier_sample_probability
+                = std::pow(inlier_ratio, 8.0);
+            if (all_inlier_sample_probability >= 1.0 - 1e-12) {
+                // Perfect consensus — nothing left to find.
+                needed_iterations = iter + 1;
+            } else if (all_inlier_sample_probability > 0.0) {
+                const double bound
+                    = std::log(1.0 - opts_.confidence)
+                      / std::log(1.0 - all_inlier_sample_probability);
+                needed_iterations = static_cast<uint32_t>(
+                    std::min<double>(opts_.max_iterations, std::ceil(bound)));
+            }
         }
     }
 

@@ -24,6 +24,18 @@ Isam2Worker::Isam2Worker() {
     // landmarks goes singular at the depth axis.
     params.relinearizeSkip = 1;
     params.relinearizeThreshold = 0.01;
+    // VI cliques mix IMU information (~1e9 at small dt) with vision
+    // information (~1e2) in one elimination; the default CHOLESKY path
+    // eventually hits a roundoff-indefinite pivot on long runs and throws
+    // IndeterminantLinearSystemException. QR is slower per relinearisation
+    // but rank-revealing and numerically robust to exactly this.
+    params.factorization = gtsam::ISAM2Params::QR;
+    // The smart-factor remove-and-readd pattern otherwise leaves a dead
+    // slot in the factor graph per re-observed landmark per keyframe,
+    // growing the factor array (and VariableIndex bookkeeping) without
+    // bound. Slot reuse keeps ISAM2Result::newFactorsIndices positional,
+    // so the per-landmark index backfill in the update pass still holds.
+    params.findUnusedFactorSlots = true;
     isam_ = std::make_unique<gtsam::ISAM2>(params);
 
     thread_ = std::thread([this] { run(); });

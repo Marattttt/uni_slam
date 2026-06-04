@@ -164,8 +164,25 @@ std::optional<std::string> Isam2UpdatePass::drainPending() {
     }
 
     assert(storage_ != nullptr);
+    last_factor_count_ = result.factor_count;
+
+    // Building the snapshot triangulates every smart factor ever created
+    // — O(map size) on the main thread — so headless configurations only
+    // do it every Nth drain. flush() publishes unconditionally, so the
+    // exported map always reflects the final optimisation.
+    ++drains_since_snapshot_;
+    if (drains_since_snapshot_ >= opts_.snapshot_every_n_drains) {
+        publishSnapshot();
+    }
+    return std::nullopt;
+}
+
+void Isam2UpdatePass::publishSnapshot() {
+    assert(storage_ != nullptr);
+    drains_since_snapshot_ = 0;
+
     auto snap = Snapshot(state_);
-    snap.stats.factors = result.factor_count;
+    snap.stats.factors = last_factor_count_;
     snap.stats.last_error = 0.0;  // not currently exposed by ISAM2Result
 
 #ifndef NDEBUG
@@ -178,7 +195,6 @@ std::optional<std::string> Isam2UpdatePass::drainPending() {
 #endif
 
     storage_->set(ResourceIdentifier::MapSnapshotName, std::move(snap));
-    return std::nullopt;
 }
 
 std::optional<std::string> Isam2UpdatePass::execute() {
@@ -220,5 +236,11 @@ std::optional<std::string> Isam2UpdatePass::execute() {
 
 std::optional<std::string> Isam2UpdatePass::flush() {
     spdlog::info(LOG_ID " flush(): draining any in-flight iSAM update");
-    return drainPending();
+    if (auto err = drainPending()) {
+        return err;
+    }
+    // Consumers (e.g. ExportMap) read the snapshot right after flush;
+    // bypass the drain throttle so it reflects every applied update.
+    publishSnapshot();
+    return std::nullopt;
 }

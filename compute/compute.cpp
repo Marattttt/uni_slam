@@ -17,6 +17,11 @@ void impl::print_device_unresponsive(const wgpu::Device& device,
                                      wgpu::DeviceLostReason reason,
                                      wgpu::StringView message) {
     (void)device;
+    if (reason == wgpu::DeviceLostReason::Destroyed) {
+        // Deliberate teardown at shutdown — not an error.
+        spdlog::debug("WebGPU device destroyed: {}", std::string_view(message));
+        return;
+    }
     std::println(stderr, "Lost connection with device. Reason: {}; Message: {}",
                  static_cast<uint32_t>(reason), std::string_view(message));
 }

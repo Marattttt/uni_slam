@@ -54,17 +54,28 @@ std::optional<std::string> LoadDataCPUPass::initBindings() {
 std::optional<std::string> LoadDataCPUPass::execute() {
     spdlog::info(LOG_ID " Exeucuting");
 
-    auto textures = loadTextureData().transform_error(
-        [](auto&& err) { return "textures: " + err; });
+    auto& storage = shared_.getStorage();
 
-    if (!textures) {
-        return textures.error();
+    // Texture readback feeds the GUI only; skip the six per-frame GPU→CPU
+    // round-trips entirely when nothing consumes them.
+    if (readback_textures_) {
+        auto textures = loadTextureData().transform_error(
+            [](auto&& err) { return "textures: " + err; });
+
+        if (!textures) {
+            return textures.error();
+        }
+
+        spdlog::info(LOG_ID " Loaded texture data; texture sizes: {}",
+                     textures.value() | std::views::transform([](auto&& t) {
+                         return std::make_pair(t.width, t.height);
+                     }));
+
+        // The consumer (CpuResourceProvider) reads the whole LoD array
+        // from the lod-0 key, so it is stored exactly once.
+        storage.set(ResourceIdentifier::GetProcessedFrameName(0, 0),
+                    std::move(textures).value());
     }
-
-    spdlog::info(LOG_ID " Loaded texture data; texture sizes: {}",
-                 textures.value() | std::views::transform([](auto&& t) {
-                     return std::make_pair(t.width, t.height);
-                 }));
 
     auto features = loadFeatures().transform_error(
         [](auto&& err) { return "features: " + err; });
@@ -73,15 +84,13 @@ std::optional<std::string> LoadDataCPUPass::execute() {
         return features.error();
     }
 
+    const auto total_features = std::ranges::fold_left(
+        features.value(), 0UZ, [](size_t acc, const auto& lod_features) {
+            return acc + lod_features.size();
+        });
+
     spdlog::info(LOG_ID " Loaded features data; total features: {}",
-                 features.value().size());
-
-    auto& storage = shared_.getStorage();
-
-    for (uint32_t i = 0; i < features->size(); i++) {
-        storage.set(ResourceIdentifier::GetProcessedFrameName(0, i),
-                    std::move(textures).value());
-    }
+                 total_features);
 
     shiftFeatureSets();
 

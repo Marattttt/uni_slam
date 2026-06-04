@@ -1,3 +1,4 @@
+#include <spdlog/cfg/env.h>
 #include <spdlog/spdlog-inl.h>
 #include <spdlog/spdlog.h>
 #include <unistd.h>
@@ -138,8 +139,12 @@ int main(int argc, char* argv[]) {
 #ifndef NDEBUG
     spdlog::set_level(spdlog::level::debug);
 #else
-    spdlog::set_level(spdlog::level::info);
+    spdlog::set_level(spdlog::level::warn);
 #endif
+    // SPDLOG_LEVEL=info (etc.) overrides the compiled-in default at
+    // runtime — e.g. to see the per-pass timing lines logged by Stage
+    // without rebuilding.
+    spdlog::cfg::load_env_levels();
 
     const WslamConfig config
         = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});

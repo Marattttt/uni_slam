@@ -29,6 +29,9 @@ constexpr auto kCornersBindingSize = AddPadding(
         gpumodels::CornersBlock<GPUConst::frame_width, GPUConst::frame_height>)
         * GPUConst::levels_of_detail,
     256);
+// Element count of a single LoD's strengths array in the shader — NOT a byte
+// size. Must match the producers (detect_corners / cull_corners overrides).
+constexpr auto kCornersPerLod = GPUConst::frame_width * GPUConst::frame_height;
 constexpr auto kFeaturesBindingSize
     = AddPadding(sizeof(gpumodels::FeatureArray), 256);
 
@@ -51,7 +54,7 @@ std::array<compute::GPU::ShaderOverride, 3> kTextShaderOverrides{
     },
     compute::GPU::ShaderOverride{
         "CORNER_BLOCK_SZ",
-        std::format("{}u", kCornersBindingSize),
+        std::format("{}u", kCornersPerLod),
     },
     compute::GPU::ShaderOverride{
         "FEATURE_BLOCK_SZ",

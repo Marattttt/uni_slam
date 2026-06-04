@@ -261,6 +261,47 @@ std::optional<std::string> FactorBuilderPass::execute() {
             prev_pose_key, prev_vel_key, pose_key, vel_key, prev_bias_key,
             bias_key, pim);
 
+        // IMU-predicted NavState for the new keyframe. Rotation is
+        // well-observable from gyro integration; the translation gives
+        // the metric step length used to rescale the visual translation
+        // below.
+        const gtsam::NavState prev_nav(
+            state_.predicted_values.at<gtsam::Pose3>(prev_pose_key),
+            state_.last_velocity);
+        const gtsam::NavState pred = pim.predict(prev_nav, state_.last_bias);
+
+        // The essential-matrix translation is unit-norm by construction,
+        // while the IMU factor is metric. Feeding the raw unit step into
+        // the BetweenFactor measurement and the initial guess makes every
+        // new keyframe land ~|1 - metric_step| away from where the IMU
+        // factor wants it — Gauss-Newton then takes a huge correction
+        // step each update, relinearising most of the tree and pushing
+        // smart-factor triangulations through degenerate configurations.
+        // Rescaling the visual direction by the IMU-predicted step length
+        // keeps the whole chain in one (metric) scale.
+        //
+        // The rescale activates permanently after a keyframe warmup —
+        // before the back-end has refined velocity/bias through a few
+        // updates, pim.predict's translation is noise-driven and the
+        // unit-norm visual chain is the only self-consistent scale for
+        // bootstrapping landmarks. Once active it applies to EVERY step,
+        // including near-zero ones: mixing unit and metric steps in one
+        // chain is worse than either scale alone (a single unit-norm jump
+        // inside a centimetre-scale chain is a catastrophic outlier), so
+        // there is deliberately no per-step fallback.
+        constexpr uint64_t kMetricScaleWarmupKeyframes = 10;
+        const bool metric_scaled
+            = delta.pose_id.v >= kMetricScaleWarmupKeyframes;
+        const double metric_step
+            = (pred.position() - prev_nav.position()).norm();
+        Eigen::Vector3d t_rel = delta.t_rel;
+        if (metric_scaled) {
+            const double t_rel_norm = t_rel.norm();
+            t_rel = t_rel_norm > 1e-12
+                        ? Eigen::Vector3d(t_rel * (metric_step / t_rel_norm))
+                        : Eigen::Vector3d::Zero();
+        }
+
         // Vision-only odometry BetweenFactor. The IMU factor connects
         // {x_prev, v_prev, b_prev, x_curr, v_curr, b_curr} and lives in
         // a clique containing all six. iSAM2's relinearisation of a
@@ -269,10 +310,11 @@ std::optional<std::string> FactorBuilderPass::execute() {
         // landmark Hessian goes singular. A loose pose-to-pose
         // BetweenFactor sits in that landmark clique too, providing the
         // local regularisation needed to keep partial Cholesky stable.
-        // Visual translation is unit-norm (essential-matrix scale); the
-        // metric scale comes from the IMU factor across many updates.
+        // Direction comes from the essential matrix, magnitude from the
+        // IMU-predicted step (see above), so the measurement no longer
+        // contradicts the CombinedImuFactor's metric scale.
         const gtsam::Rot3 r_pc(delta.R_rel.transpose());
-        const gtsam::Point3 t_pc(-delta.R_rel.transpose() * delta.t_rel);
+        const gtsam::Point3 t_pc(-delta.R_rel.transpose() * t_rel);
         gtsam::Vector6 between_sigmas;
         between_sigmas << opts_.between_rotation_sigma_rad,
             opts_.between_rotation_sigma_rad,
@@ -284,34 +326,29 @@ std::optional<std::string> FactorBuilderPass::execute() {
             prev_pose_key, pose_key, gtsam::Pose3(r_pc, t_pc),
             Diagonal::Sigmas(between_sigmas));
 
-        // pim.predict() gives a metric-scale guess for x_curr / v_curr.
-        // We use only the *rotation* part as our initial guess (IMU
-        // attitude is well-observable from gyro integration), and keep
-        // the keyframe-gate's visual translation. Reasons:
-        //   1. The visual chain is internally consistent in its own
-        //      unit-norm scale — every existing landmark sits in that
-        //      same scale, so re-observations will reproject correctly.
-        //   2. The IMU translation is metric but during a stationary
-        //      startup window |Δt_imu| ≈ 0, which would collapse the
-        //      visual chain to zero motion and destroy all landmarks.
-        // The CombinedImuFactor (already added above) does the actual
-        // pulling toward metric scale across many iSAM updates.
-        const gtsam::NavState prev_nav(
-            state_.predicted_values.at<gtsam::Pose3>(prev_pose_key),
-            state_.last_velocity);
-        const gtsam::NavState pred = pim.predict(prev_nav, state_.last_bias);
-        pose_init = gtsam::Pose3(pred.pose().rotation(), pose_init.translation());
+        // Initial guess: IMU rotation (gyro attitude), translation chained
+        // off the previous predicted pose by the metric-rescaled visual
+        // step. This replaces the keyframe gate's unit-norm chain, which
+        // is recomputed here with the rescaled t_rel:
+        //   t_wc = t_wp - R_wc * t_rel,  R_wc = R_wp * R_rel^T
+        const Eigen::Matrix3d r_wp = prev_nav.pose().rotation().matrix();
+        const Eigen::Matrix3d r_wc = r_wp * delta.R_rel.transpose();
+        const Eigen::Vector3d t_wc = prev_nav.position() - r_wc * t_rel;
+        pose_init = gtsam::Pose3(pred.pose().rotation(), gtsam::Point3(t_wc));
         vel_init = pred.v();
 
-        // Mirror the IMU-rotated pose into predicted_values too so the
-        // next keyframe-gate chains off the gyro-corrected rotation.
+        // Mirror the corrected pose into predicted_values too so the
+        // next keyframe-gate chains off the gyro-corrected rotation and
+        // metric-scale translation.
         state_.predicted_values.update(pose_key, pose_init);
 
         spdlog::debug(LOG_ID
                       " Added CombinedImuFactor x{}-x{}: integrated {} "
-                      "samples over dt={:.4f}s, |v_pred|={:.3f} m/s",
+                      "samples over dt={:.4f}s, |v_pred|={:.3f} m/s, "
+                      "metric_step={:.4f} m (scaled={})",
                       delta.prev_pose_id.value().v, delta.pose_id.v,
-                      integrated, pim.deltaTij(), pred.v().norm());
+                      integrated, pim.deltaTij(), pred.v().norm(),
+                      metric_step, metric_scaled);
     }
 
     new_values_.insert(pose_key, pose_init);
@@ -368,7 +405,13 @@ std::optional<std::string> FactorBuilderPass::execute() {
     // threshold on the smart_params instead.
     auto smart_noise = Isotropic::Sigma(2, opts_.projection_pixel_sigma);
 
-    gtsam::SmartProjectionParams smart_params(gtsam::HESSIAN,
+    // JACOBIAN_SVD (not HESSIAN): the smart factor linearises straight to
+    // a JacobianFactor via an SVD null-space projection. HESSIAN mode
+    // emits HessianFactors which iSAM2 must Cholesky-convert during
+    // elimination — that conversion is exactly the partial-Cholesky that
+    // goes indefinite on ill-conditioned VI cliques, and it bypasses the
+    // robust QR elimination configured on the worker's ISAM2Params.
+    gtsam::SmartProjectionParams smart_params(gtsam::JACOBIAN_SVD,
                                               gtsam::ZERO_ON_DEGENERACY);
     // Smallest SVD singular value below which the 2-view triangulation
     // is considered degenerate. 1e-9 is the GTSAM example default; goes

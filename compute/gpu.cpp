@@ -989,7 +989,11 @@ std::expected<TextureData, std::string> GPU::readTexture(
         .depthOrArrayLayers = 1,
     };
 
-    encoder.ClearBuffer(output_buf_, 0, WCOMPUTE_MAP_READ_BUF_SIZE);
+    // No ClearBuffer needed: CopyTextureToBuffer overwrites every row's
+    // payload, and the bytes in the per-row alignment padding are stripped
+    // below before the data is handed out — stale staging content is never
+    // observable. Clearing the whole slab cost a 64 MB GPU fill per LoD
+    // readback.
     encoder.CopyTextureToBuffer(&texture_src, &buffer_dst, &extent);
 
     const auto commands = encoder.Finish();

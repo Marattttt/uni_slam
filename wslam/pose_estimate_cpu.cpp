@@ -18,8 +18,11 @@ compute::Stage wslam::CreatePoseEstimateCPUStage(
     const auto gpu = compute.getGPUPtr();
     compute::Stage stage{"Pose Estimate", gpu};
 
+    // The LoD texture readback only feeds the GUI resource provider below;
+    // headless runs skip it.
     stage.add_pass(std::make_unique<LoadDataCPUPass>(
-        shared, gpu, std::move(features_binding_label)));
+        shared, gpu, std::move(features_binding_label),
+        /*readback_textures=*/config.enable_gui));
 
     stage.add_pass(std::make_unique<MatchFeaturesCPU>(shared));
 

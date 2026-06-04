@@ -4,6 +4,7 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include <algorithm>
+#include <chrono>
 #include <ranges>
 #include <string_view>
 #include <variant>
@@ -42,6 +43,13 @@ std::string CollectPassNames(std::span<T*> passes) {
            | std::views::join_with(std::string_view(", "))
            | std::ranges::to<std::string>();
 }
+
+// Wall-clock milliseconds since `start`; feeds the per-pass timing logs.
+double ElapsedMs(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - start)
+        .count();
+}
 };  // namespace
 
 std::optional<std::string> Stage::execute() {
@@ -67,6 +75,7 @@ std::optional<std::string> Stage::execute() {
         }
         gpu_batch.clear();
 
+        const auto pass_start = std::chrono::steady_clock::now();
         if (auto err = cpu_pass->execute()) {
             if (err.value() == kStageStopExecution) {
                 spdlog::info("[Stage] {} stage-stop from {}", getId(),
@@ -79,6 +88,8 @@ std::optional<std::string> Stage::execute() {
             return std::format("pass {}: {}", cpu_pass->getId(),
                                std::move(err).value());
         }
+        spdlog::info("[Stage] {} pass {} took {:.2f} ms", getId(),
+                     cpu_pass->getId(), ElapsedMs(pass_start));
     }
 
     if (auto err = executeGPUBatch(std::span(gpu_batch))) {
@@ -94,6 +105,7 @@ std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
     }
 
     const std::string pass_names = CollectPassNames(batch);
+    const auto batch_start = std::chrono::steady_clock::now();
 
     const auto encoder = std::invoke([&] {
         const std::string label
@@ -111,8 +123,13 @@ std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
 
     const auto commands = encoder.Finish();
 
-    return gpu_->submitAndWait(
+    auto err = gpu_->submitAndWait(
         commands, std::format("stage passes {{ {} }}", pass_names));
+    if (!err) {
+        spdlog::info("[Stage] {} GPU batch {{ {} }} took {:.2f} ms", getId(),
+                     pass_names, ElapsedMs(batch_start));
+    }
+    return err;
 }
 
 void Stage::add_pass(PassPtr pass) { passes_.emplace_back(std::move(pass)); }

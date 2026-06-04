@@ -21,6 +21,13 @@ class RansacCPU : public compute::Pass {
         // Maximum RANSAC iterations to run.
         uint32_t max_iterations = 500;
 
+        // Adaptive early-exit confidence: iteration stops once the
+        // probability of having already drawn at least one all-inlier
+        // 8-sample (given the best model's inlier ratio) exceeds this.
+        // With good matches this cuts the loop from max_iterations to a
+        // few dozen draws; with poor matches it has no effect.
+        double confidence = 0.99;
+
         // Sampson-distance threshold (in squared pixels at LOD-0) for a
         // correspondence to be considered an inlier. 3.84 ≈ chi-squared 95%
         // for 1 DoF and is a common default in the literature.

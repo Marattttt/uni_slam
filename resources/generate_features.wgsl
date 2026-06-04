@@ -66,6 +66,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let idx = atomicAdd(&features[lod].count, 1u);
 
+    // Block full — drop the feature; consumers clamp count to capacity.
+    if idx >= FEATURE_BLOCK_SZ { return; }
+
     features[lod].values[idx] = Feature(
         vec2(f32(gid.x), f32(gid.y)),
         strength,
@@ -134,7 +137,7 @@ fn computeDescriptor(feature: vec2<i32>, orientation: f32) -> Descriptor {
 }
 
 fn descriptorSetBit(desc: ptr<function, Descriptor>, value: u32, bit: u32) {
-    let segment = bit / 4;
+    let segment = bit / 32;
     let offset = bit % 32;
 
     desc[segment] = desc[segment] | (value << offset);

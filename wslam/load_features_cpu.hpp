@@ -10,11 +10,18 @@
 namespace wslam {
 class LoadDataCPUPass : public compute::Pass {
    public:
+    // `readback_textures` controls whether the LoD pyramid textures are
+    // copied back to the CPU each frame. Their only consumer is the GUI
+    // resource provider, so headless pipelines pass false and skip six
+    // full GPU→CPU round-trips per frame. Feature readback always runs —
+    // the matcher depends on it.
     LoadDataCPUPass(GpuSharedBindings& shared,
-                    std::shared_ptr<compute::GPU> gpu, std::string features)
+                    std::shared_ptr<compute::GPU> gpu, std::string features,
+                    bool readback_textures)
         : kFeaturesGPULabel(std::move(features)),
           gpu_(std::move(gpu)),
-          shared_(shared) {}
+          shared_(shared),
+          readback_textures_(readback_textures) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
@@ -27,6 +34,7 @@ class LoadDataCPUPass : public compute::Pass {
 
     std::shared_ptr<compute::GPU> gpu_;
     GpuSharedBindings& shared_;
+    bool readback_textures_;
 
     std::optional<compute::BufferBinding*> features_binding_;
     std::optional<std::array<wgpu::Texture, kLodCount>> textures_;

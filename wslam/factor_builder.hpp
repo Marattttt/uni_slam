@@ -44,8 +44,9 @@ class FactorBuilderPass : public compute::Pass {
         // is poorly observable. The visual BetweenFactor fills that gap.
         // Sigmas are LOOSE — the IMU factor is the real source of truth
         // for metric scale; this just regularises local conditioning.
-        // Translation is unit-norm from the essential matrix so its
-        // sigma is dimensionless relative to the visual chain.
+        // The translation direction comes from the essential matrix and
+        // is rescaled to the IMU-predicted metric step length before it
+        // enters the measurement, so this sigma is in metres.
         double between_rotation_sigma_rad = 0.1;
         double between_translation_sigma = 1.0;
 
