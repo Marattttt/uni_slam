@@ -5,3 +5,7 @@ install/
 .env
 
 NOTES_*.md
+
+# ORB-SLAM3 benchmark workspace
+benchmarks/.venv/
+benchmarks/results/
