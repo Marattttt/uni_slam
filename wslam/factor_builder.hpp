@@ -20,12 +20,15 @@ namespace wslam {
 //
 // Reads the `MapDelta` published by the keyframe-gate pass and assembles the
 // graph + values payload that the iSAM2 update pass will consume:
-//   - PriorFactor on the first pose (gauge fix)
-//   - PriorFactor on the first landmark (scale fix) so monocular SLAM is fully
-//     constrained — without it iSAM2 collapses the landmarks toward the
-//     camera, since translation has unit norm by construction
-//   - BetweenFactor<Pose3> for each pose-to-pose odometry edge
-//   - GenericProjectionFactor<Pose3, Point3, Cal3DS2> for every observation
+//   - PriorFactor on the first pose, velocity, and bias (gauge fix; metric
+//     scale comes from the IMU, not from a landmark prior)
+//   - CombinedImuFactor between consecutive keyframes (preintegrated IMU:
+//     rotation, metric translation, bias evolution)
+//   - BetweenFactor<Pose3> for each pose-to-pose odometry edge (essential-
+//     matrix direction rescaled to the IMU-predicted step length; primarily
+//     regularises iSAM2's landmark cliques)
+//   - SmartProjectionPoseFactor<Cal3_S2> per landmark (point marginalised
+//     inside the factor; landmarks are not graph variables)
 //
 // The pass writes its output through the per-frame buffers stored on the
 // MappingState rather than through AnyBag — these are heavy GTSAM containers
@@ -42,13 +45,14 @@ class FactorBuilderPass : public compute::Pass {
         // (landmark + two adjacent poses) need x-to-x information to
         // avoid singular partial Cholesky when the landmark's depth axis
         // is poorly observable. The visual BetweenFactor fills that gap.
-        // Sigmas are LOOSE — the IMU factor is the real source of truth
-        // for metric scale; this just regularises local conditioning.
         // The translation direction comes from the essential matrix and
         // is rescaled to the IMU-predicted metric step length before it
-        // enters the measurement, so this sigma is in metres.
-        double between_rotation_sigma_rad = 0.1;
-        double between_translation_sigma = 1.0;
+        // enters the measurement, so this sigma is in metres. Now that
+        // the front-end geometry genuinely spans keyframe→keyframe (and
+        // the rescale is metric from edge one), the edge is trusted
+        // beyond mere regularisation: ~3° rotation / 0.3 m translation.
+        double between_rotation_sigma_rad = 0.05;
+        double between_translation_sigma = 0.3;
 
         // Pixel noise (sigma) for projection factors at LOD-0.
         double projection_pixel_sigma = 1.5;
@@ -64,15 +68,18 @@ class FactorBuilderPass : public compute::Pass {
         // saturation for typical initial guesses.
         double huber_threshold_px = 5.0;
 
-        // Initial-velocity prior on the first keyframe. We assume the
-        // sequence starts approximately stationary; a tight prior locks
-        // V_0 ≈ 0 so the IMU has something to integrate against. Loosen
-        // if the dataset is known to start mid-motion.
-        double prior_velocity_sigma = 0.1;  // m/s
-        // Initial-bias prior on the first keyframe. The factor graph will
-        // refine both accel and gyro bias from observations; this just
-        // gauges the bias dimension away from a fully unobservable null
-        // space at start-up.
+        // Initial-velocity prior on the first keyframe. The keyframe
+        // gate anchors the first keyframe at motion *onset* (bootstrap
+        // parallax gate), so V_0 is near zero but the platform may
+        // already be a frame or two into its takeoff — hence looser
+        // than a strict stationary assumption would allow.
+        double prior_velocity_sigma = 0.25;  // m/s
+        // Initial-bias prior on the first keyframe, centred on the bias
+        // the keyframe gate measured over the stationary startup window
+        // (gyro part measured directly; accel part zero). The factor
+        // graph refines both from observations; this just gauges the
+        // bias dimension away from a fully unobservable null space at
+        // start-up.
         double prior_accel_bias_sigma = 0.1;   // m/s^2
         double prior_gyro_bias_sigma = 0.01;   // rad/s
 

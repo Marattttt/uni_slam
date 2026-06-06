@@ -280,22 +280,19 @@ std::optional<std::string> FactorBuilderPass::execute() {
         // Rescaling the visual direction by the IMU-predicted step length
         // keeps the whole chain in one (metric) scale.
         //
-        // The rescale activates permanently after a keyframe warmup —
-        // before the back-end has refined velocity/bias through a few
-        // updates, pim.predict's translation is noise-driven and the
-        // unit-norm visual chain is the only self-consistent scale for
-        // bootstrapping landmarks. Once active it applies to EVERY step,
-        // including near-zero ones: mixing unit and metric steps in one
-        // chain is worse than either scale alone (a single unit-norm jump
-        // inside a centimetre-scale chain is a catastrophic outlier), so
-        // there is deliberately no per-step fallback.
-        constexpr uint64_t kMetricScaleWarmupKeyframes = 10;
-        const bool metric_scaled
-            = delta.pose_id.v >= kMetricScaleWarmupKeyframes;
+        // The rescale applies from the very first inter-keyframe edge.
+        // It used to sit behind a 10-keyframe unit-norm warmup ("the IMU
+        // prediction is noise-driven early on"), which injected ~1 m
+        // steps into a centimetre-scale trajectory and permanently
+        // corrupted the velocity/bias chain (ACCURACY_ANALYSIS.md R2).
+        // The warmup's premise no longer holds: the first keyframe is
+        // anchored at motion onset with gravity and gyro bias measured
+        // from a genuinely stationary window, so pim.predict is metric-
+        // correct (if noisy) from keyframe 1.
         const double metric_step
             = (pred.position() - prev_nav.position()).norm();
         Eigen::Vector3d t_rel = delta.t_rel;
-        if (metric_scaled) {
+        {
             const double t_rel_norm = t_rel.norm();
             t_rel = t_rel_norm > 1e-12
                         ? Eigen::Vector3d(t_rel * (metric_step / t_rel_norm))
@@ -345,10 +342,10 @@ std::optional<std::string> FactorBuilderPass::execute() {
         spdlog::debug(LOG_ID
                       " Added CombinedImuFactor x{}-x{}: integrated {} "
                       "samples over dt={:.4f}s, |v_pred|={:.3f} m/s, "
-                      "metric_step={:.4f} m (scaled={})",
+                      "metric_step={:.4f} m",
                       delta.prev_pose_id.value().v, delta.pose_id.v,
                       integrated, pim.deltaTij(), pred.v().norm(),
-                      metric_step, metric_scaled);
+                      metric_step);
     }
 
     new_values_.insert(pose_key, pose_init);
@@ -366,12 +363,19 @@ std::optional<std::string> FactorBuilderPass::execute() {
         new_factors_.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
             pose_key, pose_init, Diagonal::Sigmas(pose_sigmas));
 
-        // Velocity prior — assume approximately stationary start.
+        // Velocity prior — the first keyframe is anchored at motion
+        // onset, so the platform is at most a frame or two into its
+        // takeoff: near-zero but not exactly zero, hence a slightly
+        // loose sigma.
         new_factors_.emplace_shared<gtsam::PriorFactor<gtsam::Vector3>>(
             vel_key, gtsam::Vector3::Zero(),
             Isotropic::Sigma(3, opts_.prior_velocity_sigma));
         // Bias prior — three-axis accel + three-axis gyro biases each
-        // gauged with their own sigma.
+        // gauged with their own sigma. Centred on `last_bias`, which the
+        // keyframe gate seeds with the gyro bias measured over the
+        // stationary startup window (accel part stays zero there), so
+        // the prior agrees with the preintegration's bias hypothesis
+        // instead of dragging it back toward zero.
         gtsam::Vector6 bias_sigmas;
         bias_sigmas << opts_.prior_accel_bias_sigma,
             opts_.prior_accel_bias_sigma, opts_.prior_accel_bias_sigma,
@@ -379,8 +383,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
             opts_.prior_gyro_bias_sigma;
         new_factors_.emplace_shared<
             gtsam::PriorFactor<gtsam::imuBias::ConstantBias>>(
-            bias_key, gtsam::imuBias::ConstantBias(),
-            Diagonal::Sigmas(bias_sigmas));
+            bias_key, state_.last_bias, Diagonal::Sigmas(bias_sigmas));
 
         spdlog::debug(LOG_ID
                       " Added gauge priors on x{}, v{}, b{} (first keyframe)",

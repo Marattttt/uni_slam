@@ -131,6 +131,15 @@ constexpr std::string GetFeatureSetName(size_t keyframes_ago) {
     return std::format("gen:feat:-{}", keyframes_ago);
 }
 constexpr std::string MatchedFeaturesName = "gen:feat:match";
+// Consume-once marker (bool) set by the keyframe gate telling
+// LoadDataCPUPass to advance the reference feature set: the *current*
+// frame's features become FeatureSet(1) on the next iteration. Emitted
+// when a keyframe is accepted (the reference must track the latest
+// keyframe so matching/triangulation span exactly the graph edge) and on
+// every pre-origin frame (frame-to-frame matching while bootstrapping).
+// NOTE: constexpr std::string requires the literal to fit in SSO (15
+// chars on libstdc++), same as every other key in this namespace.
+constexpr std::string FeatureReferenceAdvanceName = "gen:feat:refadv";
 constexpr std::string RansacResultName = "gen:feat:ransac";
 constexpr std::string TriangulationResultName = "gen:tri";
 constexpr std::string MapDeltaName = "gen:map:delta";

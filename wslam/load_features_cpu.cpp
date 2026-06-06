@@ -100,26 +100,45 @@ std::optional<std::string> LoadDataCPUPass::execute() {
     return {};
 }
 
+// FeatureSet(1) is the *reference* set every downstream pass matches the
+// current frame against — pinned to the most recently accepted keyframe's
+// features so the matcher/RANSAC/triangulation geometry spans exactly the
+// pose-graph edge (prev keyframe → current frame). It advances only when
+// the keyframe gate says so (consume-once marker), or unconditionally
+// while no reference exists yet (first frames / pre-origin bootstrap,
+// where the gate emits the marker every frame for frame-to-frame
+// matching).
 void LoadDataCPUPass::shiftFeatureSets() {
-    for (auto i : std::views::iota(0U, GPUConst::featuesets_stored)
-                      | std::views::reverse) {
-        auto& storage = shared_.getStorage();
+    auto& storage = shared_.getStorage();
 
-        auto set = storage.take<FeatureSet>(
-            ResourceIdentifier::GetFeatureSetName(i), false);
+    const bool advance_requested
+        = storage
+              .take<bool>(ResourceIdentifier::FeatureReferenceAdvanceName)
+              .value_or(false);
+    const bool have_reference
+        = storage.has(ResourceIdentifier::GetFeatureSetName(1));
 
-        // Remove longest kept feature set
-        if (!set) {
-            continue;
-        }
-
-        if (i == GPUConst::featuesets_stored) {
-            continue;
-        }
-
-        storage.set(ResourceIdentifier::GetFeatureSetName(i + 1),
-                    std::move(set).value());
+    if (have_reference && !advance_requested) {
+        ++reference_age_frames_;
+        spdlog::debug(LOG_ID " Keeping reference feature set (age {} frames)",
+                      reference_age_frames_);
+        return;
     }
+
+    auto set
+        = storage.take<FeatureSet>(ResourceIdentifier::GetFeatureSetName(0));
+    if (!set) {
+        return;  // nothing loaded yet (very first frame)
+    }
+
+    spdlog::debug(LOG_ID
+                  " Advancing reference feature set (previous held for {} "
+                  "frames, advance_marker={})",
+                  reference_age_frames_, advance_requested);
+    reference_age_frames_ = 0;
+
+    storage.set(ResourceIdentifier::GetFeatureSetName(1),
+                std::move(set).value());
 }
 
 auto LoadDataCPUPass::loadTextureData()

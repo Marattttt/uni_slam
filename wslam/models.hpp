@@ -227,9 +227,11 @@ struct MapDelta {
     Eigen::Matrix3d R_rel = Eigen::Matrix3d::Identity();
     Eigen::Vector3d t_rel = Eigen::Vector3d::Zero();
 
-    // Landmarks newly created in this frame (need a Point3 variable + a prior
-    // initial guess in world coordinates), and observations to add as
-    // projection factors.
+    // Landmarks newly created in this frame. The world position is
+    // diagnostic only (zero when the pair wasn't triangulated): with
+    // smart projection factors the landmark is not a graph variable and
+    // its 3D point is re-triangulated inside the factor. Observations
+    // are appended to the per-landmark smart factors downstream.
     std::vector<std::pair<LandmarkId, Eigen::Vector3d>> new_landmarks_world;
     std::vector<LandmarkObservation> observations;
 

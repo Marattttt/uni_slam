@@ -39,6 +39,12 @@ class LoadDataCPUPass : public compute::Pass {
     std::optional<compute::BufferBinding*> features_binding_;
     std::optional<std::array<wgpu::Texture, kLodCount>> textures_;
 
+    // Frames the current reference feature set (FeatureSet(1)) has been
+    // held for. Diagnostic only — long holds mean the keyframe gate is
+    // rejecting everything and the matcher is being asked to bridge an
+    // ever-growing baseline.
+    uint64_t reference_age_frames_ = 0;
+
     std::optional<std::string> initBindings();
 
     std::expected<std::array<compute::TextureData, kLodCount>, std::string>

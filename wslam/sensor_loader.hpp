@@ -17,10 +17,13 @@ class SensorLoaderPass : public compute::Pass {
         : storage_(storage), generator_(std::move(generator)) {};
 
    private:
-    // Number of initial frames to drop on the first execute(). These come from
-    // a cold sensor/dataset and are often stale or low-quality, so skipping
-    // them stabilises downstream feature matching.
-    static constexpr uint32_t kInitialFramesToSkip = 200;
+    // Number of initial frames to drop on the first execute(). Zero: the
+    // mapping stage *needs* the dataset's stationary lead-in — gravity and
+    // gyro-bias are initialised from a stationary IMU window and the first
+    // keyframe's velocity prior assumes ~zero motion. Skipping frames here
+    // previously jumped past V1_01_easy's takeoff, forcing a mid-flight
+    // gravity estimate (benchmarks/ACCURACY_ANALYSIS.md R3).
+    static constexpr uint32_t kInitialFramesToSkip = 0;
 
     AnyBag& storage_;
     std::generator<ReadingType> generator_;

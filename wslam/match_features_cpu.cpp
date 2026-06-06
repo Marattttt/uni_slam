@@ -6,8 +6,8 @@
 #include <utility>
 
 #include "common.hpp"
-#include "compute.hpp"
 #include "models.hpp"
+#include "stage.hpp"
 
 using namespace wslam;
 
@@ -65,7 +65,14 @@ constexpr std::pair<float, float> toLod0(const Feature& f) {
 
 std::vector<std::pair<Feature, Feature>> FindMatchesInLod(
     const std::vector<Feature>& set_a, const std::vector<Feature>& set_b) {
-    static constexpr float kLoweTestThreshold = 0.75F;
+    // 0.85 rather than the textbook 0.75: V101's checkerboard floor (and
+    // repetitive indoor texture generally) gives many true matches a
+    // near-identical second-best candidate, so a tight ratio rejects
+    // them quasi-randomly per frame — which churns WHICH features match
+    // each frame and starves landmark re-observation. The mutual
+    // cross-check below plus RANSAC's epipolar gate absorb the extra
+    // false candidates a looser ratio lets through.
+    static constexpr float kLoweTestThreshold = 0.85F;
     static constexpr float kMaxDistX = 0.1F * GPUConst::frame_width;
     static constexpr float kMaxDistY = 0.1F * GPUConst::frame_height;
 
@@ -144,11 +151,23 @@ std::vector<std::pair<Feature, Feature>> FindMatchesInLod(
 
 MatchResult FindMatches(const FeatureSet& set_a, const FeatureSet& set_b) {
     constexpr size_t kNumLods = GPUConst::levels_of_detail;
+    // Candidate pool for a query at pyramid level `lod`: the SAME level
+    // plus its two neighbours. The same level is where the true match of
+    // a feature almost always lives (scale changes little between the
+    // reference keyframe and the current frame); the neighbours cover
+    // detector scale-flicker. This pool previously contained *only* the
+    // neighbours — same-level matching was skipped entirely, capping the
+    // match count at the few % of features whose LOD assignment happened
+    // to flicker, and making WHICH features matched essentially random
+    // per frame (which in turn froze the re-observation rate at chance
+    // level).
     const auto adjacent = [](const FeatureSet& set, size_t lod) {
         std::vector<Feature> out;
+        out.reserve(set.at(lod).size()
+                    + (lod > 0 ? set.at(lod - 1).size() : 0)
+                    + (lod + 1 < kNumLods ? set.at(lod + 1).size() : 0));
+        std::ranges::copy(set.at(lod), std::back_inserter(out));
         if (lod > 0) {
-            out.reserve(set.at(lod - 1).size()
-                        + (lod + 1 < kNumLods ? set.at(lod + 1).size() : 0));
             std::ranges::copy(set.at(lod - 1), std::back_inserter(out));
         }
         if (lod + 1 < kNumLods) {
@@ -209,10 +228,12 @@ std::optional<std::string> MatchFeaturesCPU::execute() {
         = storage.getPtr<FeatureSet>(ResourceIdentifier::GetFeatureSetName(1));
 
     if (!prev) {
+        // No reference feature set yet (very first frame). Stop just this
+        // stage — the mapping stage must still run so the keyframe gate can
+        // emit the reference-advance marker that bootstraps FeatureSet(1).
         spdlog::warn(LOG_ID
-                     " Could not get featureset for previous frame. "
-                     "Stopping execution");
-        return compute::kComputeStopExecution;
+                     " No reference featureset yet; skipping rest of stage");
+        return compute::kStageStopExecution;
     }
 
     const auto curr
