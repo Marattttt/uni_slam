@@ -16,7 +16,7 @@ compute::Stage wslam::CreatePoseEstimateCPUStage(
     compute::Compute& compute, GpuSharedBindings& shared,
     std::string features_binding_label, WslamConfig config) {
     const auto gpu = compute.getGPUPtr();
-    compute::Stage stage{"Pose Estimate", gpu};
+    compute::Stage stage{"Pose Estimate", compute};
 
     // The LoD texture readback only feeds the GUI resource provider below;
     // headless runs skip it.

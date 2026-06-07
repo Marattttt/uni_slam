@@ -8,6 +8,7 @@
 #include "anybag.hpp"
 #include "gpu.hpp"
 #include "pass.hpp"
+#include "performance.hpp"
 
 namespace wslam {
 namespace compute {
@@ -23,7 +24,7 @@ class Stage {
     using PassPtr
         = std::variant<std::unique_ptr<Pass>, std::unique_ptr<GPUPass>>;
 
-    Stage(std::string id, std::shared_ptr<GPU> gpu);
+    Stage(std::string id, Compute& compute);
 
     [[nodiscard]] std::string getId() const;
     [[nodiscard]] std::optional<std::string> initialize();
@@ -38,6 +39,7 @@ class Stage {
     std::vector<PassPtr> passes_;
     std::shared_ptr<GPU> gpu_;
     std::string id_;
+    PerfRecorder& perf_;
 
     [[nodiscard]] std::optional<std::string> executeGPUBatch(
         std::span<GPUPass*> batch);

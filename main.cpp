@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <charconv>
+#include <print>
 #include <span>
 #include <string_view>
 
@@ -45,7 +46,7 @@ WslamConfig parseArgs(std::span<char*> args) {
 
 int main_test(WslamConfig config) {
     compute::Compute comp;
-    if (auto err = comp.preInitialize(compute::createPreInitializeOpts())) {
+    if (auto err = comp.prepare(compute::createPreInitializeOpts())) {
         spdlog::error("initializing: {}", err.value());
         std::terminate();
     }
@@ -102,6 +103,10 @@ int main_test(WslamConfig config) {
     for (uint64_t i = 0;
          config.max_iterations == 0 || i < config.max_iterations; ++i) {
         auto err = comp.execute();
+        if (i % 100 == 0) {
+            std::println("Handled frame {}", i);
+        }
+
         if (err) {
             spdlog::error("executing: {}", err.value());
             return 1;
@@ -112,6 +117,8 @@ int main_test(WslamConfig config) {
         spdlog::info("Reached max-iters limit ({}); exiting cleanly",
                      config.max_iterations);
     }
+
+    std::println("FInished writing executing slam loop");
 
     // The iSAM2 update pass runs on a worker thread, lagging the main loop
     // by one frame. Drain any pending optimisation so the snapshot under
@@ -124,7 +131,10 @@ int main_test(WslamConfig config) {
         }
     }
 
+    std::println("iSAM2 handle flushed");
+
     if (!config.map_out_path.empty()) {
+        std::println("Begin exporting map");
         if (auto err = ExportMap(comp.getStorage(),
                                  ExportOpts{.map_path = config.map_out_path})) {
             spdlog::error("exporting map: {}", err.value());

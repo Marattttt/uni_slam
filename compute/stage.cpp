@@ -4,7 +4,6 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include <algorithm>
-#include <chrono>
 #include <ranges>
 #include <string_view>
 #include <variant>
@@ -14,8 +13,11 @@
 
 using namespace wslam::compute;
 
-Stage::Stage(std::string id, std::shared_ptr<GPU> gpu)
-    : gpu_(std::move(gpu)), id_("[" + std::move(id) + "]") {}
+Stage::Stage(std::string id, Compute& compute)
+    : storage_(&compute.getStorage()),
+      gpu_(compute.getGPUPtr()),
+      id_("[" + std::move(id) + "]"),
+      perf_(compute.getPerf()) {}
 
 std::optional<std::string> Stage::initialize() {
     spdlog::info("[Stage] Initializing stage {}", getId());
@@ -43,17 +45,14 @@ std::string CollectPassNames(std::span<T*> passes) {
            | std::views::join_with(std::string_view(", "))
            | std::ranges::to<std::string>();
 }
-
-// Wall-clock milliseconds since `start`; feeds the per-pass timing logs.
-double ElapsedMs(std::chrono::steady_clock::time_point start) {
-    return std::chrono::duration<double, std::milli>(
-               std::chrono::steady_clock::now() - start)
-        .count();
-}
 };  // namespace
 
 std::optional<std::string> Stage::execute() {
     spdlog::info("[Stage] Executing stage {}", getId());
+
+#ifndef NPERF
+    const auto perfscope = perf_.beginRecord("exec " + getId());
+#endif
 
     // Batch gpu passes to execute in a single queue submission and await
     std::vector<GPUPass*> gpu_batch;
@@ -68,14 +67,18 @@ std::optional<std::string> Stage::execute() {
             continue;
         }
 
-        auto& cpu_pass = std::get<std::unique_ptr<Pass>>(pass);
-
         if (auto err = executeGPUBatch(std::span(gpu_batch))) {
             return err;
         }
+
         gpu_batch.clear();
 
-        const auto pass_start = std::chrono::steady_clock::now();
+        auto& cpu_pass = std::get<std::unique_ptr<Pass>>(pass);
+
+#ifndef NPERF
+        const auto pass_perfscope = perf_.beginRecord(cpu_pass->getId());
+#endif
+
         if (auto err = cpu_pass->execute()) {
             if (err.value() == kStageStopExecution) {
                 spdlog::info("[Stage] {} stage-stop from {}", getId(),
@@ -88,8 +91,6 @@ std::optional<std::string> Stage::execute() {
             return std::format("pass {}: {}", cpu_pass->getId(),
                                std::move(err).value());
         }
-        spdlog::info("[Stage] {} pass {} took {:.2f} ms", getId(),
-                     cpu_pass->getId(), ElapsedMs(pass_start));
     }
 
     if (auto err = executeGPUBatch(std::span(gpu_batch))) {
@@ -105,7 +106,11 @@ std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
     }
 
     const std::string pass_names = CollectPassNames(batch);
-    const auto batch_start = std::chrono::steady_clock::now();
+
+#ifndef NPERF
+    const auto perfscope
+        = perf_.beginRecord(std::format("GPU {{ {} }}", pass_names));
+#endif
 
     const auto encoder = std::invoke([&] {
         const std::string label
@@ -123,13 +128,8 @@ std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
 
     const auto commands = encoder.Finish();
 
-    auto err = gpu_->submitAndWait(
+    return gpu_->submitAndWait(
         commands, std::format("stage passes {{ {} }}", pass_names));
-    if (!err) {
-        spdlog::info("[Stage] {} GPU batch {{ {} }} took {:.2f} ms", getId(),
-                     pass_names, ElapsedMs(batch_start));
-    }
-    return err;
 }
 
 void Stage::add_pass(PassPtr pass) { passes_.emplace_back(std::move(pass)); }

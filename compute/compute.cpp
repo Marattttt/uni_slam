@@ -36,25 +36,30 @@ void impl::print_device_captured_error(const wgpu::Device& device,
         static_cast<uint32_t>(errtype), std::string_view(msg));
 }
 
-void Compute::addStage(Stage stage) {
-    stage.storage_ = &storage_;
-    stages_.emplace_back(std::move(stage));
-}
+void Compute::addStage(Stage stage) { stages_.emplace_back(std::move(stage)); }
 
-PreinitOpts wslam::compute::createPreInitializeOpts() {
+PrepareOpts wslam::compute::createPreInitializeOpts() {
     const char* shader_dir = std::getenv(WSLAM_SHADER_SRC_DIR_ENV);
     if (shader_dir == nullptr) {
         shader_dir = "";
+    }
+
+    const char* logs_out = std::getenv(WSLAM_PERF_OUT_DIR_ENV);
+    if (logs_out == nullptr) {
+        logs_out = ".";
     }
 
     return {
         .deviceLostCallback_ = impl::print_device_unresponsive,
         .errorCallback_ = impl::print_device_captured_error,
         .shader_module_path_prefix_ = shader_dir,
+        .perf_logs_output_ = logs_out,
     };
 }
 
-std::optional<std::string> Compute::preInitialize(const PreinitOpts& opts) {
+std::optional<std::string> Compute::prepare(const PrepareOpts& opts) {
+    perf_logs_output_ = opts.perf_logs_output_;
+
     gpu_ = std::make_shared<GPU>(
         std::make_shared<GPU::DeviceCb>(opts.deviceLostCallback_),
         std::make_shared<GPU::ErrorCb>(opts.errorCallback_),
@@ -72,11 +77,23 @@ std::optional<std::string> Compute::preInitialize(const PreinitOpts& opts) {
 
 std::optional<std::string> Compute::initizalizeAllStages() {
     for (Stage& stage : stages_) {
+#ifndef NPERF
+        const auto perfscope = perf_.beginRecord("init " + stage.getId());
+#endif
+
         if (auto err = stage.initialize()) {
             return std::format("iniiializing stage {}: {}", stage.getId(),
                                err.value());
         }
     }
+
+#ifndef NPERF
+    if (auto err = perf_.writeFile(perf_logs_output_ / "init_perflog.yaml")) {
+        return "saving perf logs: " + std::move(err).value();
+    };
+
+    perf_.clear();
+#endif
 
     return std::nullopt;
 }

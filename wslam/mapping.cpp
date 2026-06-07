@@ -16,10 +16,9 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
                                        AnyBag& storage, WslamConfig config) {
     spdlog::info(LOG_ID " Constructing mapping stage");
 
-    const auto gpu = compute.getGPUPtr();
     auto state = std::make_shared<MappingState>();
 
-    compute::Stage stage{"Mapping", gpu};
+    compute::Stage stage{"Mapping", compute};
 
     auto gate = std::make_unique<KeyframeGatePass>(*state);
     gate->setStorage(storage);

@@ -44,7 +44,7 @@ compute::Stage wslam::CreateFeatureDetectStage(
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
     const std::string& feature_output_label, WslamConfig config) {
     const auto gpu = compute.getGPUPtr();
-    compute::Stage stage{"Feature detect", gpu};
+    compute::Stage stage{"Feature detect", compute};
 
     stage.add_pass(std::make_unique<SensorLoaderPass>(std::move(provider),
                                                       compute.getStorage()));

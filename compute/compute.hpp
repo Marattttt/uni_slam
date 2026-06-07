@@ -10,10 +10,15 @@
 
 #include "anybag.hpp"
 #include "gpu.hpp"
+#include "performance.hpp"
 #include "stage.hpp"
 
 #ifndef WSLAM_SHADER_SRC_DIR_ENV
 #define WSLAM_SHADER_SRC_DIR_ENV "WSLAM_SHADER_SRC_DIR"
+#endif
+
+#ifndef WSLAM_PERF_OUT_DIR_ENV
+#define WSLAM_PERF_OUT_DIR_ENV "WSLAM_PERF_OUT_DIR"
 #endif
 
 namespace wslam {
@@ -26,13 +31,14 @@ void print_device_captured_error(const wgpu::Device& device,
                                  wgpu::ErrorType errtype, wgpu::StringView msg);
 };  // namespace impl
 
-struct PreinitOpts {
+struct PrepareOpts {
     const std::function<wgpu::DeviceLostCallback<void>> deviceLostCallback_;
     const std::function<wgpu::UncapturedErrorCallback<void>> errorCallback_;
     const std::filesystem::path shader_module_path_prefix_;
+    const std::filesystem::path perf_logs_output_;
 };
 
-PreinitOpts createPreInitializeOpts();
+PrepareOpts createPreInitializeOpts();
 
 constexpr std::string kComputeStopExecution = "COMP_STOP";
 constexpr std::string kFullStopExecution = "FULL_STOP";
@@ -44,8 +50,8 @@ class Compute {
 
     void print_adapter_info() const;
 
-    [[nodiscard]] std::optional<std::string> preInitialize(
-        const PreinitOpts& opts = createPreInitializeOpts());
+    [[nodiscard]] std::optional<std::string> prepare(
+        const PrepareOpts& opts = createPreInitializeOpts());
     [[nodiscard]] std::optional<std::string> initizalizeAllStages();
     [[nodiscard]] std::optional<std::string> execute();
 
@@ -53,6 +59,8 @@ class Compute {
 
     constexpr AnyBag& getStorage() { return storage_; }
     constexpr const AnyBag& getStorage() const { return storage_; }
+    constexpr PerfRecorder& getPerf() { return perf_; }
+    constexpr const PerfRecorder& getPerf() const { return perf_; }
     constexpr GPU& getGPU() { return *gpu_; }
     constexpr GPU& getGPU() const { return *gpu_; }
     constexpr std::shared_ptr<GPU> getGPUPtr() { return gpu_; }
@@ -62,6 +70,8 @@ class Compute {
     std::shared_ptr<GPU> gpu_;
     std::vector<Stage> stages_;
     AnyBag storage_;
+    PerfRecorder perf_;
+    std::filesystem::path perf_logs_output_;
 };
 };  // namespace compute
 };  // namespace wslam

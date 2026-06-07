@@ -33,7 +33,7 @@ inline WslamPipelineHandles CreateWslamPipeline(
     compute::Compute& compute, GpuSharedBindings& shared,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
     WslamConfig config = {}) {
-    compute::Stage clearing_stage{"[Clear bindings]", compute.getGPUPtr()};
+    compute::Stage clearing_stage{"Clear bindings", compute};
     clearing_stage.add_pass(std::make_unique<compute::CustomPass>(
         "[Clear bindings pass]", [gpu = compute.getGPUPtr()](void*) {
             return gpu->clearBuffersAndOffsets();

@@ -77,7 +77,11 @@ class AnyBag {
         auto result = std::move(*p);
 
         if (erase_after_move) {
-            assert(erase(key) && "Delete moved-out value");
+            // NOT inside assert() — the erase is a required side effect
+            // and assert bodies compile out under NDEBUG (Release builds
+            // would otherwise never erase, breaking consume-once keys).
+            [[maybe_unused]] const bool erased = erase(key);
+            assert(erased && "Delete moved-out value");
         }
 
         return std::move(result);
