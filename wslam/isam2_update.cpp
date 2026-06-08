@@ -4,8 +4,11 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/navigation/ImuBias.h>
+#include <gtsam/nonlinear/LevenbergMarquardtParams.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include "common.hpp"
@@ -31,7 +34,11 @@ std::optional<std::string> Isam2UpdatePass::initialize() {
         return "isam2 update: storage not set before initialize()";
     }
     if (!worker_) {
-        worker_ = std::make_unique<Isam2Worker>();
+        worker_ = std::make_unique<Isam2Worker>(Isam2Worker::Params{
+            .relinearize_threshold = opts_.relinearize_threshold,
+            .relinearize_skip = opts_.relinearize_skip,
+            .use_cholesky = opts_.use_cholesky,
+        });
     }
     return std::nullopt;
 }
@@ -114,7 +121,10 @@ std::optional<std::string> Isam2UpdatePass::drainPending() {
     if (!pending_.valid()) {
         return std::nullopt;
     }
+    using Clock = std::chrono::steady_clock;
+    const auto t_wait_begin = Clock::now();
     auto result = pending_.get();  // blocks if worker still running
+    const auto t_wait_end = Clock::now();
     if (result.error.has_value()) {
         return result.error;
     }
@@ -167,13 +177,26 @@ std::optional<std::string> Isam2UpdatePass::drainPending() {
     last_factor_count_ = result.factor_count;
 
     // Building the snapshot triangulates every smart factor ever created
-    // — O(map size) on the main thread — so headless configurations only
-    // do it every Nth drain. flush() publishes unconditionally, so the
-    // exported map always reflects the final optimisation.
+    // — O(map size) on the main thread — so headless configurations skip it
+    // during the loop (snapshot_every_n_drains == 0) and rely on flush()
+    // publishing the final one. Otherwise publish every Nth drain.
+    const auto t_snapshot_begin = Clock::now();
     ++drains_since_snapshot_;
-    if (drains_since_snapshot_ >= opts_.snapshot_every_n_drains) {
+    if (opts_.snapshot_every_n_drains != 0
+        && drains_since_snapshot_ >= opts_.snapshot_every_n_drains) {
         publishSnapshot();
     }
+    const auto t_snapshot_end = Clock::now();
+
+    // wait_ms is how long the main thread actually stalled on the worker
+    // (the cost that shows up in the [ISAM2 Drain pass] perf line);
+    // snapshot_ms is the in-loop snapshot build (0 when skipped).
+    const auto ms = [](Clock::duration d) {
+        return std::chrono::duration<double, std::milli>(d).count();
+    };
+    spdlog::info(LOG_ID " drain: wait_ms={:.1f}, snapshot_ms={:.1f}",
+                 ms(t_wait_end - t_wait_begin),
+                 ms(t_snapshot_end - t_snapshot_begin));
     return std::nullopt;
 }
 
@@ -240,6 +263,30 @@ std::optional<std::string> Isam2UpdatePass::flush() {
     if (auto err = drainPending()) {
         return err;
     }
+
+    // Final global batch optimisation over the full retained factor graph.
+    // Safe to call optimizeBatch here: drainPending above consumed the last
+    // in-flight future and we submit no further work, so the worker thread
+    // is parked and isam_ is quiescent (see Isam2Worker::optimizeBatch).
+    if (opts_.final_batch_optimize) {
+        spdlog::info(LOG_ID " flush(): running final batch LM optimisation");
+        gtsam::LevenbergMarquardtParams lm_params;
+        lm_params.maxIterations
+            = static_cast<size_t>(std::max(0, opts_.final_batch_max_iterations));
+        auto optimized = worker_->optimizeBatch(lm_params);
+        if (optimized.has_value()) {
+            // gtsam::Values has no move-assign overload; copy the batch
+            // optimum in so Snapshot() triangulates landmarks at the
+            // globally-optimised poses.
+            state_->latest_values = optimized.value();
+        } else {
+            spdlog::error(LOG_ID
+                          " flush(): batch optimisation failed ({}); exporting "
+                          "the incremental estimate instead",
+                          optimized.error());
+        }
+    }
+
     // Consumers (e.g. ExportMap) read the snapshot right after flush;
     // bypass the drain throttle so it reflects every applied update.
     publishSnapshot();

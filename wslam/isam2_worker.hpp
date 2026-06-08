@@ -1,11 +1,13 @@
 #pragma once
 
 #include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/nonlinear/LevenbergMarquardtParams.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 
 #include <condition_variable>
 #include <cstdint>
+#include <expected>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -27,6 +29,29 @@ namespace wslam {
 // thread at most one frame ahead of the optimiser.
 class Isam2Worker {
    public:
+    // Tuning knobs for the underlying gtsam::ISAM2 instance. Defaults mirror
+    // the historically-hardcoded values; the mapping stage overrides them
+    // from Isam2UpdatePass::Opts (themselves env-overridable for benchmark
+    // sweeps). See the worker ctor for the rationale behind each default.
+    struct Params {
+        // Relinearise variables whose linear delta exceeds this. Larger =>
+        // fewer variables relinearised per update => cheaper, looser. The
+        // effective default is set by Isam2UpdatePass::Opts (0.1); see the
+        // rationale there.
+        double relinearize_threshold = 0.1;
+        // Relinearise every Nth update. 1 = every update (most accurate,
+        // most expensive).
+        int relinearize_skip = 1;
+        // false => QR factorisation (rank-revealing, numerically robust to
+        // the IMU/vision information mismatch, but ~2-4x slower);
+        // true => CHOLESKY (faster, but can hit indefinite pivots on long
+        // VI runs — see ctor comment).
+        bool use_cholesky = false;
+        // Reuse freed factor slots so the smart-factor remove-and-readd
+        // pattern doesn't grow the factor array without bound.
+        bool find_unused_factor_slots = true;
+    };
+
     struct Work {
         gtsam::NonlinearFactorGraph new_factors;
         gtsam::Values new_values;
@@ -54,7 +79,7 @@ class Isam2Worker {
         std::optional<std::string> error;
     };
 
-    Isam2Worker();
+    explicit Isam2Worker(Params params);
     ~Isam2Worker();
 
     Isam2Worker(const Isam2Worker&) = delete;
@@ -66,6 +91,20 @@ class Isam2Worker {
     // must consume before the next submission, otherwise behaviour is
     // undefined (and an assert will fire in debug builds).
     [[nodiscard]] std::future<Result> submit(Work work);
+
+    // Run one global batch Levenberg-Marquardt optimisation over the full
+    // factor graph iSAM2 has accumulated, seeded by its current estimate.
+    // Used at export time to recover the global optimum the (deliberately
+    // cheaper) per-frame incremental updates may have left on the table.
+    //
+    // THREAD-SAFETY: this touches `isam_` directly from the *caller's*
+    // thread. It is only safe to call when no work is in flight — i.e. after
+    // the caller has drained the last submit() future and is not submitting
+    // more. In that state the worker thread is parked in cv_.wait() and never
+    // touches `isam_`, so there is no race. Calling it concurrently with an
+    // in-flight submission is undefined.
+    [[nodiscard]] std::expected<gtsam::Values, std::string> optimizeBatch(
+        const gtsam::LevenbergMarquardtParams& lm_params);
 
    private:
     void run();

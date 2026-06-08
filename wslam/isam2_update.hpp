@@ -41,12 +41,49 @@ class Isam2UpdatePass : public compute::Pass {
 
         // Publish a fresh MapSnapshot every N successful drains. Building
         // the snapshot re-triangulates every smart factor ever created
-        // (O(map size), growing without bound) on the main thread, so
-        // headless runs — whose only snapshot consumer is the post-loop
-        // map export — should keep this large. The GUI reads the snapshot
-        // every frame and wants 1. flush() always publishes regardless,
-        // so the exported map never lags.
+        // (O(map size), growing without bound) on the main thread.
+        // 0 => never publish during the loop: headless runs whose only
+        // snapshot consumer is the post-loop map export use this. The GUI
+        // reads the snapshot every frame and wants 1. flush() always
+        // publishes regardless, so the exported map never lags.
         uint32_t snapshot_every_n_drains = 1;
+
+        // --- Live-loop iSAM2 tuning (forwarded to Isam2Worker::Params) ---
+        // Larger threshold / skip => fewer, cheaper relinearisations =>
+        // a looser ("partial") live estimate that the final batch
+        // optimisation below recovers. See Isam2Worker::Params.
+        //
+        // relinearize_threshold defaults to 0.1 (raised from the textbook
+        // 0.01): at 0.01 iSAM2 relinearises so aggressively that the cascade
+        // re-eliminates the whole Bayes tree every keyframe (~90k factors by
+        // frame 700 on V101), which is what made the drain pass scale with
+        // map size. 0.1 shrinks that cascade and cut the mapping stage ~85%
+        // at 700 frames with RPE unchanged and APE within run-to-run noise
+        // (benchmarked; QR + skip=1 kept — Cholesky crashes on long VI runs
+        // and skip>1 degraded accuracy without extra speedup over threshold).
+        double relinearize_threshold = 0.1;
+        int relinearize_skip = 1;
+        bool use_cholesky = false;  // false => QR
+
+        // --- Final batch optimisation at flush/export ---
+        // Run one global Levenberg-Marquardt over iSAM2's retained graph at
+        // flush(), seeded by the incremental estimate, before publishing the
+        // exported snapshot.
+        //
+        // DISABLED by default: it is actively harmful on long monocular-VI
+        // sequences. SmartProjectionPoseFactors are scale-free, and they
+        // outnumber the scale-bearing CombinedImuFactors ~350:1 (one IMU
+        // factor per keyframe edge vs one smart factor per landmark — ~87k
+        // landmarks vs 243 IMU edges on full V101). A free global solve lets
+        // the visual factors collectively rescale the map, collapsing metric
+        // scale (measured Umeyama scale 1.13 -> 0.001, APE 0.33 m -> 1.42 m
+        // on full V101). The sequential incremental estimate resists this
+        // because each keyframe is anchored step-by-step, so it already holds
+        // scale and accuracy without a batch pass. Left as an opt-in
+        // (WSLAM_FINAL_BATCH=1) for setups that anchor scale independently.
+        // On failure the live estimate is exported instead (map never lost).
+        bool final_batch_optimize = false;
+        int final_batch_max_iterations = 100;
     };
 
     Isam2UpdatePass(std::shared_ptr<MappingState> state,
