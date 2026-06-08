@@ -89,8 +89,8 @@ class FactorBuilderPass : public compute::Pass {
         double integration_sigma = 1e-4;  // m/s/sqrt(s)
     };
 
-    FactorBuilderPass(MappingState& state, Opts opts);
-    FactorBuilderPass(MappingState& state);
+    FactorBuilderPass(std::shared_ptr<MappingState> state, Opts opts);
+    FactorBuilderPass(std::shared_ptr<MappingState> state);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
@@ -122,7 +122,7 @@ class FactorBuilderPass : public compute::Pass {
     void setStorage(AnyBag& storage) { storage_ = &storage; }
 
    private:
-    MappingState& state_;
+    std::shared_ptr<MappingState> state_;
     Opts opts_;
     AnyBag* storage_ = nullptr;
 

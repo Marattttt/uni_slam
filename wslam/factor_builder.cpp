@@ -21,11 +21,12 @@ using namespace wslam;
 
 #define LOG_ID "[Factor Builder pass]"
 
-FactorBuilderPass::FactorBuilderPass(MappingState& state, Opts opts)
-    : state_(state), opts_(opts) {}
+FactorBuilderPass::FactorBuilderPass(std::shared_ptr<MappingState> state,
+                                     Opts opts)
+    : state_(std::move(state)), opts_(opts) {}
 
-FactorBuilderPass::FactorBuilderPass(MappingState& state)
-    : FactorBuilderPass(state, Opts{}) {}
+FactorBuilderPass::FactorBuilderPass(std::shared_ptr<MappingState> state)
+    : FactorBuilderPass(std::move(state), Opts{}) {}
 
 std::string FactorBuilderPass::getId() const { return LOG_ID; }
 
@@ -94,7 +95,7 @@ std::optional<std::string> FactorBuilderPass::ensureImuParams() {
     if (storage_ == nullptr) {
         return "factor builder: storage pointer is null";
     }
-    if (!state_.gravity_initialised) {
+    if (!state_->gravity_initialised) {
         return "factor builder: gravity has not been initialised yet — "
                "ensureImuParams() must run after the first accepted keyframe";
     }
@@ -127,7 +128,7 @@ std::optional<std::string> FactorBuilderPass::ensureImuParams() {
                                   * imu.accelerometer_random_walk;
 
     imu_params_ = gtsam::PreintegrationCombinedParams::MakeSharedU();
-    imu_params_->n_gravity = state_.gravity_world;
+    imu_params_->n_gravity = state_->gravity_world;
     imu_params_->setGyroscopeCovariance(
         gtsam::Matrix3::Identity() * gyro_var);
     imu_params_->setAccelerometerCovariance(
@@ -151,7 +152,7 @@ std::optional<std::string> FactorBuilderPass::ensureImuParams() {
     spdlog::info(LOG_ID
                  " IMU preintegration configured: |g|={:.3f} m/s^2, "
                  "T_cam_imu=({:.3f},{:.3f},{:.3f})",
-                 state_.gravity_world.norm(),
+                 state_->gravity_world.norm(),
                  T_body_cam.inverse().translation().x(),
                  T_body_cam.inverse().translation().y(),
                  T_body_cam.inverse().translation().z());
@@ -159,7 +160,7 @@ std::optional<std::string> FactorBuilderPass::ensureImuParams() {
 }
 
 std::optional<std::string> FactorBuilderPass::ensureCalibration() {
-    if (state_.calibration) {
+    if (state_->calibration) {
         return std::nullopt;
     }
     constexpr uint32_t kCam0 = 0;
@@ -172,14 +173,14 @@ std::optional<std::string> FactorBuilderPass::ensureCalibration() {
         return std::format("factor builder: missing camera params under '{}'",
                            key);
     }
-    state_.intrinsics_cache = *cam_ptr.value();
+    state_->intrinsics_cache = *cam_ptr.value();
 
     // Cal3_S2(fx, fy, s, u0, v0). Observations are pre-undistorted by
     // the keyframe gate, so the smart factor's calibration only carries
     // the pinhole part. Distortion coefficients remain on
     // intrinsics_cache for the gate's undistortion step.
-    const auto& cam = state_.intrinsics_cache.value();
-    state_.calibration = boost::make_shared<gtsam::Cal3_S2>(
+    const auto& cam = state_->intrinsics_cache.value();
+    state_->calibration = boost::make_shared<gtsam::Cal3_S2>(
         cam.intrinsics(0), cam.intrinsics(1), 0.0, cam.intrinsics(2),
         cam.intrinsics(3));
 
@@ -234,7 +235,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
     const auto bias_key = MappingState::biasKey(delta.pose_id);
     gtsam::Pose3 pose_init(gtsam::Rot3(delta.R_world_cam),
                            gtsam::Point3(delta.t_world_cam));
-    gtsam::Vector3 vel_init = state_.last_velocity;
+    gtsam::Vector3 vel_init = state_->last_velocity;
 
     // Between-pose IMU factor — IMU gives metric translation, gravity-
     // aligned rotation, and bias evolution all in one factor. Computed
@@ -252,7 +253,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
             = MappingState::biasKey(delta.prev_pose_id.value());
 
         gtsam::PreintegratedCombinedMeasurements pim(imu_params_,
-                                                     state_.last_bias);
+                                                     state_->last_bias);
         const size_t integrated = IntegrateImuWindow(pim, delta.imu_between,
                                                      delta.prev_kf_ts_ns,
                                                      delta.curr_kf_ts_ns);
@@ -266,9 +267,9 @@ std::optional<std::string> FactorBuilderPass::execute() {
         // the metric step length used to rescale the visual translation
         // below.
         const gtsam::NavState prev_nav(
-            state_.predicted_values.at<gtsam::Pose3>(prev_pose_key),
-            state_.last_velocity);
-        const gtsam::NavState pred = pim.predict(prev_nav, state_.last_bias);
+            state_->predicted_values.at<gtsam::Pose3>(prev_pose_key),
+            state_->last_velocity);
+        const gtsam::NavState pred = pim.predict(prev_nav, state_->last_bias);
 
         // The essential-matrix translation is unit-norm by construction,
         // while the IMU factor is metric. Feeding the raw unit step into
@@ -337,7 +338,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
         // Mirror the corrected pose into predicted_values too so the
         // next keyframe-gate chains off the gyro-corrected rotation and
         // metric-scale translation.
-        state_.predicted_values.update(pose_key, pose_init);
+        state_->predicted_values.update(pose_key, pose_init);
 
         spdlog::debug(LOG_ID
                       " Added CombinedImuFactor x{}-x{}: integrated {} "
@@ -350,7 +351,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
 
     new_values_.insert(pose_key, pose_init);
     new_values_.insert(vel_key, vel_init);
-    new_values_.insert(bias_key, state_.last_bias);
+    new_values_.insert(bias_key, state_->last_bias);
 
     // First keyframe: prior on pose. Sets the gauge.
     if (delta.is_first_keyframe) {
@@ -383,7 +384,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
             opts_.prior_gyro_bias_sigma;
         new_factors_.emplace_shared<
             gtsam::PriorFactor<gtsam::imuBias::ConstantBias>>(
-            bias_key, state_.last_bias, Diagonal::Sigmas(bias_sigmas));
+            bias_key, state_->last_bias, Diagonal::Sigmas(bias_sigmas));
 
         spdlog::debug(LOG_ID
                       " Added gauge priors on x{}, v{}, b{} (first keyframe)",
@@ -442,15 +443,15 @@ std::optional<std::string> FactorBuilderPass::execute() {
     size_t new_factor_count = 0;
     size_t reobserved_count = 0;
     for (const auto& [id, obs_list] : obs_by_landmark) {
-        auto it = state_.smart_factors.find(id);
-        bool is_new_factor = (it == state_.smart_factors.end());
+        auto it = state_->smart_factors.find(id);
+        bool is_new_factor = (it == state_->smart_factors.end());
 
         SmartFactor::shared_ptr factor;
         if (is_new_factor) {
             factor = boost::make_shared<SmartFactor>(smart_noise,
-                                                     state_.calibration,
+                                                     state_->calibration,
                                                      smart_params);
-            state_.smart_factors.insert({id, factor});
+            state_->smart_factors.insert({id, factor});
             ++new_factor_count;
         } else {
             // Clone, don't mutate in place: iSAM2 still holds a
@@ -462,8 +463,8 @@ std::optional<std::string> FactorBuilderPass::execute() {
             // processes the remove.
             factor = boost::make_shared<SmartFactor>(*it->second);
             it->second = factor;
-            auto idx_it = state_.smart_factor_indices.find(id);
-            if (idx_it != state_.smart_factor_indices.end()) {
+            auto idx_it = state_->smart_factor_indices.find(id);
+            if (idx_it != state_->smart_factor_indices.end()) {
                 remove_indices_.push_back(idx_it->second);
             }
             ++reobserved_count;
@@ -499,7 +500,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
     for (const auto& obs : delta.observations) {
         const auto pk = MappingState::poseKey(obs.pose);
         const bool pose_known = new_values_.exists(pk)
-                                 || state_.predicted_values.exists(pk);
+                                 || state_->predicted_values.exists(pk);
         assert(pose_known && "projection factor references unknown pose key");
     }
 #endif

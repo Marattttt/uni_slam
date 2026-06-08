@@ -12,7 +12,6 @@
 #include "euroc_provider.hpp"
 #include "provider_base.hpp"
 #include "wslam/common.hpp"
-#include "wslam/export.hpp"
 #include "wslam/wslam.hpp"
 
 using namespace wslam;
@@ -92,8 +91,7 @@ int main_test(WslamConfig config) {
 
     auto data_provider = data::AdaptProvider<1UL, 2UL>(euroc_generator);
 
-    auto handles
-        = CreateWslamPipeline(comp, shared, std::move(data_provider), config);
+    CreateWslamPipeline(comp, shared, std::move(data_provider), config);
 
     if (auto err = comp.initizalizeAllStages()) {
         spdlog::error("initializing stages: {}", err.value());
@@ -120,26 +118,9 @@ int main_test(WslamConfig config) {
 
     std::println("FInished writing executing slam loop");
 
-    // The iSAM2 update pass runs on a worker thread, lagging the main loop
-    // by one frame. Drain any pending optimisation so the snapshot under
-    // MapSnapshotName reflects every submitted keyframe before we read it
-    // for export.
-    if (handles.flush_async) {
-        if (auto err = handles.flush_async()) {
-            spdlog::error("flushing iSAM2 worker: {}", err.value());
-            return 1;
-        }
-    }
-
-    std::println("iSAM2 handle flushed");
-
-    if (!config.map_out_path.empty()) {
-        std::println("Begin exporting map");
-        if (auto err = ExportMap(comp.getStorage(),
-                                 ExportOpts{.map_path = config.map_out_path})) {
-            spdlog::error("exporting map: {}", err.value());
-            return 1;
-        }
+    if (auto err = comp.finalize()) {
+        spdlog::error("[Main] Could not finalize. Errors: {}",
+                      std::move(err).value());
     }
 
     return 0;
@@ -149,7 +130,7 @@ int main(int argc, char* argv[]) {
 #ifndef NDEBUG
     spdlog::set_level(spdlog::level::debug);
 #else
-    spdlog::set_level(spdlog::level::warn);
+    spdlog::set_level(spdlog::level::info);
 #endif
     // SPDLOG_LEVEL=info (etc.) overrides the compiled-in default at
     // runtime — e.g. to see the per-pass timing lines logged by Stage

@@ -15,13 +15,13 @@ using namespace wslam;
 
 #define LOG_ID "[ISAM2 Update pass]"
 
-Isam2UpdatePass::Isam2UpdatePass(MappingState& state,
+Isam2UpdatePass::Isam2UpdatePass(std::shared_ptr<MappingState> state,
                                  const FactorBuilderPass& builder, Opts opts)
-    : state_(state), builder_(builder), opts_(opts) {}
+    : state_(std::move(state)), builder_(builder), opts_(opts) {}
 
-Isam2UpdatePass::Isam2UpdatePass(MappingState& state,
+Isam2UpdatePass::Isam2UpdatePass(std::shared_ptr<MappingState> state,
                                  const FactorBuilderPass& builder)
-    : Isam2UpdatePass(state, builder, Opts{}) {}
+    : Isam2UpdatePass(std::move(state), builder, Opts{}) {}
 
 std::string Isam2UpdatePass::getId() const { return LOG_ID; }
 
@@ -119,19 +119,19 @@ std::optional<std::string> Isam2UpdatePass::drainPending() {
         return result.error;
     }
     // gtsam::Values has no move-assign overload, so std::move would be a no-op.
-    state_.latest_values = result.latest_values;
+    state_->latest_values = result.latest_values;
 
     // Mirror optimised pose estimates back into predicted_values so the
     // keyframe-gate's pose chain uses bundle-adjusted estimates. With
     // smart factors, landmarks are no longer graph variables, so only
     // pose keys are mirrored. V/B keys are handled below via the
     // dedicated last_velocity / last_bias fields.
-    for (const auto& kv : state_.latest_values) {
+    for (const auto& kv : state_->latest_values) {
         if (gtsam::Symbol(kv.key).chr() != MappingState::kPoseChar) {
             continue;
         }
-        assert(state_.predicted_values.exists(kv.key));
-        state_.predicted_values.update(kv.key, kv.value);
+        assert(state_->predicted_values.exists(kv.key));
+        state_->predicted_values.update(kv.key, kv.value);
     }
 
     // Back-fill MappingState::smart_factor_indices using the FactorIndex
@@ -141,7 +141,7 @@ std::optional<std::string> Isam2UpdatePass::drainPending() {
     // graph and gives the assigned FactorIndex per position.
     for (const auto& [pos, lm_id] : pending_smart_factor_positions_) {
         assert(pos < result.new_factor_indices.size());
-        state_.smart_factor_indices.insert_or_assign(
+        state_->smart_factor_indices.insert_or_assign(
             lm_id, result.new_factor_indices[pos]);
     }
     pending_smart_factor_positions_.clear();
@@ -150,16 +150,16 @@ std::optional<std::string> Isam2UpdatePass::drainPending() {
     // builder can seed the next keyframe's V/B with the freshest
     // values. We pick the entries belonging to the highest pose id
     // present — that's the one the next CombinedImuFactor will chain off.
-    if (state_.next_pose_id > 0) {
-        const auto last_id = PoseId{state_.next_pose_id - 1};
+    if (state_->next_pose_id > 0) {
+        const auto last_id = PoseId{state_->next_pose_id - 1};
         const auto vk = MappingState::velocityKey(last_id);
         const auto bk = MappingState::biasKey(last_id);
-        if (state_.latest_values.exists(vk)) {
-            state_.last_velocity = state_.latest_values.at<gtsam::Vector3>(vk);
+        if (state_->latest_values.exists(vk)) {
+            state_->last_velocity = state_->latest_values.at<gtsam::Vector3>(vk);
         }
-        if (state_.latest_values.exists(bk)) {
-            state_.last_bias
-                = state_.latest_values.at<gtsam::imuBias::ConstantBias>(bk);
+        if (state_->latest_values.exists(bk)) {
+            state_->last_bias
+                = state_->latest_values.at<gtsam::imuBias::ConstantBias>(bk);
         }
     }
 
@@ -181,7 +181,7 @@ void Isam2UpdatePass::publishSnapshot() {
     assert(storage_ != nullptr);
     drains_since_snapshot_ = 0;
 
-    auto snap = Snapshot(state_);
+    auto snap = Snapshot(*state_);
     snap.stats.factors = last_factor_count_;
     snap.stats.last_error = 0.0;  // not currently exposed by ISAM2Result
 
@@ -190,8 +190,8 @@ void Isam2UpdatePass::publishSnapshot() {
     // front-end's allocation counters — the in-flight submission, if any,
     // is the only outstanding gap. Landmarks may be < next_landmark_id
     // because degenerate smart-factor triangulations are filtered out.
-    assert(snap.stats.keyframes <= state_.next_pose_id);
-    assert(snap.stats.landmarks <= state_.smart_factors.size());
+    assert(snap.stats.keyframes <= state_->next_pose_id);
+    assert(snap.stats.landmarks <= state_->smart_factors.size());
 #endif
 
     storage_->set(ResourceIdentifier::MapSnapshotName, std::move(snap));
@@ -213,7 +213,8 @@ std::optional<std::string> Isam2UpdatePass::execute() {
         // Make sure downstream consumers always see *some* snapshot under
         // MapSnapshotName, even before iSAM has run for the first time.
         if (!storage_->has(ResourceIdentifier::MapSnapshotName)) {
-            storage_->set(ResourceIdentifier::MapSnapshotName, Snapshot(state_));
+            storage_->set(ResourceIdentifier::MapSnapshotName,
+                          Snapshot(*state_));
         }
         return std::nullopt;
     }

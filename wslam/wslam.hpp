@@ -1,12 +1,13 @@
 #pragma once
 
-#include <functional>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 
 #include "common.hpp"
 #include "compute.hpp"
+#include "export.hpp"
 #include "feature_detect.hpp"
 #include "mapping.hpp"
 #include "pass.hpp"
@@ -15,24 +16,10 @@
 
 namespace wslam {
 
-// Long-lived handles created by CreateWslamPipeline that need to outlive
-// Compute (they own shared CPU state referenced by passes). The caller keeps
-// this struct in scope for as long as Compute runs.
-//
-// `flush_async` drains any in-flight iSAM2 worker job and publishes the
-// final MapSnapshot. Call it once after the main pipeline loop exits and
-// before any consumer (e.g. ExportMap) reads the snapshot — otherwise the
-// last frame's optimisation will be lost. Must be invoked while `compute`
-// is still alive because it references the iSAM update pass owned by it.
-struct WslamPipelineHandles {
-    std::shared_ptr<MappingState> mapping_state;
-    std::function<std::optional<std::string>()> flush_async;
-};
-
-inline WslamPipelineHandles CreateWslamPipeline(
+inline void CreateWslamPipeline(
     compute::Compute& compute, GpuSharedBindings& shared,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
-    WslamConfig config = {}) {
+    const WslamConfig& config = {}) {
     compute::Stage clearing_stage{"Clear bindings", compute};
     clearing_stage.add_pass(std::make_unique<compute::CustomPass>(
         "[Clear bindings pass]", [gpu = compute.getGPUPtr()](void*) {
@@ -40,9 +27,8 @@ inline WslamPipelineHandles CreateWslamPipeline(
         }));
 
     compute.addStage(std::move(clearing_stage));
-    compute.addStage(CreateFeatureDetectStage(compute, shared,
-                                              std::move(provider), "features",
-                                              config));
+    compute.addStage(CreateFeatureDetectStage(
+        compute, shared, std::move(provider), "features", config));
 
     compute.addStage(
         CreatePoseEstimateCPUStage(compute, shared, "features", config));
@@ -50,9 +36,35 @@ inline WslamPipelineHandles CreateWslamPipeline(
     auto mapping = CreateMappingStage(compute, compute.getStorage(), config);
     compute.addStage(std::move(mapping.stage));
 
-    return WslamPipelineHandles{
-        .mapping_state = std::move(mapping.state),
-        .flush_async = std::move(mapping.flush_async),
-    };
+    compute.addFlushable(
+        [flush_async = std::move(mapping.flush_async)]()
+            -> std::optional<std::string> {
+            // The iSAM2 update pass runs on a worker thread, lagging the main
+            // loop by one frame. Drain any pending optimisation so the snapshot
+            // under MapSnapshotName reflects every submitted keyframe before we
+            // read it for export.
+            if (flush_async) {
+                if (auto err = flush_async()) {
+                    return "flushing iSAM2 worker: " + std::move(err).value();
+                }
+            }
+            std::println("iSAM2 handle flushed");
+
+            return std::nullopt;
+        });
+
+    compute.addFlushable([config, &compute]() -> std::optional<std::string> {
+        if (!config.map_out_path.empty()) {
+            std::println("[WSLAM] Begin exporting map");
+
+            if (auto err
+                = ExportMap(compute.getStorage(),
+                            ExportOpts{.map_path = config.map_out_path})) {
+                return "exporting map: " + std::move(err).value();
+            }
+        }
+
+        return std::nullopt;
+    });
 }
 };  // namespace wslam

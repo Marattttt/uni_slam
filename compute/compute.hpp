@@ -47,6 +47,7 @@ class Compute {
    public:
     using StorageKeyType = std::string;
     using StorageItemType = std::any;
+    using Flushable = std::function<std::optional<std::string>()>;
 
     void print_adapter_info() const;
 
@@ -54,8 +55,13 @@ class Compute {
         const PrepareOpts& opts = createPreInitializeOpts());
     [[nodiscard]] std::optional<std::string> initizalizeAllStages();
     [[nodiscard]] std::optional<std::string> execute();
+    [[nodiscard]] std::optional<std::vector<std::string>> finalize();
 
     void addStage(Stage stage);
+
+    void addFlushable(auto&& cb) {
+        flushes_.emplace_back(std::forward<decltype(cb)>(cb));
+    }
 
     constexpr AnyBag& getStorage() { return storage_; }
     constexpr const AnyBag& getStorage() const { return storage_; }
@@ -72,6 +78,7 @@ class Compute {
     AnyBag storage_;
     PerfRecorder perf_;
     std::filesystem::path perf_logs_output_;
+    std::vector<Flushable> flushes_;
 };
 };  // namespace compute
 };  // namespace wslam

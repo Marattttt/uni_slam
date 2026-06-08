@@ -21,11 +21,12 @@ using namespace wslam;
 
 #define LOG_ID "[Keyframe Gate pass]"
 
-KeyframeGatePass::KeyframeGatePass(MappingState& state, Opts opts)
-    : state_(state), opts_(opts) {}
+KeyframeGatePass::KeyframeGatePass(std::shared_ptr<MappingState> state,
+                                   Opts opts)
+    : state_(std::move(state)), opts_(opts) {}
 
-KeyframeGatePass::KeyframeGatePass(MappingState& state)
-    : KeyframeGatePass(state, Opts{}) {}
+KeyframeGatePass::KeyframeGatePass(std::shared_ptr<MappingState> state)
+    : KeyframeGatePass(std::move(state), Opts{}) {}
 
 std::string KeyframeGatePass::getId() const { return LOG_ID; }
 
@@ -216,7 +217,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
     // triangulation spans exactly the new graph edge), and pre-origin it
     // advances every frame (frame-to-frame matching keeps the bootstrap
     // baseline short, putting the first keyframe at motion onset).
-    const bool had_origin = state_.has_origin;
+    const bool had_origin = state_->has_origin;
     const auto finish = [&](MapDelta d) -> std::optional<std::string> {
         if (d.accepted || !had_origin) {
             storage.set(ResourceIdentifier::FeatureReferenceAdvanceName,
@@ -296,7 +297,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
         const auto pc = ToLod0Pixel(feat_curr);
         const double parallax = (pc - pp).norm();
         parallaxes.push_back(parallax);
-        if (!state_.active_landmarks.contains(feat_prev)
+        if (!state_->active_landmarks.contains(feat_prev)
             && parallax >= opts_.min_landmark_parallax_px) {
             ++new_landmark_count;
         }
@@ -311,7 +312,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
                      parallaxes_scratch.end());
     const double median_parallax_px = *mid;
 
-    if (!state_.has_origin) {
+    if (!state_->has_origin) {
         // Bootstrap gate: don't anchor the gauge while the platform is
         // still sitting on the ground. Matching is frame-to-frame here,
         // so even a small median parallax means motion has started.
@@ -354,7 +355,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
 
     // Allocate this frame's pose key.
     delta.accepted = true;
-    delta.pose_id = PoseId{state_.next_pose_id++};
+    delta.pose_id = PoseId{state_->next_pose_id++};
 
     // World pose. We anchor the first accepted keyframe at the world origin
     // and chain every subsequent one off the previous keyframe's
@@ -364,7 +365,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
     // and hasn't been written back to `latest_values` yet. Chaining off
     // predicted_values keeps the front-end's pose chain deterministic and
     // independent of back-end completion timing.
-    if (!state_.has_origin) {
+    if (!state_->has_origin) {
         delta.is_first_keyframe = true;
         delta.R_world_cam.setIdentity();
         delta.t_world_cam.setZero();
@@ -372,11 +373,11 @@ std::optional<std::string> KeyframeGatePass::execute() {
         delta.R_rel.setIdentity();
         delta.t_rel.setZero();
     } else {
-        if (!state_.last_accepted_pose.has_value()) {
+        if (!state_->last_accepted_pose.has_value()) {
             return "keyframe gate: origin set but no last_accepted_pose — "
                    "state inconsistent";
         }
-        const auto prev = state_.last_accepted_pose.value();
+        const auto prev = state_->last_accepted_pose.value();
         delta.prev_pose_id = prev;
 
         // Convert the relative pose triangulation reported (p_curr =
@@ -391,14 +392,14 @@ std::optional<std::string> KeyframeGatePass::execute() {
         //   t_wc = t_wp - R_wc * t_prev_to_curr
         // because t_prev_to_curr is expressed in the *previous* camera frame.
         const auto prev_key = MappingState::poseKey(prev);
-        if (!state_.predicted_values.exists(prev_key)) {
+        if (!state_->predicted_values.exists(prev_key)) {
             return std::format(
                 "keyframe gate: predicted_values has no entry for prev pose "
                 "id={}",
                 prev.v);
         }
         const auto& prev_pose
-            = state_.predicted_values.at<gtsam::Pose3>(prev_key);
+            = state_->predicted_values.at<gtsam::Pose3>(prev_key);
         const Eigen::Matrix3d r_wp = prev_pose.rotation().matrix();
         const Eigen::Vector3d t_wp = prev_pose.translation();
         const Eigen::Matrix3d r_wc = r_wp * tri.R_prev_to_curr.transpose();
@@ -411,7 +412,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
 
     // Record the new keyframe's initial pose in predicted_values so the
     // next frame can chain off it without waiting for iSAM.
-    state_.predicted_values.insert(
+    state_->predicted_values.insert(
         MappingState::poseKey(delta.pose_id),
         gtsam::Pose3(gtsam::Rot3(delta.R_world_cam),
                      gtsam::Point3(delta.t_world_cam)));
@@ -429,7 +430,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
         }
         const uint64_t curr_ts = **ts_ptr;
         delta.curr_kf_ts_ns = curr_ts;
-        delta.prev_kf_ts_ns = state_.last_keyframe_ts_ns.value_or(curr_ts);
+        delta.prev_kf_ts_ns = state_->last_keyframe_ts_ns.value_or(curr_ts);
 
         // Take the IMU buffer by value so we can replace it with the
         // post-window tail in one shot below.
@@ -477,8 +478,8 @@ std::optional<std::string> KeyframeGatePass::execute() {
                     // of gravitational acceleration (specific force points
                     // opposite to free-fall). Negate to recover the actual
                     // gravity vector.
-                    state_.gravity_world = -r_cam_body * g_body;
-                    state_.gravity_initialised = true;
+                    state_->gravity_world = -r_cam_body * g_body;
+                    state_->gravity_initialised = true;
 
                     // A stationary gyro's mean reading is its bias. Seed
                     // the propagated bias estimate with it so the very
@@ -490,7 +491,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
                     // stationary window.
                     const Eigen::Vector3d gyro_bias
                         = MeanGyroImu(window.samples);
-                    state_.last_bias = gtsam::imuBias::ConstantBias(
+                    state_->last_bias = gtsam::imuBias::ConstantBias(
                         Eigen::Vector3d::Zero(), gyro_bias);
 
                     spdlog::info(
@@ -507,9 +508,9 @@ std::optional<std::string> KeyframeGatePass::execute() {
                             * 1e-9,
                         static_cast<double>(window.samples.back().timestamp)
                             * 1e-9,
-                        state_.gravity_world.x(), state_.gravity_world.y(),
-                        state_.gravity_world.z(),
-                        state_.gravity_world.norm(), gyro_bias.x(),
+                        state_->gravity_world.x(), state_->gravity_world.y(),
+                        state_->gravity_world.z(),
+                        state_->gravity_world.norm(), gyro_bias.x(),
                         gyro_bias.y(), gyro_bias.z());
                 } else {
                     spdlog::warn(LOG_ID
@@ -543,7 +544,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
             }
             storage.set(ResourceIdentifier::GetImuVecName(), std::move(tail));
         }
-        state_.last_keyframe_ts_ns = curr_ts;
+        state_->last_keyframe_ts_ns = curr_ts;
     }
 
     // Camera intrinsics + distortion are needed to pre-undistort
@@ -594,8 +595,8 @@ std::optional<std::string> KeyframeGatePass::execute() {
         if (!consumed_prev.insert(feat_prev).second) {
             continue;
         }
-        const auto it = state_.active_landmarks.find(feat_prev);
-        if (it != state_.active_landmarks.end()) {
+        const auto it = state_->active_landmarks.find(feat_prev);
+        if (it != state_->active_landmarks.end()) {
             // Re-observation: the landmark already has a smart factor;
             // append this keyframe's view to it downstream.
             const LandmarkId id = it->second;
@@ -620,7 +621,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
             ++dropped_low_parallax;
             continue;
         }
-        const LandmarkId id{state_.next_landmark_id++};
+        const LandmarkId id{state_->next_landmark_id++};
         next_active.insert_or_assign(feat_curr, id);
 
         // World position metadata, available only when this pair was
@@ -682,7 +683,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
         for (const auto& [id, _] : delta.new_landmarks_world) {
             known.insert(id);
         }
-        for (const auto& [_feat, id] : state_.active_landmarks) {
+        for (const auto& [_feat, id] : state_->active_landmarks) {
             known.insert(id);
         }
         for (const auto& obs : delta.observations) {
@@ -691,11 +692,11 @@ std::optional<std::string> KeyframeGatePass::execute() {
     }
 #endif
 
-    state_.active_landmarks = std::move(next_active);
-    state_.last_accepted_pose = delta.pose_id;
-    state_.keyframe_timestamps_ns.emplace(delta.pose_id, delta.curr_kf_ts_ns);
-    if (!state_.has_origin) {
-        state_.has_origin = true;
+    state_->active_landmarks = std::move(next_active);
+    state_->last_accepted_pose = delta.pose_id;
+    state_->keyframe_timestamps_ns.emplace(delta.pose_id, delta.curr_kf_ts_ns);
+    if (!state_->has_origin) {
+        state_->has_origin = true;
     }
 
     return finish(std::move(delta));

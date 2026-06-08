@@ -13,17 +13,18 @@ using namespace wslam;
 #define LOG_ID "[Mapping stage]"
 
 MappingStage wslam::CreateMappingStage(compute::Compute& compute,
-                                       AnyBag& storage, WslamConfig config) {
+                                       AnyBag& storage,
+                                       const WslamConfig& config) {
     spdlog::info(LOG_ID " Constructing mapping stage");
 
     auto state = std::make_shared<MappingState>();
 
     compute::Stage stage{"Mapping", compute};
 
-    auto gate = std::make_unique<KeyframeGatePass>(*state);
+    auto gate = std::make_unique<KeyframeGatePass>(state);
     gate->setStorage(storage);
 
-    auto builder = std::make_unique<FactorBuilderPass>(*state);
+    auto builder = std::make_unique<FactorBuilderPass>(state);
     builder->setStorage(storage);
 
     // The iSAM2 update pass needs to read the builder's per-frame factor /
@@ -37,8 +38,8 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     Isam2UpdatePass::Opts updater_opts{};
     updater_opts.snapshot_every_n_drains = config.enable_gui ? 1 : 25;
 
-    auto updater = std::make_unique<Isam2UpdatePass>(*state, *builder_ptr,
-                                                     updater_opts);
+    auto updater = std::make_unique<Isam2UpdatePass>(std::move(state),
+                                                     *builder_ptr, updater_opts);
     updater->setStorage(storage);
     // Same lifetime argument as for builder_ptr above: the updater is added
     // to `stage` below and lives as long as that stage does.
@@ -57,7 +58,6 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     stage.add_pass(std::move(updater));
 
     return MappingStage{
-        .state = std::move(state),
         .stage = std::move(stage),
         .flush_async =
             [updater_ptr]() { return updater_ptr->flush(); },

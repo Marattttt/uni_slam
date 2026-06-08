@@ -49,9 +49,10 @@ class Isam2UpdatePass : public compute::Pass {
         uint32_t snapshot_every_n_drains = 1;
     };
 
-    Isam2UpdatePass(MappingState& state, const FactorBuilderPass& builder,
-                    Opts opts);
-    Isam2UpdatePass(MappingState& state, const FactorBuilderPass& builder);
+    Isam2UpdatePass(std::shared_ptr<MappingState> state,
+                    const FactorBuilderPass& builder, Opts opts);
+    Isam2UpdatePass(std::shared_ptr<MappingState> state,
+                    const FactorBuilderPass& builder);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
@@ -74,7 +75,7 @@ class Isam2UpdatePass : public compute::Pass {
     [[nodiscard]] std::optional<std::string> flush();
 
    private:
-    MappingState& state_;
+    std::shared_ptr<MappingState> state_;
     const FactorBuilderPass& builder_;
     Opts opts_;
     AnyBag* storage_ = nullptr;

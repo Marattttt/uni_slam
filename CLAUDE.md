@@ -38,7 +38,11 @@ source .env
 WSLAM_SHADER_SRC_DIR="$PWD/resources" ./build/pc_wslam
 ```
 
-The `.env` file sets required environment variables:
+The `.env` file is only needed at **runtime** — configuring and building the
+project (`cmake -S . -B build ...`, `cmake --build build`) does not read any of
+these variables, so there is no need to `source .env` before a build. Source it
+only when executing `pc_wslam` (or the helper run scripts, which do it for you).
+It sets:
 - `WSLAM_SHADER_SRC_DIR` — directory where `.wgsl` shaders are loaded from at runtime.
 - `EUROC_DIR` — path to EuRoC MAV dataset (`mav0/` root).
 - `TUM_FR1_RGBD_DIR` — path to TUM RGB-D dataset (provider currently not wired in `CMakeLists.txt`).

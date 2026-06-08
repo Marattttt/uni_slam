@@ -115,3 +115,19 @@ std::optional<std::string> Compute::execute() {
 
     return std::nullopt;
 }
+
+std::optional<std::vector<std::string>> Compute::finalize() {
+    std::vector<std::string> errors;
+
+    for (auto& f : flushes_) {
+        if (auto err = f()) {
+            errors.emplace_back(std::move(err).value());
+        }
+    }
+
+    if (!errors.empty()) {
+        return errors;
+    }
+
+    return std::nullopt;
+}

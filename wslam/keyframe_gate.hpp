@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
 #include "common.hpp"
 #include "mapping_state.hpp"
@@ -79,8 +80,8 @@ class KeyframeGatePass : public compute::Pass {
         double stationary_max_score = 0.8;
     };
 
-    KeyframeGatePass(MappingState& state, Opts opts);
-    KeyframeGatePass(MappingState& state);
+    KeyframeGatePass(std::shared_ptr<MappingState> state, Opts opts);
+    KeyframeGatePass(std::shared_ptr<MappingState> state);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
@@ -91,7 +92,7 @@ class KeyframeGatePass : public compute::Pass {
     void setStorage(AnyBag& storage) { storage_ = &storage; }
 
    private:
-    MappingState& state_;
+    std::shared_ptr<MappingState> state_;
     Opts opts_;
     AnyBag* storage_ = nullptr;
 };
