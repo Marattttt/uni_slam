@@ -73,6 +73,8 @@ class Compute {
     constexpr std::shared_ptr<GPU> getGPUPtr() const { return gpu_; }
 
    private:
+    std::filesystem::path generatePerfOutFilePath() const;
+
     std::shared_ptr<GPU> gpu_;
     std::vector<Stage> stages_;
     AnyBag storage_;

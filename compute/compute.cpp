@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <memory>
 #include <print>
+#include <ranges>
 #include <string_view>
 
 #include "stage.hpp"
@@ -57,6 +58,15 @@ PrepareOpts wslam::compute::createPreInitializeOpts() {
     };
 }
 
+std::filesystem::path Compute::generatePerfOutFilePath() const {
+    const auto now = std::chrono::floor<std::chrono::seconds>(
+        std::chrono::system_clock::now());
+    const auto name = std::format(
+        "perf_{:%d-%m-%Y_%H-%M-%S}.yaml",
+        std::chrono::zoned_time{std::chrono::current_zone(), now});
+    return perf_logs_output_ / name;
+}
+
 std::optional<std::string> Compute::prepare(const PrepareOpts& opts) {
     perf_logs_output_ = opts.perf_logs_output_;
 
@@ -71,6 +81,9 @@ std::optional<std::string> Compute::prepare(const PrepareOpts& opts) {
     if (err.has_value()) {
         return std::format("resources: {}", err.value());
     }
+
+    addFlushable(
+        [this]() { return this->perf_.writeFile(generatePerfOutFilePath()); });
 
     return std::nullopt;
 }

@@ -11,12 +11,23 @@ commands in the appendix.
 
 ## 1. TL;DR
 
-| Metric (Sim(3)-aligned vs GT) | wslam | ORB-SLAM3 mono-inertial |
-|---|---|---|
-| APE RMSE (absolute trajectory error) | **1.62 m** | **0.036 m** |
-| RPE RMSE per 1 m travelled | 2.76 m | 0.095 m |
-| Raw path length (GT: 58.6 m) | 51.6 m ✓ | 58.0 m ✓ |
-| Umeyama scale correction | **0.18** ⚠ | ~1.0 |
+| Metric (Sim(3)-aligned vs GT)         | wslam       | ORB-SLAM3 mono-inertial   |
+|---                                    |---          |---                        |
+| APE RMSE (absolute trajectory error)  | **1.62 m**  | **0.036 m**               |
+| RPE RMSE per 1 m travelled            | 2.76 m      | 0.095 m                   |
+| Raw path length (GT: 58.6 m)          | 51.6 m ✓    | 58.0 m ✓                  |
+| Umeyama scale correction              | **0.18** ⚠  | ~1.0                      |
+
+
+
+
+
+
+
+
+
+
+
 
 The headline 1.62 m is **not** a scale problem and **not** an export/convention
 bug. The trajectory's total metric length is right (IMU integration works on

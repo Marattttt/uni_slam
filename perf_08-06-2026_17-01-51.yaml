@@ -1,0 +1,90 @@
+exec [Clear bindings]:
+  stats:
+    avg: 0.001
+    max: 0.012
+    total: 0.875
+    count: 700
+  "[Clear bindings pass]":
+    stats:
+      avg: 0.001
+      max: 0.012
+      total: 0.874
+      count: 700
+exec [Feature detect]:
+  stats:
+    avg: 0.005
+    max: 0.034
+    total: 3.538
+    count: 700
+  GPU { [Fill Pyramid pass], [Pass Detect Corners], [Cull Corners pass], [Generate Descriptors pass] }:
+    stats:
+      avg: 0.003
+      max: 0.031
+      total: 1.937
+      count: 700
+  "[Sensor Loader Pass]":
+    stats:
+      avg: 0.002
+      max: 0.012
+      total: 1.598
+      count: 700
+exec [Mapping]:
+  stats:
+    avg: 0.539
+    max: 7.509
+    total: 377.034
+    count: 700
+  "[Factor Builder pass]":
+    stats:
+      avg: 0.003
+      max: 0.076
+      total: 1.932
+      count: 700
+  "[ISAM2 Drain pass]":
+    stats:
+      avg: 0.536
+      max: 7.509
+      total: 375.006
+      count: 700
+  "[ISAM2 Update pass]":
+    stats:
+      avg: 0.000
+      max: 0.000
+      total: 0.004
+      count: 700
+  "[Keyframe Gate pass]":
+    stats:
+      avg: 0.000
+      max: 0.001
+      total: 0.090
+      count: 700
+exec [Pose Estimate]:
+  stats:
+    avg: 0.040
+    max: 0.285
+    total: 28.299
+    count: 700
+  "[Load Features pass]":
+    stats:
+      avg: 0.000
+      max: 0.006
+      total: 0.226
+      count: 700
+  "[Match Features pass]":
+    stats:
+      avg: 0.027
+      max: 0.114
+      total: 18.594
+      count: 700
+  "[RANSAC Features pass]":
+    stats:
+      avg: 0.005
+      max: 0.112
+      total: 3.819
+      count: 699
+  "[Triangulate pass]":
+    stats:
+      avg: 0.008
+      max: 0.130
+      total: 5.659
+      count: 699

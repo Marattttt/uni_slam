@@ -23,6 +23,8 @@ mkdir -p build
 
 LOG_AWAITER=OFF
 RUN_ARGS=()
+BUILD_TYPE=Debug
+
 for arg in "$@"; do
     case "$arg" in
         -h|--help)      print_help; exit 0 ;;
@@ -30,6 +32,8 @@ for arg in "$@"; do
         -gui)           RUN_ARGS+=("-gui") ;;
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
         --map-out=*)    RUN_ARGS+=("$arg") ;;
+        Debug)          BUILD_TYPE="Debug" ;;
+        Release)        BUILD_TYPE="Release" ;;
         *)              echo "error: unknown argument '$arg'" >&2
                         print_help >&2
                         exit 1 ;;
@@ -37,7 +41,7 @@ for arg in "$@"; do
 done
 
 cmake -S . -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DLOG_AWAITER_CALLS=$LOG_AWAITER
 
 cmake --build build

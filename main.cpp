@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <charconv>
+#include <csignal>
 #include <print>
 #include <span>
 #include <string_view>
@@ -42,6 +43,23 @@ WslamConfig parseArgs(std::span<char*> args) {
     }
     return config;
 }
+
+namespace {
+// Touched only from the signal handler and the main loop. volatile
+// sig_atomic_t is the one type the standard guarantees is safe to write from
+// an async signal handler.
+volatile std::sig_atomic_t g_shutdown_requested = 0;
+
+// Async-signal-safe: only writes the flag and calls signal() (POSIX lists it
+// as async-signal-safe). No logging or allocation here.
+extern "C" void handleShutdownSignal(int /*signal_number*/) {
+    g_shutdown_requested = 1;
+    // Re-arm the OS default for BOTH signals so a second Ctrl+C / kill
+    // force-quits immediately, even if finalize() ever hangs.
+    std::signal(SIGINT, SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
+}
+}  // namespace
 
 int main_test(WslamConfig config) {
     compute::Compute comp;
@@ -98,20 +116,37 @@ int main_test(WslamConfig config) {
         std::terminate();
     }
 
+    // Stop the loop cleanly on Ctrl+C (SIGINT) or kill (SIGTERM) so finalize()
+    // still flushes the iSAM2 worker and exports the map. The handler re-arms
+    // the OS defaults, so a second signal force-quits.
+    std::signal(SIGINT, handleShutdownSignal);
+    std::signal(SIGTERM, handleShutdownSignal);
+
     for (uint64_t i = 0;
-         config.max_iterations == 0 || i < config.max_iterations; ++i) {
+         (config.max_iterations == 0 || i < config.max_iterations)
+             && g_shutdown_requested == 0;
+         ++i) {
         auto err = comp.execute();
         if (i % 100 == 0) {
             std::println("Handled frame {}", i);
         }
 
         if (err) {
+            // If the interrupt landed mid-execute and surfaced as an error,
+            // fall through to finalize rather than aborting the export.
+            if (g_shutdown_requested != 0) {
+                break;
+            }
             spdlog::error("executing: {}", err.value());
             return 1;
         }
     }
 
-    if (config.max_iterations != 0) {
+    if (g_shutdown_requested != 0) {
+        spdlog::info("[Main] Shutdown signal received; stopping loop and "
+                     "finalizing (flush + export). Send the signal again to "
+                     "force-quit.");
+    } else if (config.max_iterations != 0) {
         spdlog::info("Reached max-iters limit ({}); exiting cleanly",
                      config.max_iterations);
     }
