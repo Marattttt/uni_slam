@@ -1,7 +1,5 @@
 #pragma once
 
-#include <memory>
-
 #include "common.hpp"
 #include "compute.hpp"
 #include "provider_base.hpp"
@@ -39,9 +37,8 @@ template <size_t CamCnt>
 template <size_t CamCnt>
 [[nodiscard]] std::optional<std::string> CreateWslamPipeline(
     compute::Compute& compute, GpuSharedBindings& shared,
-    std::shared_ptr<data::ProviderBase<CamCnt>> provider,
-    const WslamConfig& config) {
-    if (auto err = impl::SetSensorIntrinsics(compute, *provider)) {
+    data::ProviderBase<CamCnt>& provider, const WslamConfig& config) {
+    if (auto err = impl::SetSensorIntrinsics(compute, provider)) {
         return "getting sensor intrinsics: " + std::move(err).value();
     }
 

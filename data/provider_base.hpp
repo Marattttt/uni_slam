@@ -114,8 +114,8 @@ class ProviderBase {
 
 template <size_t Requested, size_t Available>
 std::generator<std::expected<Reading<Requested>, std::string>> AdaptProvider(
-    std::shared_ptr<ProviderBase<Available>> provider) {
-    for (auto src : provider->getReadings()) {
+    ProviderBase<Available>& provider) {
+    for (auto src : provider.getReadings()) {
         if (!src) {
             co_yield std::unexpected(src.error());
             continue;

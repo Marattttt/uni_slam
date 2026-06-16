@@ -74,12 +74,11 @@ int main_test(WslamConfig config) {
         std::terminate();
     }
 
-    std::shared_ptr<data::ProviderBase<2U>> euroc_data
-        = std::make_shared<data::EurocProvider>(
+    std::unique_ptr<data::ProviderBase<2U>> euroc_data
+        = std::make_unique<data::EurocProvider>(
             data::CreateEurocProviderOpts());
 
-    if (auto err
-        = CreateWslamPipeline(comp, shared, std::move(euroc_data), config)) {
+    if (auto err = CreateWslamPipeline(comp, shared, *euroc_data, config)) {
         spdlog::critical(LOG_ID " creating wslam pipeline: {}",
                          std::move(err).value());
         std::terminate();
