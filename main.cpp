@@ -6,7 +6,6 @@
 #include <charconv>
 #include <csignal>
 #include <memory>
-#include <print>
 #include <span>
 #include <string_view>
 
@@ -103,7 +102,8 @@ int main_test(WslamConfig config) {
          ++i) {
         auto err = comp.execute();
         if (i % 100 == 0) {
-            std::println("Handled frame {}", i);
+            // Warn level so progress stays visible when info is disabled.
+            spdlog::warn(LOG_ID " Handled frame {}", i);
         }
 
         if (err) {
@@ -126,8 +126,6 @@ int main_test(WslamConfig config) {
         spdlog::info(LOG_ID " Reached max-iters limit ({}); exiting",
                      config.max_iterations);
     }
-
-    std::println("FInished writing executing slam loop");
 
     if (auto err = comp.finalize()) {
         spdlog::error(LOG_ID " Could not finalize. Errors: {}",
