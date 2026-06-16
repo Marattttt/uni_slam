@@ -9,3 +9,7 @@ NOTES_*.md
 # ORB-SLAM3 benchmark workspace
 benchmarks/.venv/
 benchmarks/results/
+
+# Generated perf logs
+init_perflog.yaml
+perf_*.yaml

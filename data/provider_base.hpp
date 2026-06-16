@@ -5,6 +5,7 @@
 #include <expected>
 #include <filesystem>
 #include <generator>
+#include <memory>
 #include <vector>
 
 namespace Eigen {
@@ -113,8 +114,8 @@ class ProviderBase {
 
 template <size_t Requested, size_t Available>
 std::generator<std::expected<Reading<Requested>, std::string>> AdaptProvider(
-    std::generator<std::expected<Reading<Available>, std::string>>& src_gen) {
-    for (auto src : src_gen) {
+    std::shared_ptr<ProviderBase<Available>> provider) {
+    for (auto src : provider->getReadings()) {
         if (!src) {
             co_yield std::unexpected(src.error());
             continue;

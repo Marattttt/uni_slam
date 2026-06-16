@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <memory>
 #include <print>
-#include <ranges>
 #include <string_view>
 
 #include "stage.hpp"
@@ -39,10 +38,10 @@ void impl::print_device_captured_error(const wgpu::Device& device,
 
 void Compute::addStage(Stage stage) { stages_.emplace_back(std::move(stage)); }
 
-PrepareOpts wslam::compute::createPreInitializeOpts() {
+ComputeConfig wslam::compute::createDefaultConfig() {
     const char* shader_dir = std::getenv(WSLAM_SHADER_SRC_DIR_ENV);
     if (shader_dir == nullptr) {
-        shader_dir = "";
+        shader_dir = ".";
     }
 
     const char* logs_out = std::getenv(WSLAM_PERF_OUT_DIR_ENV);
@@ -67,7 +66,7 @@ std::filesystem::path Compute::generatePerfOutFilePath() const {
     return perf_logs_output_ / name;
 }
 
-std::optional<std::string> Compute::prepare(const PrepareOpts& opts) {
+std::optional<std::string> Compute::prepare(const ComputeConfig& opts) {
     perf_logs_output_ = opts.perf_logs_output_;
 
     gpu_ = std::make_shared<GPU>(
@@ -88,7 +87,7 @@ std::optional<std::string> Compute::prepare(const PrepareOpts& opts) {
     return std::nullopt;
 }
 
-std::optional<std::string> Compute::initizalizeAllStages() {
+std::optional<std::string> Compute::initizalize() {
     for (Stage& stage : stages_) {
 #ifndef NPERF
         const auto perfscope = perf_.beginRecord("init " + stage.getId());

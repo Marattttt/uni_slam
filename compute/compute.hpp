@@ -31,14 +31,14 @@ void print_device_captured_error(const wgpu::Device& device,
                                  wgpu::ErrorType errtype, wgpu::StringView msg);
 };  // namespace impl
 
-struct PrepareOpts {
+struct ComputeConfig {
     const std::function<wgpu::DeviceLostCallback<void>> deviceLostCallback_;
     const std::function<wgpu::UncapturedErrorCallback<void>> errorCallback_;
     const std::filesystem::path shader_module_path_prefix_;
     const std::filesystem::path perf_logs_output_;
 };
 
-PrepareOpts createPreInitializeOpts();
+ComputeConfig createDefaultConfig();
 
 constexpr std::string kComputeStopExecution = "COMP_STOP";
 constexpr std::string kFullStopExecution = "FULL_STOP";
@@ -51,9 +51,9 @@ class Compute {
 
     void print_adapter_info() const;
 
-    [[nodiscard]] std::optional<std::string> prepare(
-        const PrepareOpts& opts = createPreInitializeOpts());
-    [[nodiscard]] std::optional<std::string> initizalizeAllStages();
+    [[nodiscard]] std::optional<std::string> prepare(const ComputeConfig& opts
+                                                     = createDefaultConfig());
+    [[nodiscard]] std::optional<std::string> initizalize();
     [[nodiscard]] std::optional<std::string> execute();
     [[nodiscard]] std::optional<std::vector<std::string>> finalize();
 

@@ -48,7 +48,7 @@ add_executable(pc_wslam
     wslam/triangulate_cpu.cpp
     wslam/viz.cpp
     wslam/vizualize_data.cpp
-    wslam/wslam.hpp
+    wslam/wslam.cpp
  )
 
 target_include_directories(pc_wslam PRIVATE 
