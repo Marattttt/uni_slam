@@ -1,5 +1,7 @@
 #pragma once
 
+#include <spdlog/spdlog.h>
+
 #include <cstdint>
 #include <future>
 #include <memory>
@@ -150,6 +152,7 @@ class Isam2DrainPass : public compute::Pass {
         return std::nullopt;
     }
     [[nodiscard]] std::optional<std::string> execute() override {
+        spdlog::info("[ISAM2 Drain pass] Executing");
         return target_.drainPending();
     }
     [[nodiscard]] std::string getId() const override {
