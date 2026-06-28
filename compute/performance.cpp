@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <ranges>
 #include <string_view>
 
 #include "yaml-cpp/node/emit.h"
@@ -50,8 +51,13 @@ YAML::Node StatsToYaml(const PerfRecorder::Stats& stats) {
         return node;
     }
 
-    const Eigen::Map<const Eigen::VectorXd> calls(
-        stats.calls.data(), static_cast<Eigen::Index>(stats.calls.size()));
+    std::vector<double> calls_sorted = stats.calls;
+    std::ranges::sort(calls_sorted);
+
+    const Eigen::Map<const Eigen::VectorXd> mapped(
+        calls_sorted.data(), static_cast<Eigen::Index>(calls_sorted.size()));
+
+    Eigen::VectorXd calls = mapped;
 
     const auto set = [&](std::string_view key, std::floating_point auto val) {
         node[key] = std::format("{:.3f}", val);
@@ -60,6 +66,21 @@ YAML::Node StatsToYaml(const PerfRecorder::Stats& stats) {
     set("avg", calls.mean());
     set("max", calls.maxCoeff());
     set("total", calls.sum());
+
+    std::array<std::string_view, 3> perc_labels = {
+        "perc_25",
+        "perc_50",
+        "perc_75",
+    };
+
+    for (size_t i : std::views::iota(1UZ, 3UZ)) {
+        const auto label = perc_labels.at(i);
+
+        const auto perc = static_cast<double>(i) * 0.25;
+        const auto pos = perc * static_cast<double>(calls_sorted.size());
+
+        set(label, calls_sorted.at(static_cast<size_t>(pos)));
+    }
 
     node["count"] = calls.size();
 
