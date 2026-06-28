@@ -21,13 +21,13 @@ struct FilterKeyframeConfig {
 
 class FilterKeyframePass : public compute::Pass {
    public:
-    [[nodiscard]] std::string getId() const final;
-    [[nodiscard]] std::optional<std::string> initialize() final;
-    [[nodiscard]] std::optional<std::string> execute() final;
-
     FilterKeyframePass(compute::Compute& comp, MappingSharedBindings& shared,
                        FilterKeyframeConfig filter = {})
         : filter_(filter), shared_(shared), storage_(comp.getStorage()) {}
+
+    [[nodiscard]] std::string getId() const final;
+    [[nodiscard]] std::optional<std::string> initialize() final;
+    [[nodiscard]] std::optional<std::string> execute() final;
 
    private:
     // Information about parallax detected in a pair of (key)frames
