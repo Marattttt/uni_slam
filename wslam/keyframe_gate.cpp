@@ -52,8 +52,7 @@ constexpr double LodScale(uint32_t lod) {
 
 constexpr Eigen::Vector2d ToLod0Pixel(const Feature& f) {
     const double scale = LodScale(f.lod);
-    return {static_cast<double>(f.x) * scale,
-            static_cast<double>(f.y) * scale};
+    return {static_cast<double>(f.x) * scale, static_cast<double>(f.y) * scale};
 }
 
 // Returns the rotation angle (radians) of a 3x3 rotation, clamped for
@@ -192,9 +191,8 @@ StationaryWindow FindStationaryWindow(std::span<const data::IMUReading> buf,
             = std::max(0.0, accel_mag_sq_sum / n - accel_mean * accel_mean);
         const double score = std::sqrt(accel_var) + gyro_dev_sum / n;
         if (score < best.score) {
-            best = StationaryWindow{.samples = window,
-                                    .score = score,
-                                    .found = score < max_score};
+            best = StationaryWindow{
+                .samples = window, .score = score, .found = score < max_score};
         }
     }
     return best;
@@ -220,8 +218,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
     const bool had_origin = state_->has_origin;
     const auto finish = [&](MapDelta d) -> std::optional<std::string> {
         if (d.accepted || !had_origin) {
-            storage.set(ResourceIdentifier::FeatureReferenceAdvanceName,
-                        true);
+            storage.set(ResourceIdentifier::FeatureReferenceAdvanceName, true);
         }
         storage.set(ResourceIdentifier::MapDeltaName, std::move(d));
         return std::nullopt;
@@ -248,7 +245,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
         return finish(std::move(delta));
     }
 
-    const double rot_angle = RotationAngle(tri.R_prev_to_curr);
+    const double rot_angle = RotationAngle(tri.rotation);
 
     // Association candidates: ALL RANSAC inliers, not just the subset
     // that survived triangulation's cheirality/reprojection filters.
@@ -308,8 +305,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
     const auto mid
         = parallaxes_scratch.begin()
           + static_cast<std::ptrdiff_t>(parallaxes_scratch.size() / 2);
-    std::nth_element(parallaxes_scratch.begin(), mid,
-                     parallaxes_scratch.end());
+    std::nth_element(parallaxes_scratch.begin(), mid, parallaxes_scratch.end());
     const double median_parallax_px = *mid;
 
     if (!state_->has_origin) {
@@ -332,14 +328,15 @@ std::optional<std::string> KeyframeGatePass::execute() {
         // Motion gate: accept only if EITHER the recovered rotation OR the
         // median pixel parallax is large enough. The OR is essential —
         // pure-translation frames have ~zero rotation but real parallax.
-        const bool tiny_motion = (rot_angle < opts_.min_rotation_rad)
-                                  && (median_parallax_px < opts_.min_parallax_px);
+        const bool tiny_motion
+            = (rot_angle < opts_.min_rotation_rad)
+              && (median_parallax_px < opts_.min_parallax_px);
         if (tiny_motion) {
             spdlog::debug(LOG_ID
                           " Tiny motion: rot={:.4f} rad (< {:.4f}) AND "
                           "median parallax={:.2f} px (< {:.2f}); skipping",
-                          rot_angle, opts_.min_rotation_rad,
-                          median_parallax_px, opts_.min_parallax_px);
+                          rot_angle, opts_.min_rotation_rad, median_parallax_px,
+                          opts_.min_parallax_px);
             return finish(std::move(delta));
         }
 
@@ -402,12 +399,12 @@ std::optional<std::string> KeyframeGatePass::execute() {
             = state_->predicted_values.at<gtsam::Pose3>(prev_key);
         const Eigen::Matrix3d r_wp = prev_pose.rotation().matrix();
         const Eigen::Vector3d t_wp = prev_pose.translation();
-        const Eigen::Matrix3d r_wc = r_wp * tri.R_prev_to_curr.transpose();
-        const Eigen::Vector3d t_wc = t_wp - r_wc * tri.t_prev_to_curr;
+        const Eigen::Matrix3d r_wc = r_wp * tri.rotation.transpose();
+        const Eigen::Vector3d t_wc = t_wp - r_wc * tri.translation;
         delta.R_world_cam = r_wc;
         delta.t_world_cam = t_wc;
-        delta.R_rel = tri.R_prev_to_curr;
-        delta.t_rel = tri.t_prev_to_curr;
+        delta.R_rel = tri.rotation;
+        delta.t_rel = tri.translation;
     }
 
     // Record the new keyframe's initial pose in predicted_values so the
@@ -448,9 +445,8 @@ std::optional<std::string> KeyframeGatePass::execute() {
             // the body (=IMU) frame and rotated into the camera/world
             // frame for downstream preintegration.
             if (delta.is_first_keyframe && !imu_buf.empty()) {
-                const auto cam_ptr
-                    = storage.getPtr<data::CamSensorParams>(
-                        ResourceIdentifier::GetCameraIntrinsicsName(0));
+                const auto cam_ptr = storage.getPtr<data::CamSensorParams>(
+                    ResourceIdentifier::GetCameraIntrinsicsName(0));
                 if (cam_ptr.has_value()) {
                     const auto window = FindStationaryWindow(
                         std::span<const data::IMUReading>(imu_buf.data(),
@@ -472,8 +468,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
                     // gravity_in_world = R_cam_body * gravity_in_body.
                     const Eigen::Matrix3d r_cam_body
                         = (**cam_ptr).T_BS.block<3, 3>(0, 0).transpose();
-                    const Eigen::Vector3d g_body
-                        = MeanAccelImu(window.samples);
+                    const Eigen::Vector3d g_body = MeanAccelImu(window.samples);
                     // The accel reading on a stationary IMU is the negative
                     // of gravitational acceleration (specific force points
                     // opposite to free-fall). Negate to recover the actual
@@ -503,20 +498,19 @@ std::optional<std::string> KeyframeGatePass::execute() {
                         "|g|={:.3f} m/s^2, gyro_bias=({:.5f},{:.5f},{:.5f}) "
                         "rad/s",
                         window.samples.size(), window.found, window.score,
-                        static_cast<double>(
-                            window.samples.front().timestamp)
+                        static_cast<double>(window.samples.front().timestamp)
                             * 1e-9,
                         static_cast<double>(window.samples.back().timestamp)
                             * 1e-9,
                         state_->gravity_world.x(), state_->gravity_world.y(),
-                        state_->gravity_world.z(),
-                        state_->gravity_world.norm(), gyro_bias.x(),
-                        gyro_bias.y(), gyro_bias.z());
+                        state_->gravity_world.z(), state_->gravity_world.norm(),
+                        gyro_bias.x(), gyro_bias.y(), gyro_bias.z());
                 } else {
-                    spdlog::warn(LOG_ID
-                                 " No camera params under '{}'; cannot "
-                                 "initialise gravity",
-                                 ResourceIdentifier::GetCameraIntrinsicsName(0));
+                    spdlog::warn(
+                        LOG_ID
+                        " No camera params under '{}'; cannot "
+                        "initialise gravity",
+                        ResourceIdentifier::GetCameraIntrinsicsName(0));
                 }
             }
 
@@ -559,8 +553,7 @@ std::optional<std::string> KeyframeGatePass::execute() {
                + ResourceIdentifier::GetCameraIntrinsicsName(0) + "'";
     }
     const auto& intrinsics_vec = (**cam_for_undistort).intrinsics;
-    const auto& distortion_vec
-        = (**cam_for_undistort).distortion_coefficients;
+    const auto& distortion_vec = (**cam_for_undistort).distortion_coefficients;
     const auto Undistort = [&](const Feature& f) {
         return UndistortLod0Pixel(f, intrinsics_vec, distortion_vec);
     };
@@ -632,9 +625,9 @@ std::optional<std::string> KeyframeGatePass::execute() {
         const auto tri_it = tri_by_curr.find(feat_curr);
         const Eigen::Vector3d p_world
             = tri_it != tri_by_curr.end()
-                  ? Eigen::Vector3d(
-                        delta.R_world_cam * tri_it->second->position_cam_curr
-                        + delta.t_world_cam)
+                  ? Eigen::Vector3d(delta.R_world_cam
+                                        * tri_it->second->position_cam_curr
+                                    + delta.t_world_cam)
                   : Eigen::Vector3d::Zero();
         delta.new_landmarks_world.emplace_back(id, p_world);
 

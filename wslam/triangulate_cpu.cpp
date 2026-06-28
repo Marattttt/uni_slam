@@ -4,16 +4,17 @@
 
 #include <Eigen/Dense>
 #include <Eigen/SVD>
-#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <vector>
 
 #include "common.hpp"
+#include "map_helpers_lods.hpp"
 #include "models.hpp"
 #include "provider_base.hpp"
 
 using namespace wslam;
+namespace util = wslam::map::util;
 
 #define LOG_ID "[Triangulate pass]"
 
@@ -27,91 +28,6 @@ std::string TriangulateCPU::getId() const { return LOG_ID; }
 
 namespace {
 namespace impl {
-
-constexpr double LodScale(uint32_t lod) {
-    double scale = 1.0;
-    for (uint32_t i = 0; i < lod; ++i) {
-        scale *= GPUConst::lod_scale_factor;
-    }
-    return scale;
-}
-
-constexpr Eigen::Vector2d ToLod0Pixel(const Feature& f) {
-    const double scale = LodScale(f.lod);
-    return {static_cast<double>(f.x) * scale,
-            static_cast<double>(f.y) * scale};
-}
-
-// Forward radial-tangential distortion as defined by OpenCV / EuRoC:
-//   x'' = x' (1 + k1 r^2 + k2 r^4) + 2 p1 x' y' + p2 (r^2 + 2 x'^2)
-//   y'' = y' (1 + k1 r^2 + k2 r^4) + p1 (r^2 + 2 y'^2) + 2 p2 x' y'
-//
-// (x', y') are normalised (calibrated) ideal coords; (x'', y'') are the
-// normalised coords that would actually hit the imager.
-constexpr Eigen::Vector2d DistortNormalised(const Eigen::Vector2d& xy,
-                                            const Eigen::Vector4d& d) {
-    const double x = xy.x();
-    const double y = xy.y();
-    const double r2 = x * x + y * y;
-    const double k1 = d[0];
-    const double k2 = d[1];
-    const double p1 = d[2];
-    const double p2 = d[3];
-    const double radial = 1.0 + k1 * r2 + k2 * r2 * r2;
-    const double dx = 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
-    const double dy = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
-    return {x * radial + dx, y * radial + dy};
-}
-
-// Inverse model: solves DistortNormalised(undist) = dist via Newton-style
-// fixed-point iteration. The standard OpenCV trick: start with the distorted
-// point as the initial guess (small distortion ⇒ near-identity), and update
-// by subtracting the residual scaled by the inverse radial term.
-Eigen::Vector2d UndistortNormalised(const Eigen::Vector2d& dist,
-                                    const Eigen::Vector4d& d,
-                                    uint32_t max_iters, double tol) {
-    Eigen::Vector2d xy = dist;
-    for (uint32_t i = 0; i < max_iters; ++i) {
-        const double x = xy.x();
-        const double y = xy.y();
-        const double r2 = x * x + y * y;
-        const double k1 = d[0];
-        const double k2 = d[1];
-        const double p1 = d[2];
-        const double p2 = d[3];
-        const double radial = 1.0 + k1 * r2 + k2 * r2 * r2;
-        const double dx_tan = 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
-        const double dy_tan = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
-        // The standard inversion update:
-        //   xy_next = (dist - tangential) / radial
-        // — derived by assuming the radial term is approximately constant
-        // across the iteration.
-        const Eigen::Vector2d next((dist.x() - dx_tan) / radial,
-                                   (dist.y() - dy_tan) / radial);
-        const double step = (next - xy).norm();
-        xy = next;
-        if (step < tol) {
-            break;
-        }
-    }
-    return xy;
-}
-
-// Maps a LOD-0 pixel through the inverse intrinsic + inverse distortion
-// pipeline, yielding a 2D normalised-image-plane (calibrated) coordinate.
-Eigen::Vector2d PixelToNormalised(const Eigen::Vector2d& pixel,
-                                  const Eigen::Vector4d& intrinsics,
-                                  const Eigen::Vector4d& distortion,
-                                  uint32_t max_iters, double tol) {
-    const double fu = intrinsics[0];
-    const double fv = intrinsics[1];
-    const double cu = intrinsics[2];
-    const double cv = intrinsics[3];
-    const Eigen::Vector2d dist((pixel.x() - cu) / fu,
-                               (pixel.y() - cv) / fv);
-    return UndistortNormalised(dist, distortion, max_iters, tol);
-}
-
 // Project a 3D point in camera coordinates back to a LOD-0 pixel, applying
 // the radial-tangential distortion model so that the result lives in the
 // same space as the observed feature pixels.
@@ -123,7 +39,7 @@ Eigen::Vector2d ProjectToPixel(const Eigen::Vector3d& p_cam,
                 std::numeric_limits<double>::quiet_NaN()};
     }
     const Eigen::Vector2d xy(p_cam.x() / p_cam.z(), p_cam.y() / p_cam.z());
-    const Eigen::Vector2d xy_dist = DistortNormalised(xy, distortion);
+    const Eigen::Vector2d xy_dist = util::DistortNormalised(xy, distortion);
     return {intrinsics[0] * xy_dist.x() + intrinsics[2],
             intrinsics[1] * xy_dist.y() + intrinsics[3]};
 }
@@ -145,9 +61,8 @@ Eigen::Matrix3d NormalisingTransform(
     }
     mean_dist /= static_cast<double>(points.size());
 
-    const double scale = (mean_dist > 1e-12)
-                             ? (std::numbers::sqrt2 / mean_dist)
-                             : 1.0;
+    const double scale
+        = (mean_dist > 1e-12) ? (std::numbers::sqrt2 / mean_dist) : 1.0;
 
     Eigen::Matrix3d t = Eigen::Matrix3d::Identity();
     t(0, 0) = scale;
@@ -168,12 +83,12 @@ std::optional<Eigen::Matrix3d> FitEssentialMatrix(
     const auto t_prev = NormalisingTransform(prev);
     const auto t_curr = NormalisingTransform(curr);
 
-    const auto normalise = [](const Eigen::Matrix3d& t,
-                              const Eigen::Vector2d& p) {
-        const Eigen::Vector3d ph(p.x(), p.y(), 1.0);
-        const Eigen::Vector3d n = t * ph;
-        return Eigen::Vector2d(n.x(), n.y());
-    };
+    const auto normalise
+        = [](const Eigen::Matrix3d& t, const Eigen::Vector2d& p) {
+              const Eigen::Vector3d ph(p.x(), p.y(), 1.0);
+              const Eigen::Vector3d n = t * ph;
+              return Eigen::Vector2d(n.x(), n.y());
+          };
 
     Eigen::MatrixXd a(static_cast<Eigen::Index>(prev.size()), 9);
     for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(prev.size()); ++i) {
@@ -203,16 +118,14 @@ std::optional<Eigen::Matrix3d> FitEssentialMatrix(
 
     Eigen::Matrix3d e_norm;
     // NOLINTBEGIN(readability-magic-numbers)
-    e_norm << v(0), v(1), v(2),
-              v(3), v(4), v(5),
-              v(6), v(7), v(8);
+    e_norm << v(0), v(1), v(2), v(3), v(4), v(5), v(6), v(7), v(8);
     // NOLINTEND(readability-magic-numbers)
 
     // Enforce essential-matrix shape: two equal non-zero singular values, one
     // zero singular value.
     Eigen::JacobiSVD<Eigen::Matrix3d> e_svd(
         e_norm, Eigen::ComputeFullU | Eigen::ComputeFullV);
-    const Eigen::Vector3d s = e_svd.singularValues();
+    const Eigen::Vector3d& s = e_svd.singularValues();
     const double avg = 0.5 * (s(0) + s(1));
     Eigen::Vector3d s_fixed(avg, avg, 0.0);
     const Eigen::Matrix3d e_clean
@@ -248,9 +161,7 @@ std::array<PoseCandidate, 4> DecomposeEssential(const Eigen::Matrix3d& e) {
     }
 
     Eigen::Matrix3d w;
-    w << 0.0, -1.0, 0.0,
-         1.0,  0.0, 0.0,
-         0.0,  0.0, 1.0;
+    w << 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0;
 
     const Eigen::Matrix3d r1 = u * w * v.transpose();
     const Eigen::Matrix3d r2 = u * w.transpose() * v.transpose();
@@ -266,10 +177,9 @@ std::array<PoseCandidate, 4> DecomposeEssential(const Eigen::Matrix3d& e) {
 //
 // Both rays are calibrated (normalised), so the first projection is the
 // identity and the second is [R | t].
-std::optional<Eigen::Vector3d> TriangulatePoint(const Eigen::Matrix3d& r,
-                                                const Eigen::Vector3d& t,
-                                                const Eigen::Vector2d& xy_prev,
-                                                const Eigen::Vector2d& xy_curr) {
+std::optional<Eigen::Vector3d> TriangulatePoint(
+    const Eigen::Matrix3d& r, const Eigen::Vector3d& t,
+    const Eigen::Vector2d& xy_prev, const Eigen::Vector2d& xy_curr) {
     Eigen::Matrix<double, 3, 4> p1;
     p1 << Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero();
     Eigen::Matrix<double, 3, 4> p2;
@@ -289,7 +199,7 @@ std::optional<Eigen::Vector3d> TriangulatePoint(const Eigen::Matrix3d& r,
     if (std::abs(x.w()) < 1e-12) {
         return std::nullopt;
     }
-    const Eigen::Vector3d p_prev = x.head<3>() / x.w();
+    Eigen::Vector3d p_prev = x.head<3>() / x.w();
     if (!p_prev.allFinite()) {
         return std::nullopt;
     }
@@ -317,17 +227,17 @@ std::vector<InlierCorrespondence> CollectInliers(
 
     for (const auto& lod_map : inliers) {
         for (const auto& [curr, prev] : lod_map) {
-            const auto px_prev = ToLod0Pixel(prev);
-            const auto px_curr = ToLod0Pixel(curr);
+            const auto px_prev = util::ToLod0Pixel(prev);
+            const auto px_curr = util::ToLod0Pixel(curr);
             out.push_back(InlierCorrespondence{
                 .feat_prev = prev,
                 .feat_curr = curr,
-                .xy_prev = PixelToNormalised(px_prev, cam.intrinsics,
-                                             cam.distortion_coefficients,
-                                             undistort_iters, undistort_tol),
-                .xy_curr = PixelToNormalised(px_curr, cam.intrinsics,
-                                             cam.distortion_coefficients,
-                                             undistort_iters, undistort_tol),
+                .xy_prev = util::PixelToNormalised(
+                    px_prev, cam.intrinsics, cam.distortion_coefficients,
+                    undistort_iters, undistort_tol),
+                .xy_curr = util::PixelToNormalised(
+                    px_curr, cam.intrinsics, cam.distortion_coefficients,
+                    undistort_iters, undistort_tol),
                 .px_prev = px_prev,
                 .px_curr = px_curr,
             });
@@ -351,9 +261,10 @@ CheiralityScore ScoreCandidate(const PoseCandidate& c,
     for (const auto& m : corr) {
         const auto p_opt = TriangulatePoint(c.r, c.t, m.xy_prev, m.xy_curr);
         if (!p_opt) {
-            s.points_prev.emplace_back(std::numeric_limits<double>::quiet_NaN(),
-                                       std::numeric_limits<double>::quiet_NaN(),
-                                       std::numeric_limits<double>::quiet_NaN());
+            s.points_prev.emplace_back(
+                std::numeric_limits<double>::quiet_NaN(),
+                std::numeric_limits<double>::quiet_NaN(),
+                std::numeric_limits<double>::quiet_NaN());
             continue;
         }
         const Eigen::Vector3d& p_prev = *p_opt;
@@ -380,8 +291,8 @@ double IntegrateGyroAngle(std::span<const data::IMUReading> imu) {
     for (size_t i = 1; i < imu.size(); ++i) {
         const auto& a = imu[i - 1];
         const auto& b = imu[i];
-        const double dt_s = static_cast<double>(b.timestamp - a.timestamp)
-                            * 1e-9;
+        const double dt_s
+            = static_cast<double>(b.timestamp - a.timestamp) * 1e-9;
         if (dt_s <= 0.0) {
             continue;
         }
@@ -393,13 +304,6 @@ double IntegrateGyroAngle(std::span<const data::IMUReading> imu) {
     }
     return total.norm();
 }
-
-double RotationAngle(const Eigen::Matrix3d& r) {
-    // Clamp for numerical safety: trace can land slightly outside [-1, 3].
-    const double trace = std::clamp(r.trace(), -1.0, 3.0);
-    return std::acos(std::clamp(0.5 * (trace - 1.0), -1.0, 1.0));
-}
-
 }  // namespace impl
 }  // namespace
 
@@ -447,8 +351,8 @@ std::optional<std::string> TriangulateCPU::execute() {
     const auto ransac_ptr
         = storage.getPtr<RansacResult>(ResourceIdentifier::RansacResultName);
     if (!ransac_ptr) {
-        spdlog::warn(LOG_ID
-                     " No RansacResult in storage; writing empty triangulation");
+        spdlog::warn(
+            LOG_ID " No RansacResult in storage; writing empty triangulation");
         storage.set(ResourceIdentifier::TriangulationResultName,
                     TriangulationResult{});
         return std::nullopt;
@@ -527,15 +431,16 @@ std::optional<std::string> TriangulateCPU::execute() {
         return std::nullopt;
     }
 
-    spdlog::debug(LOG_ID " Selected pose candidate {} with {}/{} cheirality "
+    spdlog::debug(LOG_ID
+                  " Selected pose candidate {} with {}/{} cheirality "
                   "passes",
                   best_idx, best_score.in_front, corr.size());
 
     // Build landmarks: convert points from previous-camera frame to current,
     // apply depth + reprojection filters.
-    result.R_prev_to_curr = best.r;
-    result.t_prev_to_curr = best.t;
-    result.stats.rotation_angle_rad = impl::RotationAngle(best.r);
+    result.rotation = best.r;
+    result.translation = best.t;
+    result.stats.rotation_angle_rad = util::ComputeRotationAngle(best.r);
 
     double sum_err = 0.0;
     for (size_t i = 0; i < corr.size(); ++i) {

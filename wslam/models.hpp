@@ -177,10 +177,10 @@ struct TriangulationStats {
 struct TriangulationResult {
     // Rotation and translation that take a point in the previous camera frame
     // into the current camera frame: p_curr = R * p_prev + t.
-    Eigen::Matrix3d R_prev_to_curr = Eigen::Matrix3d::Identity();
+    Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
     // Unit-norm translation. Real-world scale would need depth from elsewhere
     // (IMU pre-integration with bias, stereo baseline, prior map, etc.).
-    Eigen::Vector3d t_prev_to_curr = Eigen::Vector3d::Zero();
+    Eigen::Vector3d translation = Eigen::Vector3d::Zero();
     std::vector<Landmark> landmarks;
     TriangulationStats stats;
 };
