@@ -1,4 +1,4 @@
-/build*
+/build
 /debug*
 .idea
 *.pyc
@@ -19,3 +19,10 @@ CMakeLists.txt.user*
 xcode/
 /Dockerfile
 /python/gtsam/notebooks/.ipynb_checkpoints/ellipses-checkpoint.ipynb
+.cache/
+.venv/
+
+# MyST build outputs
+_build
+GEMINI.md
+doc/#*.lyx#

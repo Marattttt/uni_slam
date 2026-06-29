@@ -136,7 +136,7 @@ class FactorBuilderPass : public compute::Pass {
     // for every CombinedImuFactor built by this pass. Lazily initialised
     // on the first keyframe so the gravity vector reflects the just-
     // computed startup gravity estimate in MappingState.
-    boost::shared_ptr<gtsam::PreintegrationCombinedParams> imu_params_;
+    std::shared_ptr<gtsam::PreintegrationCombinedParams> imu_params_;
 
     [[nodiscard]] std::optional<std::string> ensureCalibration();
     // Build `imu_params_` from MappingState's gravity + IMUSensorParams +

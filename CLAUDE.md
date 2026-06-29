@@ -8,9 +8,9 @@ Dawn, Pangolin and GTSAM must all be pre-built and installed into
 `vendor/dawn/install/`, `vendor/pangolin/install/` and `vendor/gtsam/install/`
 before CMake will succeed — they are not fetched by CMake. The repo ships
 helper scripts `build_dawn.sh`, `build_pangolin.sh` and `build_gtsam.sh` for
-this. **Eigen is pinned to 3.3.7** in `cmake/configureDependencies.cmake`
-because GTSAM 4.2.1 statically asserts `EIGEN_MAJOR_VERSION == 3` at consumer
-compile time.
+this. **Eigen is pinned to 3.4.0** in `cmake/configureDependencies.cmake`
+because GTSAM 4.3a1 bundles Eigen 3.4.0 and statically asserts the Eigen
+WORLD/MAJOR/MINOR version matches the consumer's at compile time.
 
 ```bash
 # Configure (Debug), build, and run (sources .env, sets WSLAM_SHADER_SRC_DIR)

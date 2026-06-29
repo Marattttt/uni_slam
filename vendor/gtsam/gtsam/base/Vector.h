@@ -16,6 +16,7 @@
  * @author  Frank Dellaert
  * @author  Alex Hagiopol
  * @author  Varun Agrawal
+ * @author  Fan Jiang
  */
 
 // \callgraph
@@ -42,14 +43,14 @@ typedef Eigen::Matrix<double, 1, 1> Vector1;
 typedef Eigen::Vector2d Vector2;
 typedef Eigen::Vector3d Vector3;
 
-static const Eigen::MatrixBase<Vector2>::ConstantReturnType Z_2x1 = Vector2::Zero();
-static const Eigen::MatrixBase<Vector3>::ConstantReturnType Z_3x1 = Vector3::Zero();
+static const Eigen::MatrixBase<Vector2>::ConstantReturnType Z_2x1 = Vector2::Constant(0.0);
+static const Eigen::MatrixBase<Vector3>::ConstantReturnType Z_3x1 = Vector3::Constant(0.0);
 
 // Create handy typedefs and constants for vectors with N>3
 // VectorN and Z_Nx1, for N=1..9
 #define GTSAM_MAKE_VECTOR_DEFS(N)                \
   using Vector##N = Eigen::Matrix<double, N, 1>; \
-  static const Eigen::MatrixBase<Vector##N>::ConstantReturnType Z_##N##x1 = Vector##N::Zero();
+  static const Eigen::MatrixBase<Vector##N>::ConstantReturnType Z_##N##x1 = Vector##N::Constant(0.0);
 
 GTSAM_MAKE_VECTOR_DEFS(4)
 GTSAM_MAKE_VECTOR_DEFS(5)
@@ -193,38 +194,14 @@ GTSAM_EXPORT Vector ediv_(const Vector &a, const Vector &b);
  */
 template<class V1, class V2>
 inline double dot(const V1 &a, const V2& b) {
-  assert (b.size()==a.size());
   return a.dot(b);
 }
 
 /** compatibility version for ublas' inner_prod() */
 template<class V1, class V2>
 inline double inner_prod(const V1 &a, const V2& b) {
-  assert (b.size()==a.size());
   return a.dot(b);
 }
-
-#ifdef GTSAM_ALLOW_DEPRECATED_SINCE_V42
-/**
- * BLAS Level 1 scal: x <- alpha*x
- * @deprecated: use operators instead
- */
-inline void GTSAM_DEPRECATED scal(double alpha, Vector& x) { x *= alpha; }
-
-/**
- * BLAS Level 1 axpy: y <- alpha*x + y
- * @deprecated: use operators instead
- */
-template<class V1, class V2>
-inline void GTSAM_DEPRECATED axpy(double alpha, const V1& x, V2& y) {
-  assert (y.size()==x.size());
-  y += alpha * x;
-}
-inline void axpy(double alpha, const Vector& x, SubVector y) {
-  assert (y.size()==x.size());
-  y += alpha * x;
-}
-#endif
 
 /**
  * house(x,j) computes HouseHolder vector v and scaling factor beta

@@ -70,7 +70,7 @@ struct MappingState {
     // are pre-undistorted by the keyframe gate before being added to the
     // smart factors, so distortion coefficients live separately on
     // intrinsics_cache (used for the upstream undistortion only).
-    boost::shared_ptr<gtsam::Cal3_S2> calibration;
+    std::shared_ptr<gtsam::Cal3_S2> calibration;
     std::optional<data::CamSensorParams> intrinsics_cache;
 
     // Latest computed estimate. Updated on the main thread by the iSAM

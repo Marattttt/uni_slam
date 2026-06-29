@@ -21,22 +21,25 @@ function (configureDependencies)
         INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${SPDLOG_INC}"
     )
 
-    # NOTE: pinned to 3.3.7 because GTSAM 4.2.1 was built against Eigen 3.3.7
-    # (its bundled copy) and statically asserts EIGEN_MAJOR_VERSION matches at
-    # consumer compile time. Newer Eigen breaks GTSAM headers.
+    # NOTE: pinned to 3.4.0 because GTSAM 4.3a1 bundles Eigen 3.4.0 (its
+    # 3rdparty copy) and statically asserts the Eigen WORLD/MAJOR/MINOR
+    # version matches at consumer compile time. The consumer Eigen must be
+    # the exact version GTSAM was built against; newer/older Eigen breaks
+    # GTSAM headers.
     FetchContent_Declare(
         eigen
         GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-        GIT_TAG        3.3.7
+        GIT_TAG        3.4.0
         GIT_SHALLOW    TRUE
     )
-    # Eigen 3.3.7's CMakeLists requires cmake < 4 semantics that CMake 4+
+    # Eigen 3.4.0's CMakeLists requires cmake < 4 semantics that CMake 4+
     # removed; opt in to legacy compatibility so the subproject configures.
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
     FetchContent_MakeAvailable(eigen)
 
-    # 3.3.7 only creates the bare `eigen` target unless EIGEN installs run;
-    # add the namespaced alias the rest of the codebase expects.
+    # Eigen's FetchContent subproject may only create the bare `eigen` target
+    # unless its install rules run; add the namespaced alias the rest of the
+    # codebase expects when it is missing.
     if(NOT TARGET Eigen3::Eigen)
         add_library(Eigen3::Eigen ALIAS eigen)
     endif()

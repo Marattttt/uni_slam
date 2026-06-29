@@ -1,8 +1,11 @@
 """Setup file to install the GTSAM package."""
 
-from setuptools import Distribution, find_packages, setup
+from setuptools import setup, find_namespace_packages, Distribution
 
-packages = find_packages(where=".")
+packages = find_namespace_packages(
+    where=".",
+    exclude=('build', 'build.*', 'CMakeFiles', 'CMakeFiles.*',
+             'gtsam.notebooks', '*.preamble', '*.specializations', 'dist'))
 print("PACKAGES: ", packages)
 
 package_data = {
@@ -10,23 +13,21 @@ package_data = {
         "./*.so",
         "./*.dll",
         "./*.pyd",
-        "Data/*",  # Add the data files to the package
-        "Data/**/*",  # Add the data files in subdirectories
+        "*.pyi", "**/*.pyi",  # Add the type hints
     ]
 }
 
 # Cleaner to read in the contents rather than copy them over.
 readme_contents = open("${GTSAM_SOURCE_DIR}/README.md").read()
 
-
+# The cibuildwheel tool won't recognize a wheel as platform-dependent unless the ext_modules option is defined in setup.py. This is used to define C/C++ source files that need to be built for the wheel.
+# However, we pre-build our C++ files. Thus, we force cibuildwheel to think that there are ext_modules defined by overwriting the has_ext_modules() function.
 class BinaryDistribution(Distribution):
-    """Mark the wheel as platform-dependent even though extensions are prebuilt."""
-
-    def has_ext_modules(self):
+    def has_ext_modules(foo):
         return True
 
 setup(
-    name='gtsam',
+    name='${SETUP_NAME}',
     description='Georgia Tech Smoothing And Mapping library',
     url='https://gtsam.org/',
     version='${GTSAM_VERSION_STRING}',  # https://www.python.org/dev/peps/pep-0440/
@@ -46,7 +47,6 @@ setup(
         'Operating System :: Microsoft :: Windows',
         'Operating System :: POSIX',
         'License :: OSI Approved :: BSD License',
-        'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 3',
     ],
     packages=packages,

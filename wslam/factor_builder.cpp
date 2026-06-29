@@ -180,7 +180,7 @@ std::optional<std::string> FactorBuilderPass::ensureCalibration() {
     // the pinhole part. Distortion coefficients remain on
     // intrinsics_cache for the gate's undistortion step.
     const auto& cam = state_->intrinsics_cache.value();
-    state_->calibration = boost::make_shared<gtsam::Cal3_S2>(
+    state_->calibration = std::make_shared<gtsam::Cal3_S2>(
         cam.intrinsics(0), cam.intrinsics(1), 0.0, cam.intrinsics(2),
         cam.intrinsics(3));
 
@@ -448,7 +448,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
 
         SmartFactor::shared_ptr factor;
         if (is_new_factor) {
-            factor = boost::make_shared<SmartFactor>(smart_noise,
+            factor = std::make_shared<SmartFactor>(smart_noise,
                                                      state_->calibration,
                                                      smart_params);
             state_->smart_factors.insert({id, factor});
@@ -461,7 +461,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
             // the clone and replace MappingState's pointer with it; the
             // old object lives on in iSAM2's graph until the worker
             // processes the remove.
-            factor = boost::make_shared<SmartFactor>(*it->second);
+            factor = std::make_shared<SmartFactor>(*it->second);
             it->second = factor;
             auto idx_it = state_->smart_factor_indices.find(id);
             if (idx_it != state_->smart_factor_indices.end()) {

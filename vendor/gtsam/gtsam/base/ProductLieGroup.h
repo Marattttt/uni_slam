@@ -27,13 +27,13 @@ namespace gtsam {
 /// Assumes Lie group structure for G and H
 template<typename G, typename H>
 class ProductLieGroup: public std::pair<G, H> {
-  BOOST_CONCEPT_ASSERT((IsLieGroup<G>));
-  BOOST_CONCEPT_ASSERT((IsLieGroup<H>));
+  GTSAM_CONCEPT_ASSERT(IsLieGroup<G>);
+  GTSAM_CONCEPT_ASSERT(IsLieGroup<H>);
   typedef std::pair<G, H> Base;
 
 protected:
-  enum {dimension1 = traits<G>::dimension};
-  enum {dimension2 = traits<H>::dimension};
+  constexpr static const size_t dimension1 = traits<G>::dimension;
+  constexpr static const size_t dimension2 = traits<H>::dimension;
 
 public:
   /// Default constructor yields identity
@@ -67,22 +67,22 @@ public:
 
   /// @name Manifold
   /// @{
-  enum {dimension = dimension1 + dimension2};
-  inline static size_t Dim() {return dimension;}
-  inline size_t dim() const {return dimension;}
+  inline constexpr static size_t dimension = dimension1 + dimension2;
+  inline static size_t Dim() { return dimension; }
+  inline size_t dim() const { return dimension; }
 
-  typedef Eigen::Matrix<double, dimension, 1> TangentVector;
-  typedef OptionalJacobian<dimension, dimension> ChartJacobian;
+  using TangentVector = Eigen::Matrix<double, static_cast<int>(dimension), 1>;
+  using ChartJacobian = OptionalJacobian<dimension, dimension>;
 
   ProductLieGroup retract(const TangentVector& v, //
-      ChartJacobian H1 = boost::none, ChartJacobian H2 = boost::none) const {
+      ChartJacobian H1 = {}, ChartJacobian H2 = {}) const {
     if (H1||H2) throw std::runtime_error("ProductLieGroup::retract derivatives not implemented yet");
     G g = traits<G>::Retract(this->first, v.template head<dimension1>());
     H h = traits<H>::Retract(this->second, v.template tail<dimension2>());
     return ProductLieGroup(g,h);
   }
   TangentVector localCoordinates(const ProductLieGroup& g, //
-      ChartJacobian H1 = boost::none, ChartJacobian H2 = boost::none) const {
+      ChartJacobian H1 = {}, ChartJacobian H2 = {}) const {
     if (H1||H2) throw std::runtime_error("ProductLieGroup::localCoordinates derivatives not implemented yet");
     typename traits<G>::TangentVector v1 = traits<G>::Local(this->first, g.first);
     typename traits<H>::TangentVector v2 = traits<H>::Local(this->second, g.second);
@@ -95,13 +95,13 @@ public:
   /// @name Lie Group
   /// @{
 protected:
-  typedef Eigen::Matrix<double, dimension, dimension> Jacobian;
-  typedef Eigen::Matrix<double, dimension1, dimension1> Jacobian1;
-  typedef Eigen::Matrix<double, dimension2, dimension2> Jacobian2;
+  using Jacobian = Eigen::Matrix<double, static_cast<int>(dimension), static_cast<int>(dimension)>;
+  using Jacobian1 = Eigen::Matrix<double, static_cast<int>(dimension1), static_cast<int>(dimension1)>;
+  using Jacobian2 = Eigen::Matrix<double, static_cast<int>(dimension2), static_cast<int>(dimension2)>;
 
 public:
   ProductLieGroup compose(const ProductLieGroup& other, ChartJacobian H1,
-      ChartJacobian H2 = boost::none) const {
+      ChartJacobian H2 = {}) const {
     Jacobian1 D_g_first; Jacobian2 D_h_second;
     G g = traits<G>::Compose(this->first,other.first, H1 ? &D_g_first : 0);
     H h = traits<H>::Compose(this->second,other.second, H1 ? &D_h_second : 0);
@@ -114,7 +114,7 @@ public:
     return ProductLieGroup(g,h);
   }
   ProductLieGroup between(const ProductLieGroup& other, ChartJacobian H1,
-      ChartJacobian H2 = boost::none) const {
+      ChartJacobian H2 = {}) const {
     Jacobian1 D_g_first; Jacobian2 D_h_second;
     G g = traits<G>::Between(this->first,other.first, H1 ? &D_g_first : 0);
     H h = traits<H>::Between(this->second,other.second, H1 ? &D_h_second : 0);
@@ -137,7 +137,7 @@ public:
     }
     return ProductLieGroup(g,h);
   }
-  static ProductLieGroup Expmap(const TangentVector& v, ChartJacobian Hv = boost::none) {
+  static ProductLieGroup Expmap(const TangentVector& v, ChartJacobian Hv = {}) {
     Jacobian1 D_g_first; Jacobian2 D_h_second;
     G g = traits<G>::Expmap(v.template head<dimension1>(), Hv ? &D_g_first : 0);
     H h = traits<H>::Expmap(v.template tail<dimension2>(), Hv ? &D_h_second : 0);
@@ -148,7 +148,7 @@ public:
     }
     return ProductLieGroup(g,h);
   }
-  static TangentVector Logmap(const ProductLieGroup& p, ChartJacobian Hp = boost::none) {
+  static TangentVector Logmap(const ProductLieGroup& p, ChartJacobian Hp = {}) {
     Jacobian1 D_g_first; Jacobian2 D_h_second;
     typename traits<G>::TangentVector v1 = traits<G>::Logmap(p.first, Hp ? &D_g_first : 0);
     typename traits<H>::TangentVector v2 = traits<H>::Logmap(p.second, Hp ? &D_h_second : 0);
@@ -161,7 +161,7 @@ public:
     }
     return v;
   }
-  static TangentVector LocalCoordinates(const ProductLieGroup& p, ChartJacobian Hp = boost::none) {
+  static TangentVector LocalCoordinates(const ProductLieGroup& p, ChartJacobian Hp = {}) {
     return Logmap(p, Hp);
   }
   ProductLieGroup expmap(const TangentVector& v) const {
@@ -169,6 +169,15 @@ public:
   }
   TangentVector logmap(const ProductLieGroup& g) const {
     return ProductLieGroup::Logmap(between(g));
+  }
+  Jacobian AdjointMap() const {
+    const auto& adjG = traits<G>::AdjointMap(this->first);
+    const auto& adjH = traits<H>::AdjointMap(this->second);
+    size_t d1 = adjG.rows(), d2 = adjH.rows();
+    Matrix adj = Matrix::Zero(d1 + d2, d1 + d2);
+    adj.block(0, 0, d1, d1) = adjG;
+    adj.block(d1, d1, d2, d2) = adjH;
+    return adj;
   }
   /// @}
 
