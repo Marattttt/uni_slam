@@ -11,6 +11,7 @@
 #include <ranges>
 
 #include "anybag.hpp"
+#include "assert.hpp"
 #include "common.hpp"
 #include "map_common.hpp"
 #include "map_helpers_lods.hpp"
@@ -210,7 +211,11 @@ MapChanges FilterKeyframePass::initializeDelta(
     const TriangulationResult& tri) const {
     bool is_first_kf = shared_.keyframes_processed == 0;
     MapChanges delta{};
-    delta.pose_id = PoseId{shared_.keyframes_processed};
+    // Pose ids start at 1 (keyframes_processed is the count); {0} stays the
+    // empty/none sentinel, so the first keyframe is x1 and prev_pose_id == 0
+    // unambiguously means "no previous keyframe" (matches the PoseId invariant
+    // and this function's own assert(last_pose.v > 0) below).
+    delta.pose_id = PoseId{shared_.keyframes_processed + 1};
 
     if (is_first_kf) {
         return delta;
@@ -444,17 +449,25 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> MeanAccelGyroImu(
 }
 
 std::pair<Eigen::Vector3d, Eigen::Vector3d> recoverGravityAndGyroBias(
-    const StationaryWindow& window, const data::CamSensorParams& cam) {
-    const Eigen::Matrix3d r_cam_body = cam.T_BS.block<3, 3>(0, 0).transpose();
+    const StationaryWindow& window, const data::CamSensorParams& cam,
+    const data::IMUSensorParams& imu) {
+    // The mean accel is in the IMU sensor frame; gravity must end up in the
+    // camera (= world) frame. Both extrinsics are sensor->body (T_BS), so the
+    // IMU->camera rotation is R(T_body_cam^-1 * T_body_imu) =
+    // R_body_cam^T * R_body_imu. Composing imu.T_BS keeps this correct for any
+    // provider.
+    const Eigen::Matrix3d r_body_cam = cam.T_BS.block<3, 3>(0, 0);
+    const Eigen::Matrix3d r_body_imu = imu.T_BS.block<3, 3>(0, 0);
+    const Eigen::Matrix3d r_cam_imu = r_body_cam.transpose() * r_body_imu;
 
     const auto [accel_mean, gyro_mean] = MeanAccelGyroImu(window.samples);
 
-    // Acceleration of a stationary object is the negative of the gravity force
-    // impacting it, so negating it and multiplying by body rotation gives a
-    // gravity estimate
-    const auto gravity = r_cam_body * -accel_mean;
+    // Specific force on a stationary IMU is the negative of gravity; rotate the
+    // negated mean accel from the IMU frame into the camera/world frame.
+    const auto gravity = r_cam_imu * -accel_mean;
 
-    // Rpoorted orientation of a stationary object is its gyro bias
+    // The mean gyro reading of a stationary IMU is its bias (kept in the IMU
+    // frame, which is where the CombinedImuFactor expects it).
     const auto gyro_bias = gyro_mean;
 
     return {gravity, gyro_bias};
@@ -465,9 +478,11 @@ std::optional<std::string> FilterKeyframePass::initializeFirstFrame(
     std::span<const data::IMUReading> imu_readings) const {
     const auto cam_params = storage_.getPtr<data::CamSensorParams>(
         ResourceIdentifier::GetCameraIntrinsicsName(0));
-    if (!cam_params) {
-        return "could not get cam#0 sensor params";
-    }
+    WSLAM_ASSERT(cam_params.has_value() && cam_params.value() != nullptr);
+
+    const auto imu_params = storage_.getPtr<data::IMUSensorParams>(
+        ResourceIdentifier::ImuParamsName);
+    WSLAM_ASSERT(imu_params.has_value() && imu_params.value() != nullptr);
 
     const auto window
         = FindStationaryWindow(imu_readings, filter_.gravity_window_samples,
@@ -477,11 +492,13 @@ std::optional<std::string> FilterKeyframePass::initializeFirstFrame(
         return "finding stationary window: " + std::move(window).error();
     }
 
-    const auto [gravity, gyro_bias]
-        = recoverGravityAndGyroBias(window.value(), *cam_params.value());
+    const auto [gravity, gyro_bias] = recoverGravityAndGyroBias(
+        window.value(), *cam_params.value(), *imu_params.value());
 
     shared_.gravity_world = gravity;
-    shared_.last_gyro_bias = {Eigen::Vector3d::Zero(), gyro_bias};
+    // Seed the propagated bias with the measured gyro bias; the accel part
+    // stays zero (folded into the gravity estimate above).
+    shared_.last_bias = {Eigen::Vector3d::Zero(), gyro_bias};
 
     const auto to_seconds = [](std::integral auto num) {
         return static_cast<double>(num) * 1e-9;
