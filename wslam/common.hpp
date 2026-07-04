@@ -144,6 +144,10 @@ constexpr std::string RansacResultName = "gen:feat:ransac";
 constexpr std::string TriangulationResultName = "gen:tri";
 constexpr std::string MapDeltaName = "gen:map:delta";
 constexpr std::string MapSnapshotName = "gen:map:snap";
+// Per-accepted-keyframe factor-graph delta produced by BuildFactorsPass and
+// consumed by the iSAM update pass (graph + values + smart-factor bookkeeping).
+constexpr std::string FactorBundleName = "gen:map:facbndl";
+
 constexpr std::string GetCameraIntrinsicsName(uint32_t cam_idx) {
     return std::format("res:cam:intrinsics:{}", cam_idx);
 }
