@@ -7,6 +7,7 @@
 
 #define WSLAM_ASSERT(cond, ...)                                                \
     do {                                                                       \
+        /* NOLINTNEXTLINE(readability-simplify-boolean-expr) */                \
         if (!(cond)) [[unlikely]] {                                            \
             ::wslam::base::assert_fail(#cond, std::source_location::current(), \
                                        std::stacktrace::current() __VA_OPT__(  \
