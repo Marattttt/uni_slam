@@ -28,22 +28,17 @@ std::string SubmitUpdatesPass::getId() const { return LOG_ID; }
 
 std::optional<std::string> SubmitUpdatesPass::initialize() {
     spdlog::info(LOG_ID
-                 " Initializing (relin_thresh={}, relin_skip={}, "
-                 "factorization={}, snapshot_every_n={})",
-                 opts_.relinearize_threshold, opts_.relinearize_skip,
+                 " Initializing (relin_thresh={}, factorization={}, "
+                 "snapshot_every_n={})",
+                 opts_.relinearize_threshold,
                  opts_.use_cholesky ? "CHOLESKY" : "QR",
                  opts_.snapshot_every_n_keyframes);
 
     worker_ = std::make_unique<Isam2Worker>(Isam2Worker::Params{
         .relinearize_threshold = opts_.relinearize_threshold,
-        .relinearize_skip = opts_.relinearize_skip,
         .use_cholesky = opts_.use_cholesky,
     });
 
-    // Guarantee MapSnapshotName always exists, even before the first keyframe
-    // is accepted. This pass only runs on accepted keyframes (the filter stops
-    // the stage otherwise), so without this a consumer reading the snapshot
-    // during bootstrap would find nothing under the key.
     publishSnapshot();
     return {};
 }
@@ -140,8 +135,6 @@ void SubmitUpdatesPass::publishSnapshot() {
 
     auto snapshot = BuildSnapshot(shared_, latest_values_, last_factor_count_);
 
-    // The snapshot is built from the optimised estimate, which can hold at most
-    // one pose per accepted keyframe; anything more is a bookkeeping bug.
     WSLAM_ASSERT(snapshot.stats.keyframes <= shared_.keyframes_processed,
                  "snapshot has {} keyframes but only {} were accepted",
                  snapshot.stats.keyframes, shared_.keyframes_processed);
@@ -152,6 +145,8 @@ void SubmitUpdatesPass::publishSnapshot() {
 std::optional<std::string> SubmitUpdatesPass::execute() {
     spdlog::info(LOG_ID " Executing");
     WSLAM_ASSERT(worker_ != nullptr, "worker must be created in initialize()");
+    WSLAM_ASSERT(!pending_.valid(),
+                 "iSAM2 worker thread must finish before this pass");
 
     auto bundle_opt
         = storage_.take<FactorBundle>(ResourceIdentifier::FactorBundleName);
@@ -160,58 +155,50 @@ std::optional<std::string> SubmitUpdatesPass::execute() {
     }
     FactorBundle bundle = std::move(bundle_opt).value();
 
-    // The keyframe whose optimisation we are about to run: FilterKeyframePass
-    // set shared_.last_pose to this frame's pose id earlier in the stage.
-    const map::PoseId current_pose_id = shared_.last_pose;
-
-    // Keep the (position-in-graph -> landmark) map so we can back-fill
-    // smart-factor indices once iSAM2 tells us the FactorIndex it assigned each
-    // new factor. Everything else in the bundle is moved straight into Work.
-    const auto smart_factor_positions
-        = std::move(bundle.smart_factor_positions);
+    pending_pose_id_ = shared_.last_pose;
+    pending_smart_factor_positions_ = std::move(bundle.smart_factor_positions);
 
     spdlog::debug(LOG_ID " submitting x{}: {} factors, {} values, {} removals",
-                  current_pose_id.v, bundle.new_factors.size(),
+                  pending_pose_id_.v, bundle.new_factors.size(),
                   bundle.new_values.size(), bundle.remove_indices.size());
 
-    // Drive the worker synchronously: hand off the work, then block on it.
-    auto future = worker_->submit(Isam2Worker::Work{
+    // Hand off the work and return WITHOUT blocking. drainPending() awaits the
+    // future at the top of the next accepted keyframe's mapping stage; the
+    // front-end-only frames until then overlap the solve.
+    pending_ = worker_->submit(Isam2Worker::Work{
         .new_factors = std::move(bundle.new_factors),
         .new_values = std::move(bundle.new_values),
         .remove_factor_indices = std::move(bundle.remove_indices),
         .extra_updates = opts_.extra_updates,
-        .frame_id = current_pose_id.v,
+        .frame_id = pending_pose_id_.v,
     });
-    Isam2Worker::Result result = future.get();
+
+    return {};
+}
+
+std::optional<std::string> SubmitUpdatesPass::drainPending() {
+    // Nothing submitted or already drained
+    if (!pending_.valid()) {
+        return {};
+    }
+
+    Isam2Worker::Result result = pending_.get();
     if (result.error.has_value()) {
         return "isam2 update: " + std::move(result.error).value();
     }
 
-    // ---- Apply the optimised result to the shared mapping state ----
-
-    // 1. Cache the optimised estimate for snapshot building. gtsam::Values has
-    //    no move-assignment, so this is a copy.
-    latest_values_ = result.latest_values;
-
-    // 2. Mirror optimised poses into predicted_values so the *next* keyframe's
-    //    pose chain (FilterKeyframePass) and IMU prediction (BuildFactorsPass)
-    //    start from bundle-adjusted poses instead of raw front-end guesses.
-    //    Velocity/bias are propagated separately in step 4.
-    for (const auto& key_value : latest_values_) {
-        if (gtsam::Symbol(key_value.key).chr() != GtsamIdentifiers::kPoseCh) {
+    for (const auto& [key, value] : latest_values_) {
+        if (gtsam::Symbol(key).chr() != GtsamIdentifiers::kPoseCh) {
             continue;
         }
-        WSLAM_ASSERT(shared_.predicted_values.exists(key_value.key),
+        WSLAM_ASSERT(shared_.predicted_values.exists(key),
                      "every optimised pose was inserted into predicted_values "
                      "by FilterKeyframePass at acceptance");
-        shared_.predicted_values.update(key_value.key, key_value.value);
+        shared_.predicted_values.update(key, value);
     }
 
-    // 3. Back-fill the iSAM2 FactorIndex assigned to each smart factor we just
-    //    pushed, so the next re-observation can remove-and-readd the right one.
-    //    result.new_factor_indices is positional against the submitted graph;
-    //    smart_factor_positions records where each landmark's factor sat in it.
-    for (const auto& [position, landmark_id] : smart_factor_positions) {
+    for (const auto& [position, landmark_id] :
+         pending_smart_factor_positions_) {
         WSLAM_ASSERT(position < result.new_factor_indices.size(),
                      "smart-factor position {} out of range of {} returned "
                      "indices",
@@ -220,24 +207,27 @@ std::optional<std::string> SubmitUpdatesPass::execute() {
             landmark_id, result.new_factor_indices[position]);
     }
 
-    // 4. Propagate this keyframe's freshly optimised velocity + IMU bias
-    //    forward; BuildFactorsPass seeds the next CombinedImuFactor and the
-    //    bias/velocity priors with them.
-    const gtsam::Key velocity_key = GtsamIdentifiers::Velocity(current_pose_id);
-    const gtsam::Key bias_key = GtsamIdentifiers::Bias(current_pose_id);
+    latest_values_ = result.latest_values;
+    const PoseId drained_id = pending_pose_id_;
+
+    const gtsam::Key velocity_key = GtsamIdentifiers::Velocity(drained_id);
+    const gtsam::Key bias_key = GtsamIdentifiers::Bias(drained_id);
+
     WSLAM_ASSERT(
         latest_values_.exists(velocity_key) && latest_values_.exists(bias_key),
-        "the current keyframe's velocity and bias were submitted and "
+        "the drained keyframe's velocity and bias were submitted and "
         "must survive the update");
+
     shared_.last_velocity = latest_values_.at<gtsam::Vector3>(velocity_key);
     shared_.last_bias
         = latest_values_.at<gtsam::imuBias::ConstantBias>(bias_key);
 
     last_factor_count_ = result.factor_count;
 
-    // 5. Publish a snapshot on the configured cadence. Throttled because
-    //    BuildSnapshot re-triangulates every smart factor (O(map size)).
-    if (opts_.snapshot_every_n_keyframes != 0
+    spdlog::debug(LOG_ID " drained x{}: {} factors total", drained_id.v,
+                  result.factor_count);
+
+    if (opts_.snapshot_every_n_keyframes > 0
         && ++keyframes_since_snapshot_ >= opts_.snapshot_every_n_keyframes) {
         publishSnapshot();
     }
@@ -246,9 +236,14 @@ std::optional<std::string> SubmitUpdatesPass::execute() {
 }
 
 std::optional<std::string> SubmitUpdatesPass::flush() {
-    // Synchronous design: every submit() is drained within its own execute(),
-    // so there is no in-flight optimisation to wait for here. We only need to
-    // guarantee the exported snapshot reflects the final keyframe even when the
+    // DrainUpdatesPass never runs for the final keyframe (no next keyframe
+    // triggers it), so absorb that last in-flight optimisation here before
+    // publishing. A no-op if nothing is pending.
+    if (auto err = drainPending()) {
+        return err;
+    }
+
+    // Guarantee the exported snapshot reflects the final keyframe even when the
     // in-loop cadence (snapshot_every_n_keyframes) skipped it.
     //
     // NOTE: a final global batch re-optimisation is deliberately NOT run. On
@@ -260,4 +255,13 @@ std::optional<std::string> SubmitUpdatesPass::flush() {
     spdlog::info(LOG_ID " flush(): publishing final snapshot");
     publishSnapshot();
     return {};
+}
+
+std::string DrainUpdatesPass::getId() const { return "[Drain Updates pass]"; }
+
+std::optional<std::string> DrainUpdatesPass::initialize() { return {}; }
+
+std::optional<std::string> DrainUpdatesPass::execute() {
+    spdlog::info("[Drain Updates pass] Executing");
+    return target_.drainPending();
 }

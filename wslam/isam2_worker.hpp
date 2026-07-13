@@ -19,7 +19,7 @@
 namespace wslam {
 
 // Background worker that owns a `gtsam::ISAM2` instance and runs the
-// (potentially expensive) `update()` call off the main pipeline thread.
+// `update()` call off the main pipeline thread.
 //
 // Concurrency model: the worker accepts at most one in-flight job at a
 // time. Backpressure is the caller's responsibility — wait on the future
@@ -39,9 +39,6 @@ class Isam2Worker {
         // effective default is set by Isam2UpdatePass::Opts (0.1); see the
         // rationale there.
         double relinearize_threshold = 0.1;
-        // Relinearise every Nth update. 1 = every update (most accurate,
-        // most expensive).
-        int relinearize_skip = 1;
         // false => QR factorisation (rank-revealing, numerically robust to
         // the IMU/vision information mismatch, but ~2-4x slower);
         // true => CHOLESKY (faster, but can hit indefinite pivots on long

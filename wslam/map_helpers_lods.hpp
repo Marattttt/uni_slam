@@ -42,11 +42,12 @@ constexpr double kDefaultUndistortTolerance = 1e-9;
 // fixed-point iteration. The standard OpenCV trick: start with the distorted
 // point as the initial guess (small distortion ⇒ near-identity), and update
 // by subtracting the residual scaled by the inverse radial term.
-Eigen::Vector2d UndistortNormalised(const Eigen::Vector2d& dist,
-                                    const Eigen::Vector4d& d,
-                                    uint32_t max_iters
-                                    = kDefaultUndistortMaxIters,
-                                    double tol = kDefaultUndistortTolerance) {
+inline Eigen::Vector2d UndistortNormalised(const Eigen::Vector2d& dist,
+                                           const Eigen::Vector4d& d,
+                                           uint32_t max_iters
+                                           = kDefaultUndistortMaxIters,
+                                           double tol
+                                           = kDefaultUndistortTolerance) {
     Eigen::Vector2d xy = dist;
     for (uint32_t i = 0; i < max_iters; ++i) {
         const double x = xy.x();
@@ -106,10 +107,10 @@ constexpr Eigen::Vector2d ToLod0Pixel(const Feature& f) {
 
 // Maps a LOD-0 pixel through the inverse intrinsic + inverse distortion
 // pipeline, yielding a 2D normalised-image-plane (calibrated) coordinate.
-Eigen::Vector2d PixelToNormalised(const Eigen::Vector2d& pixel,
-                                  const Eigen::Vector4d& intrinsics,
-                                  const Eigen::Vector4d& distortion,
-                                  uint32_t max_iters, double tol) {
+inline Eigen::Vector2d PixelToNormalised(const Eigen::Vector2d& pixel,
+                                         const Eigen::Vector4d& intrinsics,
+                                         const Eigen::Vector4d& distortion,
+                                         uint32_t max_iters, double tol) {
     const double fu = intrinsics[0];
     const double fv = intrinsics[1];
     const double cu = intrinsics[2];

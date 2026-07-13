@@ -40,7 +40,10 @@ add_executable(pc_wslam
     wslam/isam2_worker.cpp
     wslam/keyframe_gate.cpp
     wslam/load_features_cpu.cpp
-    wslam/mapping.cpp
+    wslam/map_build_factors.cpp
+    wslam/map_filter_keyframe.cpp
+    wslam/map_stage.cpp
+    wslam/map_submit_updates.cpp
     wslam/match_features_cpu.cpp
     wslam/pose_estimate_cpu.cpp
     wslam/ransac_cpu.cpp
@@ -89,4 +92,8 @@ target_link_libraries(pc_wslam
     nlohmann_json::nlohmann_json
     fast_cpp_csv_parser
     gtsam
+    # std::stacktrace (used by base/assert.hpp's WSLAM_ASSERT) lives in
+    # libstdc++exp on GCC; without it the assert's stacktrace calls are
+    # undefined at link time.
+    $<$<CXX_COMPILER_ID:GNU>:stdc++exp>
 )

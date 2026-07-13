@@ -12,6 +12,8 @@
 #include <typeinfo>
 #include <utility>
 
+#include "assert.hpp"
+
 using namespace wslam;
 
 #define LOG_ID "[ISAM2 worker]"
@@ -19,24 +21,9 @@ using namespace wslam;
 Isam2Worker::Isam2Worker(Params worker_params) {
     gtsam::ISAM2Params params;
     params.optimizationParams = gtsam::ISAM2GaussNewtonParams();
-    // Visual-inertial dynamics are highly nonlinear (rotations + IMU
-    // preintegration), so we historically relinearised every update
-    // (relinearize_skip=1). Skipping frames lets the Bayes tree drift far
-    // enough from the current operating point that partial-Cholesky on
-    // Schur-complemented landmarks goes singular at the depth axis — though
-    // with smart factors landmarks are no longer variables, so this is now
-    // a tunable lever rather than a hard requirement.
-    params.relinearizeSkip = worker_params.relinearize_skip;
     params.relinearizeThreshold = worker_params.relinearize_threshold;
-    // VI cliques mix IMU information (~1e9 at small dt) with vision
-    // information (~1e2) in one elimination; the default CHOLESKY path
-    // eventually hits a roundoff-indefinite pivot on long runs and throws
-    // IndeterminantLinearSystemException. QR is slower per relinearisation
-    // but rank-revealing and numerically robust to exactly this. Now a
-    // lever: CHOLESKY is materially faster where it stays stable.
-    params.factorization = worker_params.use_cholesky
-                               ? gtsam::ISAM2Params::CHOLESKY
-                               : gtsam::ISAM2Params::QR;
+    params.factorization = gtsam::ISAM2Params::CHOLESKY;
+
     // The smart-factor remove-and-readd pattern otherwise leaves a dead
     // slot in the factor graph per re-observed landmark per keyframe,
     // growing the factor array (and VariableIndex bookkeeping) without
@@ -47,10 +34,8 @@ Isam2Worker::Isam2Worker(Params worker_params) {
 
     thread_ = std::thread([this] { run(); });
     spdlog::info(LOG_ID
-                 " Worker thread started (factorization={}, relin_skip={}, "
-                 "relin_thresh={})",
+                 " Worker thread started (factorization={}, relin_thresh={})",
                  worker_params.use_cholesky ? "CHOLESKY" : "QR",
-                 worker_params.relinearize_skip,
                  worker_params.relinearize_threshold);
 }
 
@@ -71,10 +56,8 @@ std::future<Isam2Worker::Result> Isam2Worker::submit(Work work) {
     auto fut = p.get_future();
     {
         std::lock_guard<std::mutex> lk(mu_);
-        // Caller contract: drain the previous future before submitting a
-        // new one. Violating this would silently drop work.
-        assert(!pending_.has_value()
-               && "Isam2Worker: previous submission still pending");
+        WSLAM_ASSERT(!pending_.has_value(),
+                     "Isam2Worker: previous submission still pending");
         pending_.emplace(std::move(work), std::move(p));
     }
     cv_.notify_one();
@@ -85,7 +68,7 @@ void Isam2Worker::run() {
     while (true) {
         std::optional<std::pair<Work, std::promise<Result>>> item;
         {
-            std::unique_lock<std::mutex> lk(mu_);
+            std::unique_lock lk(mu_);
             cv_.wait(lk, [&] { return stop_ || pending_.has_value(); });
             if (stop_ && !pending_.has_value()) {
                 return;
@@ -99,8 +82,7 @@ void Isam2Worker::run() {
             spdlog::debug(LOG_ID
                           " frame={}: submitting factors={}, new_values={}, "
                           "remove={}",
-                          item->first.frame_id,
-                          item->first.new_factors.size(),
+                          item->first.frame_id, item->first.new_factors.size(),
                           item->first.new_values.size(),
                           item->first.remove_factor_indices.size());
             using Clock = std::chrono::steady_clock;
@@ -108,9 +90,9 @@ void Isam2Worker::run() {
                 return std::chrono::duration<double, std::milli>(d).count();
             };
             const auto t_update_begin = Clock::now();
-            const auto r = isam_->update(item->first.new_factors,
-                                         item->first.new_values,
-                                         item->first.remove_factor_indices);
+            const auto r
+                = isam_->update(item->first.new_factors, item->first.new_values,
+                                item->first.remove_factor_indices);
             const auto t_update_end = Clock::now();
             for (uint32_t i = 0; i < item->first.extra_updates; ++i) {
                 isam_->update();
@@ -175,12 +157,13 @@ std::expected<gtsam::Values, std::string> Isam2Worker::optimizeBatch(
         const double error_after = optimizer.error();
         const auto t1 = Clock::now();
 
-        spdlog::info(LOG_ID
-                     " optimizeBatch: {} iters, error {:.3f} -> {:.3f}, "
-                     "{} factors, {} values, {:.1f} ms",
-                     optimizer.iterations(), error_before, error_after,
-                     graph.size(), optimized.size(),
-                     std::chrono::duration<double, std::milli>(t1 - t0).count());
+        spdlog::info(
+            LOG_ID
+            " optimizeBatch: {} iters, error {:.3f} -> {:.3f}, "
+            "{} factors, {} values, {:.1f} ms",
+            optimizer.iterations(), error_before, error_after, graph.size(),
+            optimized.size(),
+            std::chrono::duration<double, std::milli>(t1 - t0).count());
         return optimized;
     } catch (const std::exception& e) {
         return std::unexpected(std::format("optimizeBatch threw [{}]: {}",

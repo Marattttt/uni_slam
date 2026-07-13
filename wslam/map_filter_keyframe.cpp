@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <concepts>
 #include <flat_set>
+#include <format>
 #include <functional>
 #include <iterator>
 #include <ranges>
@@ -122,7 +123,10 @@ std::expected<StationaryWindow, std::string> FindStationaryWindow(
     }
 
     if (best.score >= max_score) {
-        return std::unexpected("no window quiet enough to be stationary");
+        return std::unexpected(std::format(
+            "no window quiet enough to be stationary (best score {:.4f} >= "
+            "{:.4f}; best window {} samples of {} total)",
+            best.score, max_score, best.samples.size(), readings.size()));
     }
     return best;
 }
@@ -130,6 +134,20 @@ std::expected<StationaryWindow, std::string> FindStationaryWindow(
 
 std::optional<std::string> FilterKeyframePass::execute() {
     spdlog::info(LOG_ID " Executing");
+
+    // Tell LoadDataCPUPass whether to advance the reference feature set
+    // (FeatureSet(1)) next frame — it consumes this consume-once marker. Two
+    // triggers, mirroring the old keyframe gate: pre-origin (no keyframe yet)
+    // advance EVERY frame so the bootstrap baseline stays frame-to-frame short
+    // and the first keyframe lands at motion onset (a stationary reference here
+    // would let parallax grow unbounded and push bootstrap past the stationary
+    // IMU window gravity init needs); post-origin only an accepted keyframe
+    // advances it (set on the acceptance path below), so matching/triangulation
+    // spans exactly the previous-keyframe→current-frame graph edge.
+    const bool had_origin = shared_.keyframes_processed > 0;
+    if (!had_origin) {
+        storage_.set(ResourceIdentifier::FeatureReferenceAdvanceName, true);
+    }
 
     auto triangulated = processTriangulation().transform_error(
         [](auto&& err) { return "triangulation: " + err; });
@@ -147,6 +165,8 @@ std::optional<std::string> FilterKeyframePass::execute() {
     }
 
     if (!shouldAcceptMatches(triangulated.value(), parallax.value())) {
+        spdlog::warn(LOG_ID
+                     " triangulation and parallax not fit for bootstrap");
         return compute::kStageStopExecution;
     }
 
@@ -179,6 +199,10 @@ std::optional<std::string> FilterKeyframePass::execute() {
         GtsamIdentifiers::Pose(delta.pose_id),
         gtsam::Pose3{gtsam::Rot3{delta.R_world_cam},
                      gtsam::Point3{delta.t_world_cam}});
+
+    // Accepted keyframe: pin the reference feature set to it next frame (the
+    // pre-origin branch at the top already set this when !had_origin).
+    storage_.set(ResourceIdentifier::FeatureReferenceAdvanceName, true);
 
     storage_.set(ResourceIdentifier::MapDeltaName, std::move(delta));
 
@@ -309,11 +333,21 @@ auto FilterKeyframePass::collectMatches() const
         for (const auto& [feat, prev] : lod) {
             double par = getParallax(feat, prev);
 
+            // The accept/bootstrap decision reads median_parallax over ALL
+            // inliers, so a near-stationary frame (whose inliers cluster near
+            // zero parallax) reads ~0 and is correctly rejected. Previously the
+            // median was taken only over the >landmark_parallax_filter_px
+            // pairs, so a handful of spurious high-parallax matches — the kind
+            // pure rotation / no translation produces — inflated it into a
+            // ~100px "motion" reading and anchored a degenerate short-baseline
+            // keyframe that left iSAM2's linear system indeterminate.
+            parallaxes.emplace_back(par);
+
+            // Landmarks still need a real baseline for a usable depth, so only
+            // the >filter pairs are tracked / created as observations.
             if (par < filter_.landmark_parallax_filter_px) {
                 continue;
             }
-
-            parallaxes.emplace_back(par);
 
             if (is_tracked(prev)) {
                 const auto landmark_id = shared_.active_landmarks.at(prev);
@@ -325,8 +359,9 @@ auto FilterKeyframePass::collectMatches() const
         }
     }
 
-    // Median on a scratch copy — nth_element reorders and avoids sorting the
-    // entire range
+    // getRansacInliers guarantees >=1 inlier and every inlier is collected
+    // above, so parallaxes is non-empty and *mid is valid. Median on a scratch
+    // copy — nth_element reorders and avoids sorting the entire range.
     const auto mid = parallaxes.begin()
                      + static_cast<std::ptrdiff_t>(parallaxes.size() / 2);
     std::nth_element(parallaxes.begin(), mid, parallaxes.end());
@@ -341,8 +376,27 @@ bool FilterKeyframePass::shouldAcceptMatches(const TriangulationResult& triang,
     const double rotation = util::ComputeRotationAngle(triang.rotation);
 
     if (shared_.keyframes_processed == 0) {
+        // The first keyframe seeds gravity + gyro bias from a full stationary
+        // IMU window (initializeFirstFrame). Don't anchor it until at least a
+        // window's worth of samples has accumulated: with fewer, the window
+        // search finds nothing and bootstrap fails. This also holds bootstrap
+        // off until past the stationary lead-in — a couple of spurious
+        // high-parallax RANSAC matches can otherwise trip the parallax gate
+        // below within the first few frames, before any IMU history exists.
+        const auto imu_buf = storage_.getPtr<std::vector<data::IMUReading>>(
+            ResourceIdentifier::GetImuVecName());
+        const size_t imu_samples
+            = imu_buf.has_value() ? imu_buf.value()->size() : 0;
+        if (imu_samples < filter_.gravity_window_samples) {
+            spdlog::warn(LOG_ID
+                         " Bootstrap: {} IMU samples < {} needed for gravity "
+                         "window; waiting",
+                         imu_samples, filter_.gravity_window_samples);
+            return false;
+        }
+
         if (match.median_parallax < filter_.bootstrap_min_pallax_px) {
-            spdlog::debug(
+            spdlog::warn(
                 LOG_ID
                 " Bootstrap: parallax median {:.2f} < {:.2f}; not anchoring",
                 match.median_parallax, filter_.bootstrap_min_pallax_px);
@@ -360,13 +414,13 @@ bool FilterKeyframePass::shouldAcceptMatches(const TriangulationResult& triang,
           && (match.median_parallax < filter_.min_parallax_px);
 
     if (is_small_motion) {
-        spdlog::debug(LOG_ID " Motion too small");
+        spdlog::warn(LOG_ID " Motion too small");
         return false;
     }
 
     if (match.new_matches.size() < filter_.min_new_landmarks) {
-        spdlog::debug(LOG_ID " Not enough new landmarks. {} < {}",
-                      match.new_matches.size(), filter_.min_new_landmarks);
+        spdlog::warn(LOG_ID " Not enough new landmarks. {} < {}",
+                     match.new_matches.size(), filter_.min_new_landmarks);
         return false;
     }
 
@@ -440,10 +494,10 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> MeanAccelGyroImu(
         gyro_sum += Eigen::Vector3f{r.wx(), r.wy(), r.wz()};
     }
 
-    Eigen::Vector3d accel = static_cast<Eigen::Vector3d>(accel_sum)
-                            / static_cast<double>(readings.size());
-    Eigen::Vector3d gyro = static_cast<Eigen::Vector3d>(gyro_sum)
-                           / static_cast<double>(readings.size());
+    Eigen::Vector3d accel
+        = accel_sum.cast<double>() / static_cast<double>(readings.size());
+    Eigen::Vector3d gyro
+        = gyro_sum.cast<double>() / static_cast<double>(readings.size());
 
     return {accel, gyro};
 }
@@ -603,12 +657,22 @@ FilterKeyframePass::processLandmarks(
     result.observations.reserve(par.tracked_matches.size()
                                 + par.new_matches.size() * 2);
 
-    std::flat_set<Eigen::Vector2d> consumed_coords;
+    // Eigen vectors have no operator<, so order the dedup set
+    // lexicographically. A captureless lambda is default-constructible, so
+    // flat_set can build its own comparator instance.
+    constexpr auto pixel_less
+        = [](const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
+              return a.x() != b.x() ? a.x() < b.x() : a.y() < b.y();
+          };
+    std::flat_set<Eigen::Vector2d, decltype(pixel_less)> consumed_coords;
 
     for (const auto& [feat, landmark] : par.tracked_matches) {
         const auto& [curr, prev] = feat;
 
-        if (consumed_coords.insert(util::ToLod0Pixel(prev)).second) {
+        // Skip a previous-frame pixel we have already turned into an
+        // observation: insert() returns false in .second when the coord was
+        // already present (a duplicate), which is exactly when to skip.
+        if (!consumed_coords.insert(util::ToLod0Pixel(prev)).second) {
             continue;
         }
 

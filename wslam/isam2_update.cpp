@@ -29,14 +29,14 @@ Isam2UpdatePass::Isam2UpdatePass(std::shared_ptr<MappingState> state,
 std::string Isam2UpdatePass::getId() const { return LOG_ID; }
 
 std::optional<std::string> Isam2UpdatePass::initialize() {
-    spdlog::info(LOG_ID " Initializing (extra_updates={})", opts_.extra_updates);
+    spdlog::info(LOG_ID " Initializing (extra_updates={})",
+                 opts_.extra_updates);
     if (storage_ == nullptr) {
         return "isam2 update: storage not set before initialize()";
     }
     if (!worker_) {
         worker_ = std::make_unique<Isam2Worker>(Isam2Worker::Params{
             .relinearize_threshold = opts_.relinearize_threshold,
-            .relinearize_skip = opts_.relinearize_skip,
             .use_cholesky = opts_.use_cholesky,
         });
     }
@@ -165,7 +165,8 @@ std::optional<std::string> Isam2UpdatePass::drainPending() {
         const auto vk = MappingState::velocityKey(last_id);
         const auto bk = MappingState::biasKey(last_id);
         if (state_->latest_values.exists(vk)) {
-            state_->last_velocity = state_->latest_values.at<gtsam::Vector3>(vk);
+            state_->last_velocity
+                = state_->latest_values.at<gtsam::Vector3>(vk);
         }
         if (state_->latest_values.exists(bk)) {
             state_->last_bias
@@ -271,8 +272,8 @@ std::optional<std::string> Isam2UpdatePass::flush() {
     if (opts_.final_batch_optimize) {
         spdlog::info(LOG_ID " flush(): running final batch LM optimisation");
         gtsam::LevenbergMarquardtParams lm_params;
-        lm_params.maxIterations
-            = static_cast<size_t>(std::max(0, opts_.final_batch_max_iterations));
+        lm_params.maxIterations = static_cast<size_t>(
+            std::max(0, opts_.final_batch_max_iterations));
         auto optimized = worker_->optimizeBatch(lm_params);
         if (optimized.has_value()) {
             // gtsam::Values has no move-assign overload; copy the batch

@@ -36,16 +36,16 @@ constexpr char kLandmarkCh = 'l';
 constexpr char kVelocityCh = 'v';
 constexpr char kBiasCh = 'b';
 
-[[nodiscard]] gtsam::Key Pose(const PoseId& id) noexcept {
+[[nodiscard]] inline gtsam::Key Pose(const PoseId& id) noexcept {
     return gtsam::Symbol(kPoseCh, id.v).key();
 }
-[[nodiscard]] gtsam::Key Landmark(const LandmarkId& id) noexcept {
+[[nodiscard]] inline gtsam::Key Landmark(const LandmarkId& id) noexcept {
     return gtsam::Symbol(kLandmarkCh, id.v).key();
 }
-[[nodiscard]] gtsam::Key Velocity(const PoseId& id) noexcept {
+[[nodiscard]] inline gtsam::Key Velocity(const PoseId& id) noexcept {
     return gtsam::Symbol(kVelocityCh, id.v).key();
 }
-[[nodiscard]] gtsam::Key Bias(const PoseId& id) noexcept {
+[[nodiscard]] inline gtsam::Key Bias(const PoseId& id) noexcept {
     return gtsam::Symbol(kBiasCh, id.v).key();
 }
 };  // namespace GtsamIdentifiers
@@ -94,7 +94,9 @@ struct MappingSharedBindings {
 struct Observation {
     PoseId pose;
     LandmarkId landmark;
-    Eigen::Vector2f pixel;
+    // Pre-undistorted LOD-0 pixel. Double to match the undistortion output and
+    // the gtsam::Point2 (double) the smart factor consumes — no lossy cast.
+    Eigen::Vector2d pixel;
 };
 
 struct MapChanges {
@@ -141,7 +143,8 @@ struct FactorBundle {
     // dropped on the next iSAM2 update (remove-and-readd).
     gtsam::FactorIndices remove_indices;
     // (position-in-new_factors, landmark) so the iSAM pass can back-fill the
-    // FactorIndex iSAM2 assigns into MappingSharedBindings::smart_factor_indices.
+    // FactorIndex iSAM2 assigns into
+    // MappingSharedBindings::smart_factor_indices.
     std::vector<std::pair<size_t, LandmarkId>> smart_factor_positions;
 };
 };  // namespace wslam::map

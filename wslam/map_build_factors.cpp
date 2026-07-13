@@ -102,12 +102,21 @@ uint32_t IntegrateIMUWindow(gtsam::PreintegratedCombinedMeasurements& combined,
     const auto is_good_ts
         = [prev_kf_ts](auto&& r) { return r.timestamp > prev_kf_ts; };
 
+    size_t skipped_frames = 0;
     for (const auto& r : readings | std::views::filter(is_good_ts)) {
-        assert(r.timestamp > last_ts
-               && "readings are sorted in strictly ascending order");
+        if (r.timestamp > last_ts
+            && static_cast<double>(r.timestamp - last_ts) > 1e9) {
+            skipped_frames++;
+        }
+
         const auto dt_s = static_cast<double>(r.timestamp - last_ts) * 1e-9;
         last_ts = r.timestamp;
         integrate(r, dt_s);
+    }
+
+    if (skipped_frames > 0) {
+        spdlog::warn(LOG_ID " Skipped {} frames when integrating IMU",
+                     skipped_frames);
     }
 
     // Tail up to the keyframe timestamp. Guard against an empty window —
@@ -365,6 +374,12 @@ std::optional<std::string> BuildFactorsPass::execute() {
             return "imu: " + std::move(integrated).error();
         }
         bundle = std::move(integrated).value();
+    } else {
+        // First keyframe: no IMU edge to integrate yet, but the origin pose /
+        // velocity values and the gauge priors (x/v/b) that anchor the graph
+        // must still be added — otherwise the smart factors below reference a
+        // pose key iSAM2 has no value for ("x1 does not exist in Values").
+        bundle = addGaugePriors(std::move(bundle), delta);
     }
 
     bundle = addSmartFactors(std::move(bundle), delta);
