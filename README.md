@@ -3,29 +3,52 @@
 The project is based on principles established by ORB-SLAM3 and serves as an example of using WebGPU 
 to parallelize computations in a cross platform way without using the Nvidia CUDA platform
 
+## Modernization (in progress)
+
+The codebase is being modernized incrementally. Current checklist:
+
+- [x] Divide the single project into multiple CMake targets.
+- [ ] Add a testing API into the compute library.
+- [ ] Implement tests for the wslam passes.
+
 ## Architecture
 
-The core solution is a C++23 CMake project with a single CMakeLists.txt file building into an executable 
-The presenter/ directory contains a small python wrapper around the Rerun SLAM visualizer which is used to inspect generated maps
+The core solution is a C++23 CMake project split into a small set of libraries that a
+thin executable links together:
+
+- base: a header-only interface library of shared utilities.
+- compute: organizes both WebGPU and custom computations into a single pipeline API.
+- data: provides an interface for loading data and an implementation for EuRoC.
+- wslam: provides a SLAM pipeline based on ORB-SLAM3.
+
+The compute, data and wslam libraries keep a public interface separate from their
+private implementation, so each depends only on the public surface of the others.
+Shared warning and sanitizer settings are applied uniformly across the project's own
+targets.
+
+The presenter directory contains a small python wrapper around the Rerun SLAM
+visualizer which is used to inspect generated maps.
 
 ## How the core solution is made
 
-C++23 with GCC 15 and CMake
+C++23 with GCC 15 and CMake. Each library declares only the dependencies it needs
+and exposes them to its consumers through its public interface, so the executable and
+the other libraries pull in exactly what they use.
 
 **Vendored heavy dependencies**
 - GTSAM: factor-graph smoothing framework. A major architecture change from ORB-SLAM3 made in order to allow switching to lag solvers
 - Google Dawn: implementation of the WebGPU spec used in Google Chrome
 - Pangolin: OpenGL frontend for debug purposes
 
-Other dependencies brought in through FetchContent (see `cmake/configureDependencies.cmake`):
+Other dependencies are brought in through FetchContent:
 
-- **spdlog** — logging. Header-only, built with `std::format` (`SPDLOG_USE_STD_FORMAT`).
-- **Eigen** — linear algebra. Pinned to **3.4.0** because GTSAM 4.3a1 bundles Eigen 3.4.0 and statically asserts the WORLD/MAJOR/MINOR version matches the consumer's at compile time.
-- **stb** — image loading.
-- **ctre** — compile-time regular expressions.
-- **nlohmann_json** — JSON output for the exported map.
-- **yaml-cpp** — dataset/config parsing.
-- **fast-cpp-csv-parser** — reads EuRoC ground-truth and IMU CSVs.
+- spdlog: logging. Header-only, built with `std::format` (`SPDLOG_USE_STD_FORMAT`).
+- Eigen: linear algebra. Pinned to 3.4.0 because GTSAM 4.3a1 bundles Eigen 3.4.0 and statically asserts the WORLD/MAJOR/MINOR version matches the consumer's at compile time.
+- stb: image loading.
+- ctre: compile-time regular expressions.
+- nlohmann_json: JSON output for the exported map.
+- yaml-cpp: dataset/config parsing.
+- fast-cpp-csv-parser: reads EuRoC ground-truth and IMU CSVs.
 
 ## Build & Run
 
@@ -52,20 +75,17 @@ Flags:
 - `--max-iters=N` — stop after N pipeline iterations (0 = unlimited).
 - `--map-out=PATH.ply` — dump the final factor-graph map to disk (`.ply` cloud + `.json` metadata).
 - `awaiter` — verbose logging of GPU future add/complete events.
+- `Release | Debug` - build configuration can be set. Note: Release resolves to Release with debug info
 
 Manual configure/build/run:
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-source .env
-WSLAM_SHADER_SRC_DIR="$PWD/resources" ./build/pc_wslam
+WSLAM_SHADER_SRC_DIR="$PWD/resources" \
+    EUROC_DIR="<path to euroc dataset's mav0 directory>" \
+    ./build/pc_wslam
 ```
-
-The `.env` file is only needed at **runtime**, not to configure or build. It sets
-`WSLAM_SHADER_SRC_DIR` (directory the `.wgsl` shaders are loaded from), `EUROC_DIR`
-(EuRoC MAV dataset `mav0/` root) and `TUM_FR1_RGBD_DIR`. Debug builds enable
-ASan + UBSan by default.
 
 ## Pipeline
 
