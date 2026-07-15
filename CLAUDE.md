@@ -45,9 +45,11 @@ only when executing `pc_wslam` (or the helper run scripts, which do it for you).
 It sets:
 - `WSLAM_SHADER_SRC_DIR` — directory where `.wgsl` shaders are loaded from at runtime.
 - `EUROC_DIR` — path to EuRoC MAV dataset (`mav0/` root).
-- `TUM_FR1_RGBD_DIR` — path to TUM RGB-D dataset (provider currently not wired in `CMakeLists.txt`).
+- `TUM_FR1_RGBD_DIR` — path to TUM RGB-D dataset (the TUM provider has been removed, so this variable is currently unused).
 
-Debug builds enable ASan + UBSan by default (`ENABLE_SANITIZERS=TRUE`).
+ASan + UBSan are opt-in via `-DENABLE_SANITIZERS=TRUE` (default off). When enabled
+they are applied to the project's own targets through the shared `project_options`
+interface target, independent of build type.
 
 ## Lint
 
@@ -56,10 +58,36 @@ clang-tidy -p build <file.cpp>     # config in .clang-tidy — excludes vendor/
 clang-format -i <file.cpp>         # config in .clang-format
 ```
 
-There is no automated test suite. `wslam/brief_tests.inc` is static BRIEF
-descriptor data, not a test file.
+There is no automated test suite yet. Adding a compute-library testing API and
+tests for the wslam passes is in progress (see the README modernization checklist).
+`wslam/src/feature_detect/brief_tests.inc` is static BRIEF descriptor data, not a
+test file.
 
 ## Architecture
+
+### Project layout (CMake targets)
+
+The build is split into a header-only interface library plus three compiled
+libraries, linked by the thin `pc_wslam` executable (`main.cpp`):
+
+- `base/` (`wslam::base`, INTERFACE) — shared header-only utilities (`anybag.hpp`,
+  `assert.hpp`, `unique_any.hpp`). Kept flat: `base/` itself is the include root, so
+  consumers include e.g. `"anybag.hpp"`. Carries the `stdc++exp` link requirement of
+  `WSLAM_ASSERT`'s `std::stacktrace` as an INTERFACE dependency, so consumers inherit it.
+- `compute/` (`wslam::compute`) — public headers in `compute/include/compute/`, sources
+  in `compute/src/`.
+- `data/` (`wslam::data`) — public headers in `data/include/data/`, sources in `data/src/`.
+- `wslam/` (`wslam::app`) — the public API is only `wslam/include/wslam/wslam.hpp` and
+  `common.hpp`; everything else lives under `wslam/src/` (`feature_detect/`, `map/`,
+  `pose_estimate_cpu/`, `viz/`, plus `common.cpp`, `export.*`, `models.hpp`,
+  `mapping_state.hpp`).
+
+Each compiled library exposes its public directory with
+`target_include_directories(... PUBLIC include/)` and links dependencies with the right
+PUBLIC/PRIVATE scope, so a consumer sees only the public surface. Internal `.cpp` that
+include their own headers by bare name get a matching PRIVATE include dir. Shared
+warning/sanitizer flags live on a single `project_options` INTERFACE target in the root
+`CMakeLists.txt`.
 
 ### Compute engine (`compute/`)
 
@@ -73,9 +101,9 @@ Hierarchy: `Compute` → `Stage` → (`Pass` | `GPUPass`).
 
 GPU dispatch is **batched per stage**: `Stage::execute()` walks its passes, collects every consecutive `GPUPass` into a single `wgpu::CommandEncoder`, then issues one `queue.Submit` and one `OnSubmittedWorkDone` await for the whole batch. A CPU `Pass` between two GPU passes flushes the in-progress batch first. This is why GPU passes no longer call `queue.Submit` themselves — they only record commands into the supplied encoder and return an error string on failure.
 
-The `Awaiter` (in `compute/awaiter.hpp`) splits async work into two methods that must not be mixed in one chain when `executeAll` uses a non-zero timeout: `runChecked(callback, label)` wraps a synchronous API call in `PushErrorScope`/`PopErrorScope` (producing `WaitListEvent` futures) for validation-prone init code, while `addFuture(factory, label)` records a `wgpu::Future` returned by the factory (queue-serial for `OnSubmittedWorkDone`/`MapAsync`, no error scopes). Dawn rejects a `WaitAny` whose future set mixes those two sources (`EventManager.cpp` "Mixed source waits with timeouts are not currently supported"). For the common "submit a command buffer and wait for it" pattern, call `GPU::submitAndWait(commands, label, timeout)` instead of assembling it from an `Awaiter` by hand.
+The `Awaiter` (in `compute/include/compute/awaiter.hpp`) splits async work into two methods that must not be mixed in one chain when `executeAll` uses a non-zero timeout: `runChecked(callback, label)` wraps a synchronous API call in `PushErrorScope`/`PopErrorScope` (producing `WaitListEvent` futures) for validation-prone init code, while `addFuture(factory, label)` records a `wgpu::Future` returned by the factory (queue-serial for `OnSubmittedWorkDone`/`MapAsync`, no error scopes). Dawn rejects a `WaitAny` whose future set mixes those two sources (`EventManager.cpp` "Mixed source waits with timeouts are not currently supported"). For the common "submit a command buffer and wait for it" pattern, call `GPU::submitAndWait(commands, label, timeout)` instead of assembling it from an `Awaiter` by hand.
 
-### GPU memory model (`compute/gpu.hpp`)
+### GPU memory model (`compute/include/compute/gpu.hpp`)
 
 `GPU` pre-allocates fixed slabs at startup:
 
@@ -95,9 +123,9 @@ Sub-regions are allocated via `assignBuffersAndOffsets()` and returned as `Buffe
 
 `AnyBag` is a string-keyed, type-erased store (`std::unordered_map<string, Any>`). Stages write results into `Compute::storage_` (accessible via `Stage::storage_`) and downstream stages read them by key. Keys are defined in `wslam::ResourceIdentifier` in `common.hpp` — always use those constants, never raw strings. Note the constexpr key strings must fit libstdc++'s 15-char SSO buffer. `take<T>(key)` moves the value out and erases the entry — the consume-once primitive used for cross-stage markers (e.g. `FeatureReferenceAdvanceName`).
 
-### Shared model types (`wslam/models.hpp`)
+### Shared model types (`wslam/src/models.hpp`)
 
-Cross-pass payload types live in `wslam/models.hpp`: `Feature`, `FeatureSet`, `MatchResult`, `RansacResult`, `TriangulationResult`, plus the factor-graph types `PoseId`, `LandmarkId`, `LandmarkObservation`, `MapDelta`, `KeyframePose`, `LandmarkEstimate`, `MapStats`, `MapSnapshot`. New cross-pass types belong here unless they pull in heavy headers (GTSAM types live in `wslam/mapping_state.hpp` instead, behind a pImpl-style boundary).
+Cross-pass payload types live in `wslam/src/models.hpp`: `Feature`, `FeatureSet`, `MatchResult`, `RansacResult`, `TriangulationResult`, plus the factor-graph types `PoseId`, `LandmarkId`, `LandmarkObservation`, `MapDelta`, `KeyframePose`, `LandmarkEstimate`, `MapStats`, `MapSnapshot`. New cross-pass types belong here unless they pull in heavy headers (GTSAM types live in `wslam/src/mapping_state.hpp` instead, behind a pImpl-style boundary).
 
 ### Pass constructor convention
 
@@ -107,7 +135,7 @@ GPU passes (`GPUPass` subclasses) inherit `gpu_` from the base class.
 
 ### SLAM pipeline (`wslam/`)
 
-`CreateWslamPipeline()` in `wslam.hpp` assembles the pipeline from a `WslamConfig` (defined in `common.hpp`) that controls `enable_gui`, `max_iterations`, and `map_out_path`. It returns a `WslamPipelineHandles` struct holding `shared_ptr<MappingState>` and a `flush_async` callable — the caller must keep this alive for the duration of the run because the mapping stage's passes reference the state, and must call `flush_async()` after the loop exits but before consumers (e.g. `ExportMap`) read `MapSnapshotName`.
+`CreateWslamPipeline()` in `wslam/include/wslam/wslam.hpp` assembles the pipeline from a `WslamConfig` (defined in `common.hpp`) that controls `enable_gui`, `max_iterations`, and `map_out_path`. It returns `std::optional<std::string>` (`std::nullopt` on success, an error message otherwise). `MappingState` is not handed back to the caller: it is owned jointly by the mapping passes via a `shared_ptr`, so it stays alive as long as the mapping stage lives inside `Compute`. The pipeline registers two callbacks with `Compute::addFlushable` that run in registration order inside `Compute::finalize()` (which `main.cpp` calls after the loop): first the mapping stage's `flush_async`, which blocks until any in-flight iSAM2 worker job completes so the final keyframe's optimisation lands in `MapSnapshotName`, then `ExportMap` (only when `map_out_path` is non-empty).
 
 0. **Clear bindings stage** — a single `CustomPass` runs first every frame; calls `clearBuffersAndOffsets()` to zero non-retained GPU regions before new work is dispatched.
 
@@ -125,19 +153,19 @@ GPU passes (`GPUPass` subclasses) inherit `gpu_` from the base class.
    - `TriangulateCPU` — undistorts the RANSAC inliers, re-fits the essential matrix on calibrated rays, decomposes into four (R, t) candidates, picks the one with the most cheirality passes, then runs linear DLT triangulation and a reprojection-error filter.
    - `VisualizeDataPass` (when `enable_gui`) — Pangolin GUI for matches, RANSAC inliers, and projected landmarks.
 
-3. **Mapping stage** (`CreateMappingStage` in `wslam/mapping.hpp`) — incremental visual-inertial SLAM via GTSAM iSAM2 with **smart projection factors**. State (the iSAM2 instance, the cached `Cal3_S2`, pose / landmark counters, the `flat_map<Feature, LandmarkId>` active-track map, IMU bias / velocity propagation, gravity estimate) lives in `MappingState`, injected by reference into all four passes. The frame-vs-keyframe geometry conflation that originally capped accuracy (R1 in `benchmarks/ACCURACY_ANALYSIS.md`) is fixed by the reference-feature-set mechanism above; evaluation history and remaining gaps are tracked in that document. Stage order:
+3. **Mapping stage** (`CreateMappingStage` in `wslam/src/map/mapping.hpp`) — incremental visual-inertial SLAM via GTSAM iSAM2 with **smart projection factors**. State (the iSAM2 instance, the cached `Cal3_S2`, pose / landmark counters, the `flat_map<Feature, LandmarkId>` active-track map, IMU bias / velocity propagation, gravity estimate) lives in `MappingState`, injected by reference into all four passes. The frame-vs-keyframe geometry conflation that originally capped accuracy (R1 in `benchmarks/ACCURACY_ANALYSIS.md`) is fixed by the reference-feature-set mechanism above; evaluation history and remaining gaps are tracked in that document. Stage order:
    - `Isam2DrainPass` — runs **first** so the keyframe gate and factor builder see up-to-date pose / smart-factor estimates from the previous iSAM round. Without this, the factor builder would read stale `smart_factor_indices` and schedule removal of factor indices iSAM had already replaced.
    - `KeyframeGatePass` — gates on min-landmarks, min-rotation OR min-parallax, and a min count of *new* landmarks. Allocates a new `PoseId`; chains the world pose off the previous keyframe's `predicted_values` (NOT `latest_values` — the previous iSAM update may still be in-flight on the worker). Associates **all RANSAC inlier pairs** (not just triangulated landmarks — smart factors need no pre-validated 3D point, and associating on the triangulated subset capped re-observation at chance level) against the previous keyframe's `feat_curr → LandmarkId` map. Bootstraps the first keyframe at **motion onset** (small `bootstrap_parallax_px` vs the per-frame-advancing reference), then initialises gravity *and gyro bias* from the quietest stationary window found in the IMU buffer (min `std(|accel|) + mean gyro deviation` score — absolute thresholds fail: EuRoC's gyro bias is ~0.08 rad/s and a parked MAV vibrates).
    - `FactorBuilderPass` — constructs the per-frame `NonlinearFactorGraph` and `Values` delta: `PriorFactor<Pose3>` (gauge) on the first keyframe, `BetweenFactor<Pose3>` (vision-only odometry, with the inverse-transpose direction conversion that GTSAM's between convention requires), `CombinedImuFactor` between consecutive keyframes, priors on initial velocity and IMU bias, and one `SmartProjectionPoseFactor<Cal3_S2>` per landmark. Smart factors marginalise the 3D point out of the optimisation, sidestepping iSAM2's depth-axis singularities on low-parallax landmarks. Observations are **pre-undistorted upstream** (in the gate pass) so the smart factor sees a clean pinhole `Cal3_S2`. On re-observations, the existing smart factor is mutated (`add()`) and re-pushed to iSAM2 via the remove-and-readd pattern, with the old factor index drained out of `smart_factor_indices`.
-   - `Isam2UpdatePass` — submits `(new_factors, new_values, remove_indices)` to an `Isam2Worker` running on a dedicated thread. The pass is asynchronous: each `execute()` drains the *previous* frame's pending result (blocking only if iSAM hasn't caught up), applies it to `MappingState::latest_values`, publishes a GTSAM-free `MapSnapshot` under `MapSnapshotName`, then submits the current frame's work. Catches `IndeterminantLinearSystemException` with the offending key formatted in the error message. Drained explicitly by `Isam2DrainPass` at the top of the next frame's stage; `flush()` is called once after the main loop exits to absorb the final keyframe's optimisation.
+   - `Isam2UpdatePass` — submits `(new_factors, new_values, remove_indices)` to an `Isam2Worker` running on a dedicated thread. The pass is asynchronous: each `execute()` drains the *previous* frame's pending result (blocking only if iSAM hasn't caught up), applies it to `MappingState::latest_values`, publishes a GTSAM-free `MapSnapshot` under `MapSnapshotName`, then submits the current frame's work. Catches `IndeterminantLinearSystemException` with the offending key formatted in the error message. Drained explicitly by `Isam2DrainPass` at the top of the next frame's stage; the mapping stage's `flush_async` (registered as a `Compute` flushable) runs once inside `finalize()` after the main loop exits to absorb the final keyframe's optimisation.
 
-4. **Map export** (`wslam/export.hpp`, called from `main.cpp` *after* the pipeline loop exits, not as a pass): writes `MapSnapshot` and `CamSensorParams` to `<stem>.ply` (landmark point cloud, ASCII PLY with `x`, `y`, `z`, `landmark_id`) and `<stem>.json` (keyframes, intrinsics, stats, schema). Triggered only when `config.map_out_path` is non-empty.
+4. **Map export** (`wslam/src/export.hpp`, registered as a `Compute` flushable that runs inside `finalize()` *after* the pipeline loop exits, not as a per-frame pass): writes `MapSnapshot` and `CamSensorParams` to `<stem>.ply` (landmark point cloud, ASCII PLY with `x`, `y`, `z`, `landmark_id`) and `<stem>.json` (keyframes, intrinsics, stats, schema). Triggered only when `config.map_out_path` is non-empty.
 
 ### Python presenter (`presentor/`)
 
 `presentor/` is a small PEP-621 `pyproject.toml` package providing the `presenter` CLI (`python -m presenter` or the `presenter` entry point). Dependencies: `rerun-sdk` (visualisation), `plyfile` (PLY loader), `numpy`. The viewer logs the landmark cloud, keyframe frustums, and the trajectory polyline into rerun.
 
-`viewer.py` is split into `init` / `log_landmarks` / `log_camera` / `log_trajectory` helpers so the same pieces can drive an incremental loader later (`rr.set_time_sequence(...)` per arriving keyframe). The schema the loader expects is documented in `wslam/export.cpp` (`format_version = 1`).
+`viewer.py` is split into `init` / `log_landmarks` / `log_camera` / `log_trajectory` helpers so the same pieces can drive an incremental loader later (`rr.set_time_sequence(...)` per arriving keyframe). The schema the loader expects is documented in `wslam/src/export.cpp` (`format_version = 1`).
 
 ### Benchmarks (`benchmarks/`)
 
@@ -167,7 +195,7 @@ modifying it, remember the changes are tracked in this repo's history.
 
 ### Data providers (`data/`)
 
-Providers implement `ProviderBase<N>` and expose a `std::generator<std::expected<Reading<N>, std::string>> getReadings()` coroutine. `AdaptProvider<Requested, Available>` adapts an N-camera provider to an M-camera consumer. Currently only `EurocProvider` is active; `TumProvider` is compiled but not wired in `CMakeLists.txt`.
+Providers implement `ProviderBase<N>` and expose a `std::generator<std::expected<Reading<N>, std::string>> getReadings()` coroutine. `AdaptProvider<Requested, Available>` adapts an N-camera provider to an M-camera consumer. Currently only `EurocProvider` is provided; the earlier `TumProvider` has been removed.
 
 ### Error handling convention
 
