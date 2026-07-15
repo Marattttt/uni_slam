@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common.hpp"
+#include "../common.hpp"
 #include "compute.hpp"
 #include "provider_base.hpp"
 #include "stage.hpp"

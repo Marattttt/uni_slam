@@ -11,89 +11,34 @@ include(configureDependencies)
 configureDependencies()
 
 option(LOG_AWAITER_CALLS "Enable logging about future adding / completion in compute::Awaiter" OFF)
-option(ENABLE_SANITIZERS TRUE)
+option(ENABLE_SANITIZERS FALSE)
 
-add_executable(pc_wslam 
-    main.cpp
-
-    compute/awaiter.cpp
-    compute/compute.cpp
-    compute/gpu.cpp
-    compute/pass.cpp
-    compute/performance.cpp
-    compute/stage.cpp
-
-    data/euroc_provider.cpp
-    data/provider_base.cpp
-    data/stb.cpp
-    # data/tum_provider.cpp
-
-    wslam/common.cpp
-    wslam/cull_corners.cpp
-    wslam/detect_corners.cpp
-    wslam/export.cpp
-    wslam/factor_builder.cpp
-    wslam/feature_detect.cpp
-    wslam/fill_pyramid.cpp
-    wslam/generate_features.cpp
-    wslam/isam2_update.cpp
-    wslam/isam2_worker.cpp
-    wslam/keyframe_gate.cpp
-    wslam/load_features_cpu.cpp
-    wslam/map_build_factors.cpp
-    wslam/map_filter_keyframe.cpp
-    wslam/map_stage.cpp
-    wslam/map_submit_updates.cpp
-    wslam/match_features_cpu.cpp
-    wslam/pose_estimate_cpu.cpp
-    wslam/ransac_cpu.cpp
-    wslam/sensor_loader.cpp
-    wslam/triangulate_cpu.cpp
-    wslam/viz.cpp
-    wslam/vizualize_data.cpp
-    wslam/wslam.cpp
- )
-
-target_include_directories(pc_wslam PRIVATE 
-    compute
-    data
-    base
-)
-
-
-target_compile_options(pc_wslam PRIVATE
+# Shared warning and sanitize flags for this project's targets
+add_library(project_options INTERFACE)
+target_compile_options(project_options INTERFACE
     -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
 )
 
-if (ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(pc_wslam PRIVATE
+if(ENABLE_SANITIZERS)
+    target_compile_options(project_options INTERFACE
         -fsanitize=address,undefined
         -fno-omit-frame-pointer
         -g
     )
-    target_link_options(pc_wslam PRIVATE
+    target_link_options(project_options INTERFACE
         -fsanitize=address,undefined
     )
 endif()
 
-if(LOG_AWAITER_CALLS) 
-    target_compile_definitions(pc_wslam PRIVATE LOG_AWAITER_CALLS)
-endif()
+add_subdirectory(base)
+add_subdirectory(compute)
+add_subdirectory(data)
+add_subdirectory(wslam)
 
-target_link_libraries(pc_wslam 
-    PRIVATE
-    dawn::webgpu_dawn
-    spdlog::spdlog_header_only $<$<BOOL:${MINGW}>:ws2_32> # The bool template comes from spdlog docs
-    pango_display pango_python
-    stb
-    ctre::ctre
-    Eigen3::Eigen
-    yaml-cpp::yaml-cpp
-    nlohmann_json::nlohmann_json
-    fast_cpp_csv_parser
-    gtsam
-    # std::stacktrace (used by base/assert.hpp's WSLAM_ASSERT) lives in
-    # libstdc++exp on GCC; without it the assert's stacktrace calls are
-    # undefined at link time.
-    $<$<CXX_COMPILER_ID:GNU>:stdc++exp>
-)
+# The base library is header-only so no options needed
+target_link_libraries(wslam_compute PRIVATE project_options)
+target_link_libraries(wslam_data PRIVATE project_options)
+target_link_libraries(wslam_app PRIVATE project_options)
+
+add_executable(pc_wslam main.cpp)
+target_link_libraries(pc_wslam PRIVATE wslam::app project_options)
