@@ -17,7 +17,7 @@ using namespace wslam;
 
 #define LOG_ID "[RANSAC Features pass]"
 
-RansacCPU::RansacCPU(GpuSharedBindings& shared) : RansacCPU(shared, Opts{}) {}
+RansacCPU::RansacCPU(AnyBag& storage) : RansacCPU(storage, Opts{}) {}
 
 std::string RansacCPU::getId() const { return LOG_ID; }
 
@@ -263,16 +263,15 @@ std::optional<std::string> RansacCPU::initialize() {
 std::optional<std::string> RansacCPU::execute() {
     spdlog::info(LOG_ID " Executing");
 
-    auto& storage = shared_.getStorage();
 
     const auto matches_ptr
-        = storage.getPtr<MatchResult>(ResourceIdentifier::MatchedFeaturesName);
+        = storage_.getPtr<MatchResult>(ResourceIdentifier::MatchedFeaturesName);
 
     if (!matches_ptr) {
         spdlog::warn(LOG_ID
                      " No MatchResult found in storage; skipping RANSAC for "
                      "this frame");
-        storage.set(ResourceIdentifier::RansacResultName, RansacResult{});
+        storage_.set(ResourceIdentifier::RansacResultName, RansacResult{});
         return std::nullopt;
     }
 
@@ -286,7 +285,7 @@ std::optional<std::string> RansacCPU::execute() {
                      " Too few matches for geometric fit ({} < {}); writing "
                      "empty inlier set",
                      flat.size(), opts_.min_matches);
-        storage.set(ResourceIdentifier::RansacResultName, std::move(result));
+        storage_.set(ResourceIdentifier::RansacResultName, std::move(result));
         return std::nullopt;
     }
 
@@ -357,7 +356,7 @@ std::optional<std::string> RansacCPU::execute() {
                      " RANSAC failed to find a consensus set "
                      "(best={} inliers out of {} matches, {} iterations)",
                      best_inliers.size(), flat.size(), iter);
-        storage.set(ResourceIdentifier::RansacResultName, std::move(result));
+        storage_.set(ResourceIdentifier::RansacResultName, std::move(result));
         return std::nullopt;
     }
 
@@ -403,7 +402,7 @@ std::optional<std::string> RansacCPU::execute() {
                          1, result.stats.total_matches)),
                  result.stats.iterations_run, opts_.inlier_threshold);
 
-    storage.set(ResourceIdentifier::RansacResultName, std::move(result));
+    storage_.set(ResourceIdentifier::RansacResultName, std::move(result));
 
     return std::nullopt;
 }

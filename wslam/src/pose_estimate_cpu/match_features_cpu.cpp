@@ -222,10 +222,9 @@ std::optional<std::string> MatchFeaturesCPU::execute() {
             return prev + vec.size();
         });
     };
-    auto& storage = shared_.getStorage();
 
     const auto prev
-        = storage.getPtr<FeatureSet>(ResourceIdentifier::GetFeatureSetName(1));
+        = storage_.getPtr<FeatureSet>(ResourceIdentifier::GetFeatureSetName(1));
 
     if (!prev) {
         // No reference feature set yet (very first frame). Stop just this
@@ -237,7 +236,7 @@ std::optional<std::string> MatchFeaturesCPU::execute() {
     }
 
     const auto curr
-        = storage.getPtr<FeatureSet>(ResourceIdentifier::GetFeatureSetName(0));
+        = storage_.getPtr<FeatureSet>(ResourceIdentifier::GetFeatureSetName(0));
     assert(curr);
 
     size_t prev_feat_count = count_features(*prev.value());
@@ -263,7 +262,7 @@ std::optional<std::string> MatchFeaturesCPU::execute() {
                  " Finished comparing feature sets. {} against {}; common:{}",
                  prev_feat_count, curr_feat_count, count_matches(matches));
 
-    storage.set(ResourceIdentifier::MatchedFeaturesName, std::move(matches));
+    storage_.set(ResourceIdentifier::MatchedFeaturesName, std::move(matches));
 
     return {};
 }

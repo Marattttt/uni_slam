@@ -42,19 +42,19 @@ class RansacCPU : public compute::Pass {
         uint64_t rng_seed = 0xC0FFEE'1234ULL;
     };
 
-    RansacCPU(GpuSharedBindings& shared, Opts opts)
-        : shared_(shared), opts_(opts), rng_(opts.rng_seed) {}
+    RansacCPU(AnyBag& storage, Opts opts)
+        : storage_(storage), opts_(opts), rng_(opts.rng_seed) {}
 
     // Out-of-line so the Opts default member initializers (parsed only after
     // the enclosing class definition completes) can be value-initialised.
-    RansacCPU(GpuSharedBindings& shared);
+    RansacCPU(AnyBag& storage);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
 
    private:
-    GpuSharedBindings& shared_;
+    AnyBag& storage_;
     Opts opts_;
     std::mt19937_64 rng_;
 };

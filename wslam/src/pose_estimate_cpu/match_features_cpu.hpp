@@ -6,13 +6,13 @@
 namespace wslam {
 class MatchFeaturesCPU : public compute::Pass {
    public:
-    MatchFeaturesCPU(GpuSharedBindings& shared) : shared_(shared) {}
+    MatchFeaturesCPU(AnyBag& storage) : storage_(storage) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
 
    private:
-    GpuSharedBindings& shared_;
+    AnyBag& storage_;
 };
 }  // namespace wslam

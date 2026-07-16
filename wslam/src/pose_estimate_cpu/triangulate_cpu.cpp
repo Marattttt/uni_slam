@@ -18,11 +18,11 @@ namespace util = wslam::map::util;
 
 #define LOG_ID "[Triangulate pass]"
 
-TriangulateCPU::TriangulateCPU(GpuSharedBindings& shared, Opts opts)
-    : shared_(shared), opts_(opts) {}
+TriangulateCPU::TriangulateCPU(AnyBag& storage, Opts opts)
+    : storage_(storage), opts_(opts) {}
 
-TriangulateCPU::TriangulateCPU(GpuSharedBindings& shared)
-    : TriangulateCPU(shared, Opts{}) {}
+TriangulateCPU::TriangulateCPU(AnyBag& storage)
+    : TriangulateCPU(storage, Opts{}) {}
 
 std::string TriangulateCPU::getId() const { return LOG_ID; }
 
@@ -313,7 +313,7 @@ std::optional<std::string> TriangulateCPU::ensureIntrinsics() {
     }
     const auto key
         = ResourceIdentifier::GetCameraIntrinsicsName(opts_.camera_index);
-    auto ptr = shared_.getStorage().getPtr<data::CamSensorParams>(key);
+    auto ptr = storage_.getPtr<data::CamSensorParams>(key);
     if (!ptr) {
         return std::format("could not get camera intrinsics under '{}'", key);
     }
@@ -346,14 +346,13 @@ std::optional<std::string> TriangulateCPU::execute() {
         return err;
     }
 
-    auto& storage = shared_.getStorage();
 
     const auto ransac_ptr
-        = storage.getPtr<RansacResult>(ResourceIdentifier::RansacResultName);
+        = storage_.getPtr<RansacResult>(ResourceIdentifier::RansacResultName);
     if (!ransac_ptr) {
         spdlog::warn(
             LOG_ID " No RansacResult in storage; writing empty triangulation");
-        storage.set(ResourceIdentifier::TriangulationResultName,
+        storage_.set(ResourceIdentifier::TriangulationResultName,
                     TriangulationResult{});
         return std::nullopt;
     }
@@ -369,7 +368,7 @@ std::optional<std::string> TriangulateCPU::execute() {
                      "min={}); writing empty triangulation",
                      ransac.stats.model_found, ransac.stats.inlier_count,
                      opts_.min_inliers);
-        storage.set(ResourceIdentifier::TriangulationResultName,
+        storage_.set(ResourceIdentifier::TriangulationResultName,
                     std::move(result));
         return std::nullopt;
     }
@@ -382,7 +381,7 @@ std::optional<std::string> TriangulateCPU::execute() {
                      " Collected {} valid inliers (<{} min) after "
                      "undistortion; aborting",
                      corr.size(), opts_.min_inliers);
-        storage.set(ResourceIdentifier::TriangulationResultName,
+        storage_.set(ResourceIdentifier::TriangulationResultName,
                     std::move(result));
         return std::nullopt;
     }
@@ -403,7 +402,7 @@ std::optional<std::string> TriangulateCPU::execute() {
     if (!e_opt) {
         spdlog::warn(LOG_ID
                      " Essential matrix fit failed; writing empty result");
-        storage.set(ResourceIdentifier::TriangulationResultName,
+        storage_.set(ResourceIdentifier::TriangulationResultName,
                     std::move(result));
         return std::nullopt;
     }
@@ -426,7 +425,7 @@ std::optional<std::string> TriangulateCPU::execute() {
         spdlog::warn(LOG_ID
                      " No pose candidate has any point in front of both "
                      "cameras; writing empty result");
-        storage.set(ResourceIdentifier::TriangulationResultName,
+        storage_.set(ResourceIdentifier::TriangulationResultName,
                     std::move(result));
         return std::nullopt;
     }
@@ -489,7 +488,7 @@ std::optional<std::string> TriangulateCPU::execute() {
     }
 
     // IMU sanity check — never gates the result, just a log line.
-    if (const auto imu_ptr = storage.getPtr<std::vector<data::IMUReading>>(
+    if (const auto imu_ptr = storage_.getPtr<std::vector<data::IMUReading>>(
             ResourceIdentifier::GetImuVecName())) {
         const auto imu_angle = impl::IntegrateGyroAngle(**imu_ptr);
         constexpr double kRadToDeg = 180.0 / std::numbers::pi;
@@ -509,6 +508,6 @@ std::optional<std::string> TriangulateCPU::execute() {
                  result.stats.mean_reprojection_error_px,
                  result.stats.rotation_angle_rad * (180.0 / std::numbers::pi));
 
-    storage.set(ResourceIdentifier::TriangulationResultName, std::move(result));
+    storage_.set(ResourceIdentifier::TriangulationResultName, std::move(result));
     return std::nullopt;
 }

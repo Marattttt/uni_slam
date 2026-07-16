@@ -53,18 +53,18 @@ class TriangulateCPU : public compute::Pass {
         uint32_t camera_index = 0;
     };
 
-    TriangulateCPU(GpuSharedBindings& shared, Opts opts);
+    TriangulateCPU(AnyBag& storage, Opts opts);
 
     // Forwarded to the Opts-taking constructor so default values aren't
     // duplicated.
-    TriangulateCPU(GpuSharedBindings& shared);
+    TriangulateCPU(AnyBag& storage);
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
 
    private:
-    GpuSharedBindings& shared_;
+    AnyBag& storage_;
     Opts opts_;
 
     // Cached on first execute() so we don't pay the AnyBag lookup every frame.
