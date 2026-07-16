@@ -5,11 +5,11 @@
 #include <cstdint>
 #include <string>
 
-#include "awaiter.hpp"
+#include "compute/awaiter.hpp"
 #include "common.hpp"
-#include "gpu.hpp"
+#include "compute/gpu.hpp"
 #include "models.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 class PassDetectCorners : public compute::GPUPass {

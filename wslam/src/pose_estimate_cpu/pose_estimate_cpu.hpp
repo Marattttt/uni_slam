@@ -1,8 +1,8 @@
 #pragma once
 
 #include "common.hpp"
-#include "compute.hpp"
-#include "stage.hpp"
+#include "compute/compute.hpp"
+#include "compute/stage.hpp"
 
 namespace wslam {
 compute::Stage CreatePoseEstimateCPUStage(compute::Compute& compute,

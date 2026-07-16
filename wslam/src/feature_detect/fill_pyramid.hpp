@@ -7,8 +7,8 @@
 
 #include "anybag.hpp"
 #include "common.hpp"
-#include "gpu.hpp"
-#include "pass.hpp"
+#include "compute/gpu.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 using ImageProvider

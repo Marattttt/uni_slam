@@ -8,13 +8,13 @@
 #include <utility>
 
 #include "anybag.hpp"
-#include "compute.hpp"
+#include "compute/compute.hpp"
 #include "map_build_factors.hpp"
 #include "map_common.hpp"
 #include "map_filter_keyframe.hpp"
 #include "map_submit_updates.hpp"
 #include "mapping.hpp"
-#include "stage.hpp"
+#include "compute/stage.hpp"
 
 using namespace wslam;
 

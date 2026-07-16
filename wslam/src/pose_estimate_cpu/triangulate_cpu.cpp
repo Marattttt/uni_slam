@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "common.hpp"
-#include "map_helpers_lods.hpp"
+#include "map/map_helpers_lods.hpp"
 #include "models.hpp"
-#include "provider_base.hpp"
+#include "data/provider_base.hpp"
 
 using namespace wslam;
 namespace util = wslam::map::util;

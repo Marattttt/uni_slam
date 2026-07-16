@@ -1,4 +1,4 @@
-#include "gpu.hpp"
+#include "compute/gpu.hpp"
 
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>
@@ -20,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-#include "awaiter.hpp"
+#include "compute/awaiter.hpp"
 
 using namespace wslam::compute;
 using namespace std::chrono_literals;

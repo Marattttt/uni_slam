@@ -1,4 +1,4 @@
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 #include <optional>
 

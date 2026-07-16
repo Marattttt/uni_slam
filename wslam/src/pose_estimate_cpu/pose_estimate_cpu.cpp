@@ -6,7 +6,7 @@
 #include "match_features_cpu.hpp"
 #include "ransac_cpu.hpp"
 #include "triangulate_cpu.hpp"
-#include "vizualize_data.hpp"
+#include "viz/vizualize_data.hpp"
 
 using namespace wslam;
 

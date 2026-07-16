@@ -26,7 +26,7 @@
 #include "assert.hpp"
 #include "common.hpp"
 #include "map_common.hpp"
-#include "provider_base.hpp"
+#include "data/provider_base.hpp"
 
 using namespace wslam;
 using namespace wslam::map;

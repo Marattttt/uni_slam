@@ -1,4 +1,4 @@
-#include "compute.hpp"
+#include "compute/compute.hpp"
 
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>
@@ -10,7 +10,7 @@
 #include <print>
 #include <string_view>
 
-#include "stage.hpp"
+#include "compute/stage.hpp"
 using namespace wslam::compute;
 
 void impl::print_device_unresponsive(const wgpu::Device& device,

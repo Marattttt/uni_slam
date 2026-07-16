@@ -9,7 +9,7 @@
 
 #include "anybag.hpp"
 #include "map_common.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam::map {
 // Builds the per-accepted-keyframe factor-graph delta (a FactorBundle) for the

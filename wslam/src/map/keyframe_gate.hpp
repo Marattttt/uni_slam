@@ -5,7 +5,7 @@
 
 #include "common.hpp"
 #include "mapping_state.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 

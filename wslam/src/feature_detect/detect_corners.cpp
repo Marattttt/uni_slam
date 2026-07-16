@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <webgpu/webgpu_cpp.h>
 
-#include "awaiter.hpp"
+#include "compute/awaiter.hpp"
 #include "common.hpp"
 
 using namespace wslam;

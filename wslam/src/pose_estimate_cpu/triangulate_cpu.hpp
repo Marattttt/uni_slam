@@ -3,8 +3,8 @@
 #include <cstdint>
 
 #include "common.hpp"
-#include "pass.hpp"
-#include "provider_base.hpp"
+#include "compute/pass.hpp"
+#include "data/provider_base.hpp"
 
 namespace wslam {
 

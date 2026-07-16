@@ -9,9 +9,9 @@
 #include <span>
 #include <string_view>
 
-#include "compute.hpp"
-#include "euroc_provider.hpp"
-#include "provider_base.hpp"
+#include "compute/compute.hpp"
+#include "data/euroc_provider.hpp"
+#include "data/provider_base.hpp"
 #include "wslam/common.hpp"
 #include "wslam/wslam.hpp"
 

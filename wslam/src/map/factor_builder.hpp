@@ -12,7 +12,7 @@
 #include "anybag.hpp"
 #include "mapping_state.hpp"
 #include "models.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 

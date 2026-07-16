@@ -6,9 +6,9 @@
 #include <string>
 
 #include "common.hpp"
-#include "compute.hpp"
+#include "compute/compute.hpp"
 #include "mapping_state.hpp"
-#include "stage.hpp"
+#include "compute/stage.hpp"
 
 namespace wslam {
 

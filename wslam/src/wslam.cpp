@@ -6,11 +6,11 @@
 #include <string>
 
 #include "export.hpp"
-#include "feature_detect.hpp"
-#include "mapping.hpp"
-#include "pass.hpp"
-#include "pose_estimate_cpu.hpp"
-#include "provider_base.hpp"
+#include "feature_detect/feature_detect.hpp"
+#include "map/mapping.hpp"
+#include "compute/pass.hpp"
+#include "pose_estimate_cpu/pose_estimate_cpu.hpp"
+#include "data/provider_base.hpp"
 
 using namespace wslam;
 

@@ -17,8 +17,8 @@
 #include "map_common.hpp"
 #include "map_helpers_lods.hpp"
 #include "models.hpp"
-#include "provider_base.hpp"
-#include "stage.hpp"
+#include "data/provider_base.hpp"
+#include "compute/stage.hpp"
 
 using namespace wslam;
 using namespace wslam::map;

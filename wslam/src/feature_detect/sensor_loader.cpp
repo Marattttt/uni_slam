@@ -3,8 +3,8 @@
 #include <algorithm>
 
 #include "common.hpp"
-#include "compute.hpp"
-#include "provider_base.hpp"
+#include "compute/compute.hpp"
+#include "data/provider_base.hpp"
 
 using namespace wslam;
 

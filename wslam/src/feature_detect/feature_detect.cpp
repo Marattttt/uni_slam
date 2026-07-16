@@ -8,7 +8,7 @@
 #include "detect_corners.hpp"
 #include "fill_pyramid.hpp"
 #include "generate_features.hpp"
-#include "provider_base.hpp"
+#include "data/provider_base.hpp"
 #include "sensor_loader.hpp"
 
 using namespace wslam;

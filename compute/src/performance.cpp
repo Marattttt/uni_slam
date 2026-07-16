@@ -1,4 +1,4 @@
-#include "performance.hpp"
+#include "compute/performance.hpp"
 
 #include <Eigen/src/Core/Matrix.h>
 

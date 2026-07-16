@@ -10,9 +10,9 @@
 
 #include "anybag.hpp"
 #include "common.hpp"
-#include "gpu.hpp"
+#include "compute/gpu.hpp"
 #include "models.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 #include "viz.hpp"
 
 namespace wslam::viz {
@@ -90,7 +90,7 @@ constexpr LandmarkStyle kDefaultLandmarkStyle{
 };
 constexpr auto kDefaultTextureName = "viz_texture";
 constexpr gpumodels::BRIEFTestSet kDefaultBRIEFTestSet{
-#include "brief_tests.inc"
+#include "feature_detect/brief_tests.inc"
 };
 
 class ReourceBuilder {

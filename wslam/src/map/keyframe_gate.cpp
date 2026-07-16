@@ -15,7 +15,7 @@
 
 #include "common.hpp"
 #include "models.hpp"
-#include "provider_base.hpp"
+#include "data/provider_base.hpp"
 
 using namespace wslam;
 

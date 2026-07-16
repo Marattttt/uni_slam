@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../common.hpp"
-#include "compute.hpp"
-#include "provider_base.hpp"
-#include "stage.hpp"
+#include "common.hpp"
+#include "compute/compute.hpp"
+#include "data/provider_base.hpp"
+#include "compute/stage.hpp"
 
 namespace wslam {
 compute::Stage CreateFeatureDetectStage(

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "common.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 class MatchFeaturesCPU : public compute::Pass {

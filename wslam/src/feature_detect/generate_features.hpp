@@ -6,8 +6,8 @@
 #include <memory>
 
 #include "common.hpp"
-#include "gpu.hpp"
-#include "pass.hpp"
+#include "compute/gpu.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 class GenerateFeaturesPass : public compute::GPUPass {

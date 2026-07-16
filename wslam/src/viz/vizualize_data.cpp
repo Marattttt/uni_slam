@@ -14,8 +14,8 @@
 #include <vector>
 
 #include "common.hpp"
-#include "compute.hpp"
-#include "gpu.hpp"
+#include "compute/compute.hpp"
+#include "compute/gpu.hpp"
 #include "models.hpp"
 
 using namespace wslam;

@@ -3,9 +3,9 @@
 #include <memory>
 
 #include "common.hpp"
-#include "gpu.hpp"
+#include "compute/gpu.hpp"
 #include "models.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 class LoadDataCPUPass : public compute::Pass {

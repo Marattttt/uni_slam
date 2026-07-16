@@ -1,10 +1,10 @@
 #pragma once
 
 #include "anybag.hpp"
-#include "compute.hpp"
+#include "compute/compute.hpp"
 #include "map_common.hpp"
 #include "models.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam::map {
 struct FilterKeyframeConfig {

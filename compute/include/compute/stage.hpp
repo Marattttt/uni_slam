@@ -6,9 +6,9 @@
 #include <variant>
 
 #include "anybag.hpp"
-#include "gpu.hpp"
-#include "pass.hpp"
-#include "performance.hpp"
+#include "compute/gpu.hpp"
+#include "compute/pass.hpp"
+#include "compute/performance.hpp"
 
 namespace wslam {
 namespace compute {

@@ -5,7 +5,7 @@
 
 #include <cmath>
 
-#include "awaiter.hpp"
+#include "compute/awaiter.hpp"
 
 using namespace wslam;
 namespace c = wslam::compute;

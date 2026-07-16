@@ -2,7 +2,7 @@
 
 #include <filesystem>
 
-#include "provider_base.hpp"
+#include "data/provider_base.hpp"
 
 #ifndef EUROC_DIR_ENV
 #define EUROC_DIR_ENV "EUROC_DIR"

@@ -1,4 +1,4 @@
-#include "awaiter.hpp"
+#include "compute/awaiter.hpp"
 
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>

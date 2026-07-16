@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "anybag.hpp"
-#include "gpu.hpp"
-#include "performance.hpp"
-#include "stage.hpp"
+#include "compute/gpu.hpp"
+#include "compute/performance.hpp"
+#include "compute/stage.hpp"
 
 #ifndef WSLAM_SHADER_SRC_DIR_ENV
 #define WSLAM_SHADER_SRC_DIR_ENV "WSLAM_SHADER_SRC_DIR"

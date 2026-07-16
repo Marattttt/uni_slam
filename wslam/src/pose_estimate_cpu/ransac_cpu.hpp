@@ -4,7 +4,7 @@
 #include <random>
 
 #include "common.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 

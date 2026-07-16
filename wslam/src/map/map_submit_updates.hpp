@@ -12,7 +12,7 @@
 
 #include "isam2_worker.hpp"
 #include "map_common.hpp"
-#include "pass.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam::map {
 

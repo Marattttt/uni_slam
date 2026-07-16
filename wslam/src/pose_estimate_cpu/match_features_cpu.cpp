@@ -7,7 +7,7 @@
 
 #include "common.hpp"
 #include "models.hpp"
-#include "stage.hpp"
+#include "compute/stage.hpp"
 
 using namespace wslam;
 

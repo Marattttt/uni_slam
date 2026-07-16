@@ -1,4 +1,4 @@
-#include "euroc_provider.hpp"
+#include "data/euroc_provider.hpp"
 
 #include <csv.h>
 #include <spdlog/spdlog.h>
@@ -12,7 +12,7 @@
 #include <filesystem>
 #include <functional>
 
-#include "provider_base.hpp"
+#include "data/provider_base.hpp"
 #include "yaml-cpp/exceptions.h"
 
 using namespace wslam::data;

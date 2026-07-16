@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "common.hpp"
-#include "provider_base.hpp"
+#include "data/provider_base.hpp"
 
 namespace wslam {
 namespace gpumodels {

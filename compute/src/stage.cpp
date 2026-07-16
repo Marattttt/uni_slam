@@ -1,4 +1,4 @@
-#include "stage.hpp"
+#include "compute/stage.hpp"
 
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>
@@ -8,8 +8,8 @@
 #include <string_view>
 #include <variant>
 
-#include "compute.hpp"
-#include "pass.hpp"
+#include "compute/compute.hpp"
+#include "compute/pass.hpp"
 
 using namespace wslam::compute;
 

@@ -9,7 +9,7 @@
 #include <optional>
 #include <string_view>
 
-#include "awaiter.hpp"
+#include "compute/awaiter.hpp"
 
 namespace wslam {
 namespace compute {

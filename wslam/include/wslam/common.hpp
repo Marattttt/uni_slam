@@ -6,7 +6,7 @@
 #include <string>
 
 #include "anybag.hpp"
-#include "gpu.hpp"
+#include "compute/gpu.hpp"
 
 #ifndef WSLAM_FRAME_WIDTH
 #define WSLAM_FRAME_WIDTH 752  // Euroc mav

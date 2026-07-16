@@ -7,8 +7,8 @@
 #include <utility>
 
 #include "common.hpp"
-#include "gpu.hpp"
-#include "pass.hpp"
+#include "compute/gpu.hpp"
+#include "compute/pass.hpp"
 
 namespace wslam {
 class CullCornersPass : public compute::GPUPass {

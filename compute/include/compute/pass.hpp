@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <variant>
 
-#include "gpu.hpp"
+#include "compute/gpu.hpp"
 
 namespace wslam::compute {
 

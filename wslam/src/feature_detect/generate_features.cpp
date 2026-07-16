@@ -11,7 +11,7 @@
 #include <type_traits>
 
 #include "common.hpp"
-#include "gpu.hpp"
+#include "compute/gpu.hpp"
 #include "models.hpp"
 
 using namespace wslam;

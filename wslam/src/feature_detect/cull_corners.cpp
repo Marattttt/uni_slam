@@ -6,7 +6,7 @@
 #include <string>
 
 #include "common.hpp"
-#include "gpu.hpp"
+#include "compute/gpu.hpp"
 
 using namespace wslam;
 

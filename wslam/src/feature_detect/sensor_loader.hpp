@@ -1,8 +1,8 @@
 #pragma once
 
 #include "anybag.hpp"
-#include "pass.hpp"
-#include "provider_base.hpp"
+#include "compute/pass.hpp"
+#include "data/provider_base.hpp"
 
 namespace wslam {
 class SensorLoaderPass : public compute::Pass {
