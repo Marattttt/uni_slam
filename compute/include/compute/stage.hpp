@@ -31,7 +31,6 @@ class Stage {
     [[nodiscard]] std::optional<std::string> execute();
 
     void add_pass(PassPtr pass);
-    void add_pass(std::vector<std::unique_ptr<Pass>> pass);
 
     AnyBag* storage_;
 

@@ -134,9 +134,4 @@ std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
 
 void Stage::add_pass(PassPtr pass) { passes_.emplace_back(std::move(pass)); }
 
-void Stage::add_pass(std::vector<std::unique_ptr<Pass>> passes) {
-    passes_.reserve(passes_.size() + passes.size());
-    std::ranges::move(passes, std::back_inserter(passes_));
-}
-
 std::string Stage::getId() const { return id_; }
