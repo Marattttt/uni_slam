@@ -13,6 +13,11 @@
 
 namespace wslam::compute {
 
+// Class for recording performance of different segments of code.
+// Supports nested calls: beginRecord returns a Scope, and while it is alive,
+// all further calls to beginRecord will fall under that scope
+//
+// Defining NPERF makes calls of this class essentially no-op
 class PerfRecorder {
     static constexpr std::string_view kDelimiter = "$";
 
@@ -23,7 +28,12 @@ class PerfRecorder {
     struct Scope {
         PerfRecorder& recorder;
         Clock::time_point start;
-        ~Scope() { recorder.popScope(*this); };
+        ~Scope() {
+            // Ensure that a non-empty scope is the only one calling popScope
+            if (start.time_since_epoch().count() > 0) {
+                recorder.popScope(*this);
+            }
+        };
     };
 
     struct Stats {

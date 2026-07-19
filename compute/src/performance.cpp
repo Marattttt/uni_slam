@@ -12,8 +12,12 @@
 using namespace wslam::compute;
 
 auto PerfRecorder::beginRecord(std::string_view label) -> Scope {
+#ifdef NPERF
+    return Scope{.recorder = *this};
+#else
     addScope(label);
     return Scope{.recorder = *this, .start = Clock::now()};
+#endif
 }
 
 void PerfRecorder::addScope(std::string_view scope) {
@@ -24,7 +28,10 @@ void PerfRecorder::addScope(std::string_view scope) {
 }
 
 void PerfRecorder::popScope(const Scope& scope) noexcept {
-    const auto elapsed = std::chrono::duration<double, std::ratio<1, 1>>(
+#ifdef NPERF
+    (void)scope;
+#else
+    const auto elapsed = std::chrono::duration<double, std::ratio<1, 1> >(
         Clock::now() - scope.start);
     records_[current_scope_].calls.emplace_back(
         static_cast<double>(elapsed.count()));
@@ -35,6 +42,7 @@ void PerfRecorder::popScope(const Scope& scope) noexcept {
         return;
     }
     current_scope_.resize(last_segment);
+#endif
 }
 
 void PerfRecorder::clear() {
@@ -44,6 +52,9 @@ void PerfRecorder::clear() {
 
 namespace {
 YAML::Node StatsToYaml(const PerfRecorder::Stats& stats) {
+#ifdef NPERF
+    (void)stats;
+#else
     YAML::Node node(YAML::NodeType::Map);
 
     if (stats.calls.empty()) {
@@ -85,12 +96,16 @@ YAML::Node StatsToYaml(const PerfRecorder::Stats& stats) {
     node["count"] = calls.size();
 
     return node;
+#endif
 }
 
 }  // namespace
 
 std::optional<std::string> PerfRecorder::writeFile(
     const std::filesystem::path& path) const {
+#ifdef NPERF
+    (void)path;
+#else
     std::ofstream file(path, std::ios::out | std::ios::trunc);
     if (!file) {
         return std::format("opening '{}' for writing: {}", path.string(),
@@ -106,10 +121,14 @@ std::optional<std::string> PerfRecorder::writeFile(
     }
 
     return std::nullopt;
+#endif
 }
 
 YAML::Node PerfRecorder::toYaml() const {
     YAML::Node root(YAML::NodeType::Map);
+#ifdef NPERF
+    return root;
+#else
 
     for (const auto& [k, v] : records_) {
         YAML::Node current = root;
@@ -123,4 +142,5 @@ YAML::Node PerfRecorder::toYaml() const {
     }
 
     return root;
+#endif
 }
