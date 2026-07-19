@@ -85,7 +85,7 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // passes (which move into Compute) live — see the note there.
     auto bindings = std::make_shared<map::MappingSharedBindings>();
 
-    compute::Stage stage{"Mapping", compute};
+    auto stage = std::make_unique<compute::Stage>("Mapping", &compute.getPerf());
 
     auto filter = std::make_unique<map::FilterKeyframePass>(compute, *bindings);
 
@@ -132,10 +132,10 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // drained keyframe's smart-factor indices, optimised poses, and propagated
     // velocity/bias. Submit hands the built bundle to the worker without
     // blocking; its result is drained on the next accepted keyframe.
-    stage.add_pass(std::move(filter));
-    stage.add_pass(std::move(drain));
-    stage.add_pass(std::move(build));
-    stage.add_pass(std::move(submit));
+    stage->add_pass(std::move(filter));
+    stage->add_pass(std::move(drain));
+    stage->add_pass(std::move(build));
+    stage->add_pass(std::move(submit));
 
     return MappingStage{
         .stage = std::move(stage),

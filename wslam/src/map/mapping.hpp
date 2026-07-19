@@ -23,7 +23,7 @@ namespace wslam {
 // the iSAM update pass owned by `stage`, so it must be invoked while the
 // stage (and its enclosing Compute) is still alive.
 struct MappingStage {
-    compute::Stage stage;
+    std::unique_ptr<compute::Stage> stage;
     std::function<std::optional<std::string>()> flush_async;
 };
 

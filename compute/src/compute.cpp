@@ -17,9 +17,8 @@ void impl::print_device_unresponsive(const wgpu::Device& device,
                                      wgpu::DeviceLostReason reason,
                                      wgpu::StringView message) {
     (void)device;
+    // Deliberate teardown at shutdown — not an error.
     if (reason == wgpu::DeviceLostReason::Destroyed) {
-        // Deliberate teardown at shutdown — not an error.
-        spdlog::debug("WebGPU device destroyed: {}", std::string_view(message));
         return;
     }
     std::println(stderr, "Lost connection with device. Reason: {}; Message: {}",
@@ -36,7 +35,9 @@ void impl::print_device_captured_error(const wgpu::Device& device,
         static_cast<uint32_t>(errtype), std::string_view(msg));
 }
 
-void Compute::addStage(Stage stage) { stages_.emplace_back(std::move(stage)); }
+void Compute::addStage(std::unique_ptr<Stage> stage) {
+    stages_.emplace_back(std::move(stage));
+}
 
 ComputeConfig wslam::compute::createDefaultConfig() {
     const char* shader_dir = std::getenv(WSLAM_SHADER_SRC_DIR_ENV);
@@ -88,39 +89,41 @@ std::optional<std::string> Compute::prepare(const ComputeConfig& opts) {
 }
 
 std::optional<std::string> Compute::initizalize() {
-    for (Stage& stage : stages_) {
-#ifndef NPERF
-        const auto perfscope = perf_.beginRecord("init " + stage.getId());
-#endif
+    const auto scope = perf_.beginRecord("initialization");
 
-        if (auto err = stage.initialize()) {
-            return std::format("iniiializing stage {}: {}", stage.getId(),
+    for (auto& stage : stages_) {
+        const auto perfscope = perf_.beginRecord(stage->getId());
+
+        if (auto err = stage->initialize()) {
+            return std::format("iniiializing stage {}: {}", stage->getId(),
                                err.value());
         }
     }
 
-#ifndef NPERF
     if (auto err = perf_.writeFile(perf_logs_output_ / "init_perflog.yaml")) {
         return "saving perf logs: " + std::move(err).value();
     };
 
     perf_.clear();
-#endif
 
     return std::nullopt;
 }
 
 std::optional<std::string> Compute::execute() {
-    for (Stage& stage : stages_) {
-        if (auto err = stage.execute()) {
+    const auto scope = perf_.beginRecord("execution");
+
+    for (auto& stage : stages_) {
+        const auto perfscope = perf_.beginRecord(stage->getId());
+
+        if (auto err = stage->execute()) {
             if (err.value() == kComputeStopExecution) {
                 spdlog::info("[COMPUTE] Execution stop requested from stage {}",
-                             stage.getId());
+                             stage->getId());
 
                 return {};
             }
 
-            return std::format("executing stage {}: {}", stage.getId(),
+            return std::format("executing stage {}: {}", stage->getId(),
                                err.value());
         }
     }

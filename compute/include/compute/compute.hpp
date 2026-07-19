@@ -57,7 +57,7 @@ class Compute {
     [[nodiscard]] std::optional<std::string> execute();
     [[nodiscard]] std::optional<std::vector<std::string>> finalize();
 
-    void addStage(Stage stage);
+    void addStage(std::unique_ptr<Stage> stage);
 
     void addFlushable(auto&& cb) {
         flushes_.emplace_back(std::forward<decltype(cb)>(cb));
@@ -76,7 +76,7 @@ class Compute {
     std::filesystem::path generatePerfOutFilePath() const;
 
     std::shared_ptr<GPU> gpu_;
-    std::vector<Stage> stages_;
+    std::vector<std::unique_ptr<Stage>> stages_;
     AnyBag storage_;
     PerfRecorder perf_;
     std::filesystem::path perf_logs_output_;

@@ -469,27 +469,27 @@ std::optional<std::string> GPU::initBuffers() {
     const std::array specs = {
         BufferSpec{.target = &input_buf_,
                    .label = "Input buffer",
-                   .size = WCOMPUTE_MAP_WRITE_BUF_SIZE,
+                   .size = opts_.input_size,
                    .usage = BU::CopySrc | BU::MapWrite},
         BufferSpec{.target = &uniform_buf_,
                    .label = "Uniform buffer",
-                   .size = WCOMPUTE_UNIFORM_BUF_SIZE,
+                   .size = opts_.uniform_size,
                    .usage = BU::CopySrc | BU::CopyDst | BU::Uniform},
         BufferSpec{.target = &storage_buf_a_,
                    .label = "Storage buffer A",
-                   .size = WCOMPUTE_STORAGE_BUF_SIZE,
+                   .size = opts_.storage_size,
                    .usage = BU::Storage | BU::CopyDst | BU::CopySrc},
         BufferSpec{.target = &storage_buf_b_,
                    .label = "Storage buffer B",
-                   .size = WCOMPUTE_STORAGE_BUF_SIZE,
+                   .size = opts_.storage_size,
                    .usage = BU::Storage | BU::CopyDst | BU::CopySrc},
         BufferSpec{.target = &shared_buf_,
                    .label = "Shared storage buffer",
-                   .size = WCOMPUTE_STORAGE_BUF_SIZE,
+                   .size = opts_.shared_size,
                    .usage = BU::Storage | BU::CopyDst | BU::CopySrc},
         BufferSpec{.target = &output_buf_,
                    .label = "Map read buffer",
-                   .size = WCOMPUTE_MAP_READ_BUF_SIZE,
+                   .size = opts_.output_size,
                    .usage = BU::CopyDst | BU::MapRead},
     };
 
@@ -909,7 +909,7 @@ std::optional<std::string> GPU::copyDataToOutput(const BufferBinding& binding) {
 
     const auto& buf = getBuffer(binding.getBuffertype());
 
-    if (binding.getSize() >= WCOMPUTE_MAP_READ_BUF_SIZE) {
+    if (binding.getSize() >= opts_.output_size) {
         throw std::out_of_range("reading large buffers is not implemented");
     }
 

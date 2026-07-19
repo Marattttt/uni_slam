@@ -4,6 +4,7 @@
 
 #include "anybag.hpp"
 #include "common.hpp"
+#include "compute/gpu_stage.hpp"
 #include "cull_corners.hpp"
 #include "detect_corners.hpp"
 #include "fill_pyramid.hpp"
@@ -39,29 +40,30 @@ class StorageImageProvider {
     data::FrameBW last_frame_;
 };
 
-compute::Stage wslam::CreateFeatureDetectStage(
+std::unique_ptr<compute::Stage> wslam::CreateFeatureDetectStage(
     compute::Compute& compute, GpuSharedBindings& shared_bindings,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
     const std::string& feature_output_label, WslamConfig config) {
     const auto gpu = compute.getGPUPtr();
-    compute::Stage stage{"Feature detect", compute};
+    auto stage = std::make_unique<compute::GpuStage>("Feature detect", gpu,
+                                                     &compute.getPerf());
 
-    stage.add_pass(std::make_unique<SensorLoaderPass>(std::move(provider),
-                                                      compute.getStorage()));
+    stage->add_pass(std::make_unique<SensorLoaderPass>(std::move(provider),
+                                                       compute.getStorage()));
 
     StorageImageProvider img_provider{compute.getStorage()};
-    stage.add_pass(std::make_unique<FillPyramidPass>(
+    stage->add_pass(std::make_unique<FillPyramidPass>(
         gpu, shared_bindings,
         PassFillPyramidOpts{.image_getter = std::move(img_provider),
                             .storage = shared_bindings.getStorage()}));
 
-    stage.add_pass(
+    stage->add_pass(
         std::make_unique<PassDetectCorners>(gpu, shared_bindings, "corners"));
 
-    stage.add_pass(std::make_unique<CullCornersPass>(gpu, shared_bindings,
-                                                     "corners", "corners_out"));
+    stage->add_pass(std::make_unique<CullCornersPass>(
+        gpu, shared_bindings, "corners", "corners_out"));
 
-    stage.add_pass(std::make_unique<GenerateFeaturesPass>(
+    stage->add_pass(std::make_unique<GenerateFeaturesPass>(
         gpu, shared_bindings, "corners_out", feature_output_label));
 
     // if (config.enable_gui) {
@@ -82,3 +84,4 @@ compute::Stage wslam::CreateFeatureDetectStage(
 
     return stage;
 }
+

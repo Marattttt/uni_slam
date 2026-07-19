@@ -12,23 +12,24 @@ using namespace wslam;
 
 #define LOG_ID "[Pose Estimate stage]"
 
-compute::Stage wslam::CreatePoseEstimateCPUStage(
+std::unique_ptr<compute::Stage> wslam::CreatePoseEstimateCPUStage(
     compute::Compute& compute, GpuSharedBindings& shared,
     std::string features_binding_label, WslamConfig config) {
     const auto gpu = compute.getGPUPtr();
-    compute::Stage stage{"Pose Estimate", compute};
+    auto stage = std::make_unique<compute::Stage>("Pose Estimate",
+                                                  &compute.getPerf());
 
     // The LoD texture readback only feeds the GUI resource provider below;
     // headless runs skip it.
-    stage.add_pass(std::make_unique<LoadDataCPUPass>(
+    stage->add_pass(std::make_unique<LoadDataCPUPass>(
         shared, gpu, std::move(features_binding_label),
         /*readback_textures=*/config.enable_gui));
 
-    stage.add_pass(std::make_unique<MatchFeaturesCPU>(shared.getStorage()));
+    stage->add_pass(std::make_unique<MatchFeaturesCPU>(shared.getStorage()));
 
-    stage.add_pass(std::make_unique<RansacCPU>(shared.getStorage()));
+    stage->add_pass(std::make_unique<RansacCPU>(shared.getStorage()));
 
-    stage.add_pass(std::make_unique<TriangulateCPU>(shared.getStorage()));
+    stage->add_pass(std::make_unique<TriangulateCPU>(shared.getStorage()));
 
     if (config.enable_gui) {
         std::unique_ptr<viz::ResourceProvider> resource_provider
@@ -41,7 +42,7 @@ compute::Stage wslam::CreatePoseEstimateCPUStage(
                     .load_ransac_inliers = true,
                     .load_landmarks = true,
                 });
-        stage.add_pass(std::make_unique<viz::VisualizeDataPass>(
+        stage->add_pass(std::make_unique<viz::VisualizeDataPass>(
             gpu, std::move(resource_provider)));
     }
 

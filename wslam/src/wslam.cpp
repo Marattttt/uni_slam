@@ -18,9 +18,10 @@ void wslam::impl::CreateWslamPipelineImpl(
     compute::Compute& compute, GpuSharedBindings& shared,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
     const WslamConfig& config) {
-    compute::Stage clearing_stage{"Clear bindings", compute};
+    auto clearing_stage = std::make_unique<compute::Stage>("Clear bindings",
+                                                           &compute.getPerf());
 
-    clearing_stage.add_pass(std::make_unique<compute::CustomPass>(
+    clearing_stage->add_pass(std::make_unique<compute::CustomPass>(
         "[Clear bindings pass]", [gpu = compute.getGPUPtr()](void*) {
             return gpu->clearBuffersAndOffsets();
         }));

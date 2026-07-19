@@ -1,47 +1,42 @@
 #pragma once
 
-#include <webgpu/webgpu_cpp.h>
-
+#include <cstdint>
 #include <memory>
-#include <variant>
+#include <optional>
+#include <string>
+#include <vector>
 
-#include "anybag.hpp"
-#include "compute/gpu.hpp"
 #include "compute/pass.hpp"
 #include "compute/performance.hpp"
 
 namespace wslam {
 namespace compute {
 
-class Compute;
-
 constexpr std::string kStageStopExecution = "STAGE_STOP";
 
+// A named, ordered sequence of passes. Use GpuStage for batching GPU work
 class Stage {
-    friend class Compute;
-
    public:
-    using PassPtr
-        = std::variant<std::unique_ptr<Pass>, std::unique_ptr<GPUPass>>;
+    explicit Stage(std::string id, PerfRecorder* perf = nullptr);
 
-    Stage(std::string id, Compute& compute);
+    Stage(const Stage&) = delete;
+    Stage& operator=(const Stage&) = delete;
+    Stage(Stage&&) = default;
+    Stage& operator=(Stage&&) = default;
+    virtual ~Stage() = default;
 
     [[nodiscard]] std::string getId() const;
-    [[nodiscard]] std::optional<std::string> initialize();
-    [[nodiscard]] std::optional<std::string> execute();
+    [[nodiscard]] virtual std::optional<std::string> initialize();
+    [[nodiscard]] virtual std::optional<std::string> execute();
 
-    void add_pass(PassPtr pass);
+    void add_pass(std::unique_ptr<Pass> pass);
 
-    AnyBag* storage_;
+   protected:
+    std::string id_;
+    PerfRecorder* perf_;
 
    private:
-    std::vector<PassPtr> passes_;
-    std::shared_ptr<GPU> gpu_;
-    std::string id_;
-    PerfRecorder& perf_;
-
-    [[nodiscard]] std::optional<std::string> executeGPUBatch(
-        std::span<GPUPass*> batch);
+    std::vector<std::unique_ptr<Pass>> passes_;
 };
 };  // namespace compute
 };  // namespace wslam

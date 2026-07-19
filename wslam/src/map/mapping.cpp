@@ -85,7 +85,7 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
 
     auto state = std::make_shared<MappingState>();
 
-    compute::Stage stage{"Mapping", compute};
+    auto stage = std::make_unique<compute::Stage>("Mapping", &compute.getPerf());
 
     auto gate = std::make_unique<KeyframeGatePass>(state);
     gate->setStorage(storage);
@@ -145,10 +145,10 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // had already replaced — yielding VariableIndex::remove failures.
     auto drainer = std::make_unique<Isam2DrainPass>(*updater_ptr);
 
-    stage.add_pass(std::move(drainer));
-    stage.add_pass(std::move(gate));
-    stage.add_pass(std::move(builder));
-    stage.add_pass(std::move(updater));
+    stage->add_pass(std::move(drainer));
+    stage->add_pass(std::move(gate));
+    stage->add_pass(std::move(builder));
+    stage->add_pass(std::move(updater));
 
     return MappingStage{
         .stage = std::move(stage),

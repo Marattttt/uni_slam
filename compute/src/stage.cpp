@@ -1,137 +1,69 @@
 #include "compute/stage.hpp"
 
 #include <spdlog/spdlog.h>
-#include <webgpu/webgpu_cpp.h>
 
-#include <algorithm>
-#include <ranges>
-#include <string_view>
-#include <variant>
+#include <format>
 
 #include "compute/compute.hpp"
 #include "compute/pass.hpp"
 
 using namespace wslam::compute;
 
-Stage::Stage(std::string id, Compute& compute)
-    : storage_(&compute.getStorage()),
-      gpu_(compute.getGPUPtr()),
-      id_("[" + std::move(id) + "]"),
-      perf_(compute.getPerf()) {}
+Stage::Stage(std::string id, PerfRecorder* perf)
+    : id_(std::move(id)), perf_(perf) {}
+
+std::string Stage::getId() const { return id_; }
+
+void Stage::add_pass(std::unique_ptr<Pass> pass) {
+    passes_.emplace_back(std::move(pass));
+}
 
 std::optional<std::string> Stage::initialize() {
-    spdlog::info("[Stage] Initializing stage {}", getId());
+    spdlog::info("{} Initializing", getId());
 
     for (auto& pass : passes_) {
-        std::optional<std::string> err
-            = std::visit([](auto&& p) { return p->initialize(); }, pass);
+        const auto perfscope
+            = perf_ != nullptr
+                  ? std::optional{perf_->beginRecord(pass->getId())}
+                  : std::nullopt;
 
-        const std::string id
-            = std::visit([](auto&& p) { return p->getId(); }, pass);
-
-        if (err) {
-            return std::format("initializing pass {}: {}", id, err.value());
+        if (auto err = pass->initialize()) {
+            return std::format("initializing pass {}: {}", pass->getId(),
+                               err.value());
         }
     }
 
     return std::nullopt;
 }
 
-namespace {
-template <typename T>
-    requires(std::is_same_v<T, Pass> || std::is_same_v<T, GPUPass>)
-std::string CollectPassNames(std::span<T*> passes) {
-    return passes | std::views::transform([](auto&& p) { return p->getId(); })
-           | std::views::join_with(std::string_view(", "))
-           | std::ranges::to<std::string>();
-}
-};  // namespace
-
 std::optional<std::string> Stage::execute() {
-    spdlog::info("[Stage] Executing stage {}", getId());
-
-#ifndef NPERF
-    const auto perfscope = perf_.beginRecord("exec " + getId());
-#endif
-
-    // Batch gpu passes to execute in a single queue submission and await
-    std::vector<GPUPass*> gpu_batch;
-
-    // Only two types of passes are handled, overloaded type for visining an
-    // std::variant is not used
-    static_assert(std::variant_size_v<PassPtr> == 2);
+    spdlog::info("{} Executing", getId());
 
     for (auto& pass : passes_) {
-        if (auto* gpu_pass = std::get_if<std::unique_ptr<GPUPass>>(&pass)) {
-            gpu_batch.emplace_back(gpu_pass->get());
+        const auto perfscope
+            = perf_ != nullptr
+                  ? std::optional{perf_->beginRecord(pass->getId())}
+                  : std::nullopt;
+
+        auto err_opt = pass->execute();
+
+        if (!err_opt) {
             continue;
         }
 
-        if (auto err = executeGPUBatch(std::span(gpu_batch))) {
+        auto& err = err_opt.value();
+        if (err == kStageStopExecution) {
+            spdlog::warn("{} stage stop execution requested by pass {}",
+                         getId(), pass->getId());
+            return {};
+        }
+
+        if (err == kComputeStopExecution) {
             return err;
         }
 
-        gpu_batch.clear();
-
-        auto& cpu_pass = std::get<std::unique_ptr<Pass>>(pass);
-
-#ifndef NPERF
-        const auto pass_perfscope = perf_.beginRecord(cpu_pass->getId());
-#endif
-
-        if (auto err = cpu_pass->execute()) {
-            if (err.value() == kStageStopExecution) {
-                spdlog::info("[Stage] {} stage-stop from {}", getId(),
-                             cpu_pass->getId());
-                return std::nullopt;
-            }
-            if (err.value() == kComputeStopExecution) {
-                return err;
-            }
-            return std::format("pass {}: {}", cpu_pass->getId(),
-                               std::move(err).value());
-        }
-    }
-
-    if (auto err = executeGPUBatch(std::span(gpu_batch))) {
-        return err;
+        return std::format("{}: {}", pass->getId(), std::move(err));
     }
 
     return std::nullopt;
 }
-
-std::optional<std::string> Stage::executeGPUBatch(std::span<GPUPass*> batch) {
-    if (batch.size() == 0) {
-        return std::nullopt;
-    }
-
-    const std::string pass_names = CollectPassNames(batch);
-
-#ifndef NPERF
-    const auto perfscope
-        = perf_.beginRecord(std::format("GPU {{ {} }}", pass_names));
-#endif
-
-    const auto encoder = std::invoke([&] {
-        const std::string label
-            = std::format("command encoder for passes {{ {} }}", pass_names);
-        const wgpu::CommandEncoderDescriptor desc{.label = label.c_str()};
-        return gpu_->getDevice().CreateCommandEncoder(&desc);
-    });
-
-    for (auto* pass : batch) {
-        if (auto err = pass->prepareExecute(encoder)) {
-            return std::format("preparing pass {}: {}", pass->getId(),
-                               std::move(err).value());
-        }
-    }
-
-    const auto commands = encoder.Finish();
-
-    return gpu_->submitAndWait(
-        commands, std::format("stage passes {{ {} }}", pass_names));
-}
-
-void Stage::add_pass(PassPtr pass) { passes_.emplace_back(std::move(pass)); }
-
-std::string Stage::getId() const { return id_; }

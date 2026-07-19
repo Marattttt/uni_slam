@@ -2,6 +2,7 @@ add_library(wslam_compute
     src/awaiter.cpp
     src/compute.cpp
     src/gpu.cpp
+    src/gpu_stage.cpp
     src/pass.cpp
     src/performance.cpp
     src/stage.cpp
@@ -29,5 +30,5 @@ target_link_libraries(wslam_compute
 # CTRE is used in gpu.cpp for find and replace in WGSL source files
 target_link_libraries(wslam_compute
     PRIVATE
-    ctre::ctre                    
+    ctre::ctre
 )

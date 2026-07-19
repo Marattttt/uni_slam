@@ -102,6 +102,21 @@ class BufferBinding {
     size_t size_, offset_;
 };
 
+// Runtime-configurable sizes for the fixed GPU slabs allocated in
+// GPU::initialize(). Defaults reproduce the sizes historically hard-coded via
+// the WCOMPUTE_* macros. NOTE: the SharedStorage slab defaults to the storage
+// size (500 MB) to match the pre-Opts behaviour — that buffer was always
+// allocated with WCOMPUTE_STORAGE_BUF_SIZE, never the (unused)
+// WCOMPUTE_SHARED_BUF_SIZE (64 MB) macro. Shrink these in tests to allocate a
+// tiny device. Referred to as GPU::Opts via the alias inside the class.
+struct GpuBufferSizes {
+    size_t input_size = WCOMPUTE_MAP_WRITE_BUF_SIZE;   // 64 MB
+    size_t uniform_size = WCOMPUTE_UNIFORM_BUF_SIZE;   // 32 KB
+    size_t storage_size = WCOMPUTE_STORAGE_BUF_SIZE;   // 500 MB
+    size_t shared_size = WCOMPUTE_STORAGE_BUF_SIZE;    // 500 MB (see note)
+    size_t output_size = WCOMPUTE_MAP_READ_BUF_SIZE;   // 64 MB
+};
+
 class GPU {
    public:
     using DeviceCb = std::function<wgpu::DeviceLostCallback<void>>;
@@ -110,9 +125,12 @@ class GPU {
     using DeviceCbPtr = std::shared_ptr<DeviceCb>;
     using ErrorCbPtr = std::shared_ptr<ErrorCb>;
 
+    using Opts = GpuBufferSizes;
+
     GPU(DeviceCbPtr deviceLostCallback, ErrorCbPtr errorCallback,
-        std::filesystem::path prefix)
+        std::filesystem::path prefix, Opts opts = {})
         : path_prefix_(std::move(prefix)),
+          opts_(opts),
           device_lost_callback_(std::move(deviceLostCallback)),
           uncaptured_error_callback_(std::move(errorCallback)) {}
 
@@ -193,6 +211,7 @@ class GPU {
     void unAssignBuffer(BufferBinding& binding);
 
     const std::filesystem::path path_prefix_;
+    const Opts opts_;
 
     wgpu::Instance instance_;
     wgpu::Device device_;
