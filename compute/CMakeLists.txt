@@ -32,3 +32,7 @@ target_link_libraries(wslam_compute
     PRIVATE
     ctre::ctre
 )
+
+if(BUILD_TESTS)
+    add_subdirectory(tests)
+endif()

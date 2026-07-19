@@ -35,6 +35,10 @@ function (configureDependencies)
     # Eigen 3.4.0's CMakeLists requires cmake < 4 semantics that CMake 4+
     # removed; opt in to legacy compatibility so the subproject configures.
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+    # Keep Eigen's ~800 own unit tests out of our CTest registry (enable_testing()
+    # at the root would otherwise surface them alongside our tests).
+    set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(eigen)
 
     # Eigen's FetchContent subproject may only create the bare `eigen` target
@@ -100,13 +104,26 @@ function (configureDependencies)
         "${fast_cpp_csv_parser_SOURCE_DIR}"
     )
 
-    # FetchContent_Declare(
-    #     pangolin
-    #     GIT_REPOSITORY "https://github.com/stevenlovegrove/Pangolin"
-    #     GIT_TAG        v0.9.4
-    #     GIT_SHALLOW    TRUE
-    # )
-    # FetchContent_MakeAvailable(pangolin)
+    if(BUILD_TESTS)
+        FetchContent_Declare(
+            googletest
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG        v1.17.0
+            GIT_SHALLOW    TRUE
+        )
+        FetchContent_MakeAvailable(googletest)
+        # Treat gtest headers as system headers so the strict project warning
+        # flags (-Wconversion etc.) don't fire on them.
+        foreach(gtest_target gtest gtest_main gmock gmock_main)
+            if(TARGET ${gtest_target})
+                get_target_property(GTEST_INC ${gtest_target}
+                    INTERFACE_INCLUDE_DIRECTORIES)
+                set_target_properties(${gtest_target} PROPERTIES
+                    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${GTEST_INC}"
+                )
+            endif()
+        endforeach()
+    endif()
 
     # Dawn has a complex, multi-step build process with its own dependency
     # fetching (depot_tools/gclient). It is much more reliable to build it
