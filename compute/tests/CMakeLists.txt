@@ -1,5 +1,6 @@
 add_executable(compute_tests
     stage_tests.cpp
+    pass_tests.cpp
 )
 
 target_link_libraries(compute_tests
