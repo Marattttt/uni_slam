@@ -33,7 +33,7 @@ for arg in "$@"; do
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
         --map-out=*)    RUN_ARGS+=("$arg") ;;
         Debug)          BUILD_TYPE="Debug" ;;
-        Release)        BUILD_TYPE="Release" ;;
+        Release)        BUILD_TYPE="RelWithDebInfo" ;;
         *)              echo "error: unknown argument '$arg'" >&2
                         print_help >&2
                         exit 1 ;;
