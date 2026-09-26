@@ -1,0 +1,16 @@
+diff --git a/src/tint/CMakeLists.txt b/src/tint/CMakeLists.txt
+--- a/src/tint/CMakeLists.txt
++++ b/src/tint/CMakeLists.txt
+@@ -97,6 +97,12 @@
+     -Wno-padded
+     -Wno-switch-enum
+     -Wno-unknown-pragmas
++    # GCC 16 added -Winvalid-constexpr (enabled by -Wpedantic); Tint binds
++    # non-constexpr inline function templates (MatchVec/MatchMat) to
++    # `constexpr auto` variables, which trips it. The -pedantic-errors that
++    # precedes this list in tint_default_compile_options then promotes the
++    # warning to an error, so the suppression has to land after it.
++    -Wno-invalid-constexpr
+   )
+   if (${DAWN_WERROR})
+       list(APPEND COMMON_GNU_OPTIONS -Werror)

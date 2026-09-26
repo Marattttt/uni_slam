@@ -812,6 +812,17 @@ if (onnxruntime_USE_WEBGPU)
           #
           ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn_parallel_build_fix.patch &&
 
+          # LOCAL (uni_slam): the gcc16_invalid_constexpr.patch contains the following changes:
+          #
+          # - (private) Suppress GCC 16's -Winvalid-constexpr in Tint
+          #   Tint binds non-constexpr inline function templates (MatchVec/MatchMat) to
+          #   `constexpr auto` variables, which GCC 16's new -Winvalid-constexpr flags, and
+          #   tint_default_compile_options' -pedantic-errors promotes to an error. The
+          #   suppression has to be appended to COMMON_GNU_OPTIONS because that list is
+          #   placed after -pedantic-errors on the command line -- a global
+          #   CMAKE_CXX_FLAGS=-Wno-invalid-constexpr lands before it and loses.
+          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/gcc16_invalid_constexpr.patch &&
+
           # Remove the test folder to speed up potential file scan operations (70k+ files not needed for build).
           # Using <SOURCE_DIR> token ensures the correct absolute path regardless of working directory.
           ${CMAKE_COMMAND} -E rm -rf <SOURCE_DIR>/test)
@@ -825,7 +836,18 @@ if (onnxruntime_USE_WEBGPU)
       )
     endif()
 
-    onnxruntime_fetchcontent_makeavailable(dawn)
+    # LOCAL (uni_slam): plain FetchContent_MakeAvailable instead of the ORT
+    # wrapper. The wrapper's only effect on Dawn is forcing
+    # CMAKE_SKIP_INSTALL_RULES TRUE, which stops Dawn's install rules from being
+    # generated at all -- including the ones DAWN_ENABLE_INSTALL=ON explicitly
+    # asks for a few lines above, and which this project needs in order to consume
+    # the libwebgpu_dawn.so produced here. (Its other job, clearing
+    # COMPILE_WARNING_AS_ERROR, is gated on a SOURCE_SUBDIR that Dawn is not
+    # declared with, so it never applied to Dawn anyway.) The re2/absl export
+    # breakage the wrapper guards against does not apply: Dawn's
+    # install(EXPORT DawnTargets) covers only the monolithic webgpu_dawn target
+    # and an interface config target.
+    FetchContent_MakeAvailable(dawn)
   endif()
 
   if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
