@@ -1,11 +1,13 @@
 add_executable(compute_tests
     stage_tests.cpp
     pass_tests.cpp
+    onnxruntime_tests.cpp
 )
 
 target_link_libraries(compute_tests
     PRIVATE
     wslam::compute
+    onnxruntime::onnxruntime
     GTest::gtest_main
     project_options
 )
