@@ -341,9 +341,11 @@ std::optional<std::string> GPU::initAdapter() {
     };
 
     auto callback = [](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter,
-                       const char* message, UserData* userdata) {
+                       wgpu::StringView message, UserData* userdata) {
         if (status != wgpu::RequestAdapterStatus::Success) {
-            userdata->errormsg = message ? message : "Unknown error";
+            auto reason = static_cast<std::string>(message);
+            userdata->errormsg
+                = reason.empty() ? "Unknown error" : std::move(reason);
             std::println(stderr, "Failed to get wgpu adapter. Reason: {}",
                          userdata->errormsg);
             return;
@@ -417,17 +419,18 @@ std::optional<std::string> GPU::initDevice() {
     };
     UserData userData{.device = device_, .errormsg = ""};
 
-    const auto device_callback = [](wgpu::RequestDeviceStatus status,
-                                    wgpu::Device device, const char* msg,
-                                    UserData* data) {
-        if (status == wgpu::RequestDeviceStatus::Success) {
-            data->device = std::move(device);
-        } else {
-            data->errormsg
-                = std::format("could not get WebGPU device. reason: {}", msg);
-        }
-        data->requestEnded = true;
-    };
+    const auto device_callback
+        = [](wgpu::RequestDeviceStatus status, wgpu::Device device,
+             wgpu::StringView msg, UserData* data) {
+              if (status == wgpu::RequestDeviceStatus::Success) {
+                  data->device = std::move(device);
+              } else {
+                  data->errormsg
+                      = std::format("could not get WebGPU device. reason: {}",
+                                    static_cast<std::string>(msg));
+              }
+              data->requestEnded = true;
+          };
 
     const wgpu::Future request
         = adapter_.RequestDevice(&descriptor, wgpu::CallbackMode::WaitAnyOnly,
@@ -510,11 +513,13 @@ std::optional<std::string> GPU::initBuffers() {
             {.future = device_.PopErrorScope(
                  wgpu::CallbackMode::WaitAnyOnly,
                  [&errors, &spec](wgpu::PopErrorScopeStatus status,
-                                  wgpu::ErrorType errtype, const char* msg) {
+                                  wgpu::ErrorType errtype,
+                                  wgpu::StringView msg) {
                      if (status == wgpu::PopErrorScopeStatus::Error) {
                          errors += std::format(
                              "creating '{}' (error type: {}): {}", spec.label,
-                             static_cast<int>(errtype), msg);
+                             static_cast<int>(errtype),
+                             static_cast<std::string>(msg));
                          *spec.target = nullptr;
                      } else {
                          spdlog::debug("[GPU] Created {}", spec.label);

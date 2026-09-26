@@ -125,11 +125,22 @@ function (configureDependencies)
         endforeach()
     endif()
 
-    # Dawn has a complex, multi-step build process with its own dependency
-    # fetching (depot_tools/gclient). It is much more reliable to build it
-    # separately and point CMake at the install tree.
-    set(Dawn_DIR "${PROJECT_SOURCE_DIR}/vendor/dawn/install/Debug/lib/cmake/Dawn")
+    # ONNX Runtime is built out of band by build_onnxruntime.sh: it fetches some
+    # twenty dependencies of its own and builds Dawn as part of its WebGPU
+    # execution provider, so a single install prefix carries both packages.
+    #
+    # The Dawn linked here is therefore the one that provider build produced.
+    # That is not a convenience: the provider links Dawn PUBLIC into
+    # libonnxruntime.so, so a second, separately built Dawn would put two
+    # independent WebGPU implementations in one process.
+    set(WSLAM_ORT_PREFIX
+        "${PROJECT_SOURCE_DIR}/vendor/onnxruntime/install/Release")
+
+    set(Dawn_DIR "${WSLAM_ORT_PREFIX}/lib/cmake/Dawn")
     find_package(Dawn REQUIRED)
+
+    set(onnxruntime_DIR "${WSLAM_ORT_PREFIX}/lib/cmake/onnxruntime")
+    find_package(onnxruntime REQUIRED)
 
     # Pangolin has many optional system dependencies (OpenGL, GLEW, libjpeg, etc.)
     # that are awkward to manage through FetchContent, and it doesn't always

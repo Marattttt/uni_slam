@@ -4,11 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Run
 
-Dawn, Pangolin and GTSAM must all be pre-built and installed into
-`vendor/dawn/install/`, `vendor/pangolin/install/` and `vendor/gtsam/install/`
-before CMake will succeed — they are not fetched by CMake. The repo ships
-helper scripts `build_dawn.sh`, `build_pangolin.sh` and `build_gtsam.sh` for
-this. **Eigen is pinned to 3.4.0** in `cmake/configureDependencies.cmake`
+ONNX Runtime, Pangolin and GTSAM must all be pre-built and installed into
+`vendor/onnxruntime/install/`, `vendor/pangolin/install/` and
+`vendor/gtsam/install/` before CMake will succeed — they are not fetched by
+CMake. The repo ships helper scripts `build_onnxruntime.sh`,
+`build_pangolin.sh` and `build_gtsam.sh` for this. **There is no separate Dawn
+build**: `build_onnxruntime.sh` configures ORT with
+`onnxruntime_BUILD_DAWN_SHARED_LIBRARY=ON`, so the WebGPU execution provider
+build emits an installable `libwebgpu_dawn.so`, and both
+`onnxruntime::onnxruntime` and `dawn::webgpu_dawn` come out of that one install
+prefix. Building Dawn separately as well would put two independent WebGPU
+implementations in one process. Two consequences worth knowing: ORT declares
+Dawn `EXCLUDE_FROM_ALL` *and* its FetchContent wrapper forces
+`CMAKE_SKIP_INSTALL_RULES`, so Dawn is installed by a second, explicit
+`cmake --install` on its own build directory and by a local patch to that
+wrapper (see `vendor/onnxruntime/cmake/external/onnxruntime_external_deps.cmake`,
+marked `LOCAL (uni_slam)`); and Dawn is now a **shared** library where it used
+to be a static archive. **Eigen is pinned to 3.4.0** in `cmake/configureDependencies.cmake`
 because GTSAM 4.3a1 bundles Eigen 3.4.0 and statically asserts the Eigen
 WORLD/MAJOR/MINOR version matches the consumer's at compile time.
 

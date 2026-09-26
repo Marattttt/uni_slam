@@ -37,7 +37,7 @@ the other libraries pull in exactly what they use.
 
 **Vendored heavy dependencies**
 - GTSAM: factor-graph smoothing framework. A major architecture change from ORB-SLAM3 made in order to allow switching to lag solvers
-- Google Dawn: implementation of the WebGPU spec used in Google Chrome
+- ONNX Runtime: inference runtime, and the source of Google Dawn (the implementation of the WebGPU spec used in Google Chrome). Its WebGPU execution provider builds Dawn and links it PUBLIC into `libonnxruntime.so`, so Dawn is taken from that build rather than built separately — two Dawn builds would mean two independent WebGPU implementations in one process
 - Pangolin: OpenGL frontend for debug purposes
 
 Other dependencies are brought in through FetchContent:
@@ -52,11 +52,13 @@ Other dependencies are brought in through FetchContent:
 
 ## Build & Run
 
-Dawn, Pangolin and GTSAM must all be pre-built and installed into
-`vendor/dawn/install/`, `vendor/pangolin/install/` and `vendor/gtsam/install/`
-before CMake will succeed — they are not fetched by CMake. The repo ships
-helper scripts `build_dawn.sh`, `build_pangolin.sh` and `build_gtsam.sh` for
-this.
+ONNX Runtime, Pangolin and GTSAM must all be pre-built and installed into
+`vendor/onnxruntime/install/`, `vendor/pangolin/install/` and
+`vendor/gtsam/install/` before CMake will succeed — they are not fetched by
+CMake. The repo ships helper scripts `build_onnxruntime.sh`,
+`build_pangolin.sh` and `build_gtsam.sh` for this. There is no separate Dawn
+build: `build_onnxruntime.sh` produces both `onnxruntime::onnxruntime` and
+`dawn::webgpu_dawn` into one install prefix.
 
 ```bash
 # Configure (Debug), build, and run (sources .env, sets WSLAM_SHADER_SRC_DIR)
