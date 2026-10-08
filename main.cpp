@@ -1,13 +1,16 @@
+#include <onnxruntime/onnxruntime_cxx_api.h>
 #include <spdlog/cfg/env.h>
 #include <spdlog/spdlog-inl.h>
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 
+#include <array>
 #include <charconv>
 #include <csignal>
 #include <memory>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include "compute/compute.hpp"
 #include "data/euroc_provider.hpp"
@@ -134,6 +137,140 @@ int main_test(WslamConfig config) {
     return 0;
 }
 
+namespace {
+std::string formatShape(const std::vector<int64_t>& shape) {
+    std::string text;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        text += (i == 0 ? "" : ", ") + std::to_string(shape[i]);
+    }
+    return text;
+}
+
+// Sums every element of a numeric output tensor as double, whatever its type.
+double sumTensor(const Ort::Value& tensor) {
+    const auto info = tensor.GetTensorTypeAndShapeInfo();
+    const size_t count = info.GetElementCount();
+    const auto sum = [&]<typename T>() {
+        const T* data = tensor.GetTensorData<T>();
+        double total = 0.0;
+        for (size_t i = 0; i < count; ++i) {
+            total += static_cast<double>(data[i]);
+        }
+        return total;
+    };
+    switch (info.GetElementType()) {
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+            return sum.operator()<float>();
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE:
+            return sum.operator()<double>();
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
+            return sum.operator()<int64_t>();
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+            return sum.operator()<int32_t>();
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+            return sum.operator()<uint8_t>();
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
+            return sum.operator()<bool>();
+        default:
+            spdlog::warn(LOG_ID " Unsupported output element type {}",
+                         static_cast<int>(info.GetElementType()));
+            return 0.0;
+    }
+}
+}  // namespace
+
+int ort_main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
+    constexpr const char* kModelPath
+        = "./resources/raco_aliked_lightglue_pipeline_k1024.onnx";
+    // Substitutes for the model's dynamic dims (batch = image pair, H and W
+    // must be multiples of 32).
+    constexpr int64_t kBatch = 2;
+    constexpr int64_t kHeight = 480;
+    constexpr int64_t kWidth = 640;
+
+    try {
+        Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "uni_slam");
+
+        Ort::SessionOptions options;
+        options.AppendExecutionProvider("WebGPU", {});
+        Ort::Session session{env, kModelPath, options};
+
+        Ort::AllocatorWithDefaultOptions allocator;
+        const size_t input_count = session.GetInputCount();
+        const size_t output_count = session.GetOutputCount();
+
+        std::vector<Ort::AllocatedStringPtr> name_holders;
+        std::vector<const char*> input_names;
+        std::vector<const char*> output_names;
+        for (size_t i = 0; i < input_count; ++i) {
+            name_holders.push_back(session.GetInputNameAllocated(i, allocator));
+            input_names.push_back(name_holders.back().get());
+        }
+        for (size_t i = 0; i < output_count; ++i) {
+            name_holders.push_back(
+                session.GetOutputNameAllocated(i, allocator));
+            output_names.push_back(name_holders.back().get());
+        }
+
+        // Fill every input with a deterministic pattern in [0, 1].
+        const Ort::MemoryInfo memory_info
+            = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        std::vector<std::vector<float>> input_buffers;
+        std::vector<Ort::Value> inputs;
+        for (size_t i = 0; i < input_count; ++i) {
+            const auto type_info = session.GetInputTypeInfo(i);
+            const auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+            if (tensor_info.GetElementType()
+                != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+                spdlog::error(LOG_ID " Input '{}' is not float32",
+                              input_names[i]);
+                return 1;
+            }
+
+            std::vector<int64_t> shape = tensor_info.GetShape();
+            const std::array<int64_t, 4> dynamic_fill{kBatch, 3, kHeight,
+                                                      kWidth};
+            for (size_t d = 0; d < shape.size(); ++d) {
+                if (shape[d] < 0) {
+                    shape[d] = d < dynamic_fill.size() ? dynamic_fill[d] : 1;
+                }
+            }
+            spdlog::info(LOG_ID " Input '{}' shape [{}]", input_names[i],
+                         formatShape(shape));
+
+            size_t element_count = 1;
+            for (const int64_t dim : shape) {
+                element_count *= static_cast<size_t>(dim);
+            }
+            auto& buffer = input_buffers.emplace_back(element_count);
+            for (size_t e = 0; e < element_count; ++e) {
+                buffer[e] = static_cast<float>((e * 7919U) % 256U) / 255.0F;
+            }
+            inputs.push_back(Ort::Value::CreateTensor<float>(
+                memory_info, buffer.data(), buffer.size(), shape.data(),
+                shape.size()));
+        }
+
+        auto outputs = session.Run(Ort::RunOptions{nullptr}, input_names.data(),
+                                   inputs.data(), inputs.size(),
+                                   output_names.data(), output_names.size());
+
+        for (size_t i = 0; i < outputs.size(); ++i) {
+            const auto info = outputs[i].GetTensorTypeAndShapeInfo();
+            spdlog::info(LOG_ID " Output '{}' shape [{}] sum = {}",
+                         output_names[i], formatShape(info.GetShape()),
+                         sumTensor(outputs[i]));
+        }
+    } catch (const Ort::Exception& e) {
+        spdlog::error(LOG_ID " ONNX Runtime error: {}", e.what());
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
 #ifndef NDEBUG
     spdlog::set_level(spdlog::level::debug);
@@ -144,6 +281,10 @@ int main(int argc, char* argv[]) {
     // runtime — e.g. to see the per-pass timing lines logged by Stage
     // without rebuilding.
     spdlog::cfg::load_env_levels();
+
+    if (argc > 1 && std::string_view(argv[1]) == "--ort") {
+        return ort_main(argc, argv);
+    }
 
     const WslamConfig config
         = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});

@@ -13,3 +13,6 @@ benchmarks/results/
 # Generated perf logs
 init_perflog.yaml
 perf_*.yaml
+
+# ONNX model weights (kept on disk, not tracked)
+resources/**/*.onnx

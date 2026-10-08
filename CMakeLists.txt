@@ -48,4 +48,4 @@ target_link_libraries(wslam_data PRIVATE project_options)
 target_link_libraries(wslam_app PRIVATE project_options)
 
 add_executable(pc_wslam main.cpp)
-target_link_libraries(pc_wslam PRIVATE wslam::app project_options)
+target_link_libraries(pc_wslam PRIVATE wslam::app onnxruntime::onnxruntime project_options)
