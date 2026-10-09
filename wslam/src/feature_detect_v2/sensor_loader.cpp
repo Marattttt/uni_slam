@@ -10,9 +10,9 @@ using namespace wslam;
 
 #define LOG_ID "[Sensor Loader Pass]"
 
-std::string SensorLoaderPass::getId() const { return LOG_ID; }
+std::string v2::SensorLoaderPass::getId() const { return LOG_ID; }
 
-std::optional<std::string> SensorLoaderPass::initialize() {
+std::optional<std::string> v2::SensorLoaderPass::initialize() {
     spdlog::info(LOG_ID " initializing");
 
     if (!storage_.has(ResourceIdentifier::GetImuVecName())) {
@@ -23,7 +23,7 @@ std::optional<std::string> SensorLoaderPass::initialize() {
     return std::nullopt;
 }
 
-std::optional<std::string> SensorLoaderPass::execute() {
+std::optional<std::string> v2::SensorLoaderPass::execute() {
     spdlog::info(LOG_ID " executing");
 
     if (iter_ == std::nullopt) {
@@ -117,7 +117,8 @@ std::optional<std::string> SensorLoaderPass::execute() {
     return std::nullopt;
 }
 
-std::optional<std::string> SensorLoaderPass::skipInitialFrames(uint32_t count) {
+std::optional<std::string> v2::SensorLoaderPass::skipInitialFrames(
+    uint32_t count) {
     if (count == 0) {
         return std::nullopt;
     }

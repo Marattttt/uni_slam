@@ -39,6 +39,7 @@ WORLD/MAJOR/MINOR version matches the consumer's at compile time.
 Flags:
 - `awaiter` — verbose logging of GPU future add/complete events (`-DLOG_AWAITER_CALLS=ON`).
 - `-gui` — enable the Pangolin visualisation pass.
+- `-v2` — run the v2 pipeline (ONNX feature detect stage only) instead of the default one.
 - `--max-iters=N` — stop after N pipeline iterations (0 = unlimited).
 - `--map-out=PATH.ply` — dump the final factor-graph map to disk.
 
@@ -57,6 +58,10 @@ only when executing `pc_wslam` (or the helper run scripts, which do it for you).
 It sets:
 - `WSLAM_SHADER_SRC_DIR` — directory where `.wgsl` shaders are loaded from at runtime.
 - `EUROC_DIR` — path to EuRoC MAV dataset (`mav0/` root).
+- `WSLAM_ONNX_MODEL` — model file the v2 pipeline runs (required with `-v2`; no default).
+- `WSLAM_ONNX_KEYPOINTS` — optional keypoints per image the model returns; defaults to
+  1024 (`raco_lightglue::kDefaultKeypointCount`). Set it when testing another model
+  variant; the model's keypoints output shape is checked against it at startup.
 - `TUM_FR1_RGBD_DIR` — path to TUM RGB-D dataset (the TUM provider has been removed, so this variable is currently unused).
 
 ASan + UBSan are opt-in via `-DENABLE_SANITIZERS=TRUE` (default off). When enabled
@@ -204,6 +209,39 @@ modifying it, remember the changes are tracked in this repo's history.
   per-experiment `--out-dir`, check Umeyama scale → RPE → APE in that order,
   and verify root-cause fixes with the debug-log greps (re-observation rate,
   `metric_step`, gravity line).
+
+### v2 pipeline: ONNX feature detect (`wslam/src/feature_detect_v2/`)
+
+`CreateWslamPipelineV2()` (selected with `-v2`) builds a standalone pipeline that
+for now has a single `GpuStage`, `v2::CreateFeatureDetectStage`, running the
+RaCo-ALIKED-LightGlue+ model (`resources/*.onnx`, gitignored; LightGlue-ONNX v3.0)
+through ONNX Runtime's WebGPU EP on the project's own `wgpu::Device`. All v2 code
+lives in `namespace wslam::v2` (the v2 `FillPyramidPass`/`SensorLoaderPass` share
+names with v1 and are compiled into the same library). Per frame:
+`SensorLoaderPass` → `FillPyramidPass` (Current pyramid) → `PackModelInputPass`
+(Previous + Current LoD0, centre-cropped to 736×480, gray → RGB, NCHW into the
+images buffer) → `OrtFeatureDetectPass` (CPU, `session.Run` with an IoBinding;
+skipped on the first frame) → `PreservePyramidPass` (Current → Previous texture
+copy) → `LoadKeypointsPass` (temporary readback). The model's tensor names,
+shapes and row layouts are in `raco_lightglue.hpp`; outputs land in AnyBag under
+the `ResourceIdentifier::Ort*` keys. The model is chosen through `.env`
+(`WSLAM_ONNX_MODEL`, `WSLAM_ONNX_KEYPOINTS`), so the keypoint count is a runtime
+value carried by `v2::SharedBindings::getKeypointCount()`, and the
+keypoint-dependent parts of the contract are functions of it (`KeypointsShape`,
+`KeypointsBytes`, ...).
+
+ORT interop (`compute/onnx_interop.hpp`) facts that are easy to get wrong:
+- An external device needs `deviceId` > 0 (`OrtProvider::kWebGpuContextId` = 1)
+  plus the **raw** `WGPUInstance`/`WGPUDevice` handle values.
+- The EP's `OrtDevice` id is always 0 whatever the context id, so tensors in
+  device memory use `Ort::MemoryInfo("WebGPU_Buf", ..., 0, ...)`.
+- ORT binds a tensor's buffer whole from offset 0, so model tensors can't live
+  in `GPU` slab sub-regions: they use `GPU::createDedicatedBuffer` (GPU-owned).
+- Data-dependent outputs (`matches`, `mscores`) are bound by memory info and
+  must be rebound before every run, or ORT reuses the previous run's output as
+  a pre-allocated value and rejects the new shape.
+- When ORT is handed our device it only gets the limits/features `GPU::initDevice`
+  requested, which therefore mirrors what ORT would request for its own device.
 
 ### Data providers (`data/`)
 

@@ -2,37 +2,53 @@
 
 #include <onnxruntime/onnxruntime_cxx_api.h>
 
-#include "common.hpp"
-#include "compute/gpu.hpp"
-#include "compute/onnx_interop.hpp"
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
 
-namespace wslam {
+#include "anybag.hpp"
+#include "compute/onnx_interop.hpp"
+#include "shared_bindings.hpp"
+
+namespace wslam::v2 {
+
+// Runs the RaCo-ALIKED-LightGlue model on the previous (left) and current
+// (right) frame packed into the images buffer. Keypoints stay on the GPU in
+// the keypoints buffer. Matches and their scores are data-dependent in size,
+// so ORT returns them in CPU memory, and they are published to storage.
+// Skips the first frame, which has no previous frame to match against
 class OrtFeatureDetectPass : public compute::OrtPass {
    public:
-    struct Labels {
-        std::string_view keypoints;
-        std::string_view matches;
-        std::string_view scores;
-    };
-    OrtFeatureDetectPass(GpuSharedBindings& shared,
-                         std::shared_ptr<compute::OrtProvider> ort,
-                         const std::filesystem::path& model_path,
-                         size_t num_keypoints, Labels labels)
-        : OrtPass(std::move(ort), model_path),
-          kNumKeypointseypoints(num_keypoints),
-          labels_(labels),
-          shared_(shared) {}
+    OrtFeatureDetectPass(std::shared_ptr<compute::OrtProvider> ort,
+                         std::filesystem::path model_path,
+                         std::shared_ptr<SharedBindings> bindings,
+                         AnyBag& storage)
+        : OrtPass(std::move(ort), std::move(model_path)),
+          bindings_(std::move(bindings)),
+          storage_(storage) {}
 
-    [[nodiscard]] std::optional<std::string> initialize() final;
-    [[nodiscard]] std::optional<std::string> execute() final;
+    [[nodiscard]] std::optional<std::string> initialize() override;
+    [[nodiscard]] std::optional<std::string> execute() override;
+    [[nodiscard]] std::string getId() const override;
 
    private:
-    const size_t kNumKeypointseypoints;
-    const Labels labels_;
+    std::shared_ptr<SharedBindings> bindings_;
+    AnyBag& storage_;
 
-    GpuSharedBindings& shared_;
-
-    std::optional<Ort::Value> image_tensor_;
+    // Tensor views of the GPU-owned buffers. They don't own the buffers
+    std::optional<Ort::Value> images_tensor_;
     std::optional<Ort::Value> keypoints_tensor_;
+    std::optional<Ort::IoBinding> io_binding_;
+    Ort::MemoryInfo cpu_memory_info_{nullptr};
+
+    [[nodiscard]] std::optional<std::string> validateModel() const;
+    [[nodiscard]] std::optional<std::string> initBinding();
+    // Binds the data-dependent outputs (matches, scores) to CPU memory ORT
+    // allocates during the run
+    void bindDynamicOutputs(Ort::IoBinding& io_binding);
+    [[nodiscard]] std::optional<std::string> publishMatches(
+        std::vector<Ort::Value>& outputs);
 };
-};  // namespace wslam
+
+}  // namespace wslam::v2

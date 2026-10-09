@@ -14,9 +14,9 @@ namespace c = wslam::compute;
 
 #define LOG_ID "[Fill Pyramid pass]"
 
-std::string FillPyramidPass::getId() const { return LOG_ID; }
+std::string v2::FillPyramidPass::getId() const { return LOG_ID; }
 
-std::optional<std::string> FillPyramidPass::initialize() {
+std::optional<std::string> v2::FillPyramidPass::initialize() {
     spdlog::info(getId() + " initializing");
 
     if (auto err = initSampler()) {
@@ -38,7 +38,7 @@ std::optional<std::string> FillPyramidPass::initialize() {
     return std::nullopt;
 }
 
-std::optional<std::string> FillPyramidPass::initBindGroupLayout() {
+std::optional<std::string> v2::FillPyramidPass::initBindGroupLayout() {
     spdlog::info(LOG_ID " initializing bind group layout");
 
     std::array<wgpu::BindGroupLayoutEntry, 3> layout_entries{
@@ -75,7 +75,7 @@ std::optional<std::string> FillPyramidPass::initBindGroupLayout() {
     return awaiter.executeAll();
 }
 
-std::optional<std::string> FillPyramidPass::initSampler() {
+std::optional<std::string> v2::FillPyramidPass::initSampler() {
     wgpu::SamplerDescriptor sampler_desc{
         .addressModeU = wgpu::AddressMode::ClampToEdge,
         .addressModeV = wgpu::AddressMode::ClampToEdge,
@@ -93,7 +93,7 @@ std::optional<std::string> FillPyramidPass::initSampler() {
     return awaiter.executeAll();
 }
 
-std::optional<std::string> FillPyramidPass::initTextureViews() {
+std::optional<std::string> v2::FillPyramidPass::initTextureViews() {
     spdlog::info(LOG_ID " initializing {} TextureView pairs",
                  GPUConst::levels_of_detail);
 
@@ -119,9 +119,11 @@ std::optional<std::string> FillPyramidPass::initTextureViews() {
             .usage = wgpu::TextureUsage::StorageBinding};
 
         auto callback = [&]() {
-            texture_views_[i] = std::make_pair(
-                shared_bindings_.getTexture(0).CreateView(&src_desc),
-                shared_bindings_.getTexture(i).CreateView(&dest_desc));
+            texture_views_[i]
+                = std::make_pair(bindings_->getTexture(PyramidSlot::Current, 0)
+                                     .CreateView(&src_desc),
+                                 bindings_->getTexture(PyramidSlot::Current, i)
+                                     .CreateView(&dest_desc));
         };
 
         awaiter.runChecked(callback,
@@ -131,7 +133,7 @@ std::optional<std::string> FillPyramidPass::initTextureViews() {
     return awaiter.executeAll();
 }
 
-std::optional<std::string> FillPyramidPass::initBindGroups() {
+std::optional<std::string> v2::FillPyramidPass::initBindGroups() {
     spdlog::info(LOG_ID " initializing {} bind groups",
                  GPUConst::levels_of_detail);
 
@@ -164,7 +166,7 @@ std::optional<std::string> FillPyramidPass::initBindGroups() {
     return awaiter.executeAll();
 }
 
-std::optional<std::string> FillPyramidPass::initComputePipeline() {
+std::optional<std::string> v2::FillPyramidPass::initComputePipeline() {
     spdlog::debug(LOG_ID " Initializing compute pipeline");
 
     auto mod = gpu_->loadShaderModule("create_pyramid.wgsl", "create pyramid");
@@ -203,7 +205,7 @@ std::optional<std::string> FillPyramidPass::initComputePipeline() {
     return awaiter.executeAll();
 }
 
-std::optional<std::string> FillPyramidPass::prepareExecute(
+std::optional<std::string> v2::FillPyramidPass::prepareExecute(
     const wgpu::CommandEncoder& encoder) {
     spdlog::info(LOG_ID " Executing");
 
@@ -218,13 +220,13 @@ std::optional<std::string> FillPyramidPass::prepareExecute(
     return std::nullopt;
 }
 
-std::optional<std::string> FillPyramidPass::writeBaseLayer() {
+std::optional<std::string> v2::FillPyramidPass::writeBaseLayer() {
     spdlog::info(LOG_ID " Writing source texture");
 
     wgpu::Queue queue = gpu_->getDevice().GetQueue();
 
     wgpu::TexelCopyTextureInfo copy_info{
-        .texture = shared_bindings_.getTexture(0),
+        .texture = bindings_->getTexture(PyramidSlot::Current, 0),
         .mipLevel = 0,
         .origin = {.x = 0, .y = 0},
         .aspect = wgpu::TextureAspect::All,
@@ -268,7 +270,7 @@ std::optional<std::string> FillPyramidPass::writeBaseLayer() {
         .transform([](auto&& err) { return "write source texture: " + err; });
 }
 
-std::optional<std::string> FillPyramidPass::writeNonBaseLayers(
+std::optional<std::string> v2::FillPyramidPass::writeNonBaseLayers(
     const wgpu::CommandEncoder& encoder) {
     spdlog::info(LOG_ID " Writing LoDs");
 
@@ -281,7 +283,7 @@ std::optional<std::string> FillPyramidPass::writeNonBaseLayers(
     return std::nullopt;
 }
 
-std::optional<std::string> FillPyramidPass::writeLayerN(
+std::optional<std::string> v2::FillPyramidPass::writeLayerN(
     const wgpu::CommandEncoder& encoder, size_t lod) {
     spdlog::info(LOG_ID " Preparing to write LoD {}", lod);
 

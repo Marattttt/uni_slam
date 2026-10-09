@@ -10,6 +10,15 @@ add_library(wslam_app
     src/feature_detect/generate_features.cpp
     src/feature_detect/sensor_loader.cpp
 
+    src/feature_detect_v2/feature_detect.cpp
+    src/feature_detect_v2/fill_pyramid.cpp
+    src/feature_detect_v2/load_keypoints.cpp
+    src/feature_detect_v2/onnx_feature_detect.cpp
+    src/feature_detect_v2/pack_model_input.cpp
+    src/feature_detect_v2/preserve_pyramid.cpp
+    src/feature_detect_v2/sensor_loader.cpp
+    src/feature_detect_v2/shared_bindings.cpp
+
     src/pose_estimate_cpu/load_features_cpu.cpp
     src/pose_estimate_cpu/match_features_cpu.cpp
     src/pose_estimate_cpu/pose_estimate_cpu.cpp

@@ -177,6 +177,18 @@ class GPU {
     readOutputbuffer(size_t size, size_t offset);
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string> readBuffer(
         const BufferBinding& binding);
+    // Reads back a region of a buffer outside the fixed slabs, e.g. one
+    // created by createDedicatedBuffer()
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string> readBuffer(
+        const wgpu::Buffer& buffer, size_t size, size_t offset = 0);
+
+    // Creates a standalone buffer owned by this GPU (it lives as long as the
+    // GPU does). For consumers that bind a whole buffer from offset 0, which
+    // a sub-region of the fixed slabs can't serve; ONNX Runtime binds its
+    // tensors that way. Not touched by clearBuffersAndOffsets().
+    [[nodiscard]] std::expected<wgpu::Buffer, std::string>
+    createDedicatedBuffer(size_t size, wgpu::BufferUsage usage,
+                          std::string_view label);
     [[nodiscard]] std::expected<TextureData, std::string> readTexture(
         const wgpu::Texture& texture, uint32_t bytes_per_pixel, bool is_bw);
 
@@ -202,6 +214,9 @@ class GPU {
 
     [[nodiscard]] std::optional<std::string> copyDataToOutput(
         const BufferBinding& binding);
+    [[nodiscard]] std::optional<std::string> copyToOutput(
+        const wgpu::Buffer& buffer, size_t offset, size_t size,
+        std::string label);
 
     // Allow buffer binding to call this in its destructor
     friend BufferBinding::~BufferBinding() noexcept;
@@ -235,6 +250,8 @@ class GPU {
     wgpu::Buffer uniform_buf_;
     wgpu::Buffer input_buf_;
     wgpu::Buffer output_buf_;
+
+    std::vector<wgpu::Buffer> dedicated_buffers_;
 };
 };  // namespace compute
 };  // namespace wslam

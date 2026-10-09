@@ -3,6 +3,7 @@ add_library(wslam_compute
     src/compute.cpp
     src/gpu.cpp
     src/gpu_stage.cpp
+    src/onnx_interop.cpp
     src/pass.cpp
     src/performance.cpp
     src/stage.cpp
@@ -22,6 +23,7 @@ target_link_libraries(wslam_compute
     PUBLIC
     wslam::base
     dawn::webgpu_dawn
+    onnxruntime::onnxruntime
     Eigen3::Eigen
     yaml-cpp::yaml-cpp
     spdlog::spdlog_header_only $<$<BOOL:${MINGW}>:ws2_32>

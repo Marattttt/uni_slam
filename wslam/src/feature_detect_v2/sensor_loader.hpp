@@ -4,7 +4,7 @@
 #include "compute/pass.hpp"
 #include "data/provider_base.hpp"
 
-namespace wslam {
+namespace wslam::v2 {
 class SensorLoaderPass : public compute::Pass {
    public:
     using ReadingType = std::expected<data::Reading<1>, std::string>;
@@ -31,4 +31,4 @@ class SensorLoaderPass : public compute::Pass {
 
     [[nodiscard]] std::optional<std::string> skipInitialFrames(uint32_t count);
 };
-};  // namespace wslam
+};  // namespace wslam::v2

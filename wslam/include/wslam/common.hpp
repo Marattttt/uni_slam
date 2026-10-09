@@ -29,6 +29,9 @@ struct WslamConfig {
     // end in `.ply`; the JSON metadata sidecar is derived by replacing the
     // extension. Empty means no export is performed.
     std::filesystem::path map_out_path;
+
+    // Run the v2 pipeline (ONNX feature detect) instead of the default one
+    bool use_pipeline_v2 = false;
 };
 
 struct LOD {
@@ -156,6 +159,18 @@ constexpr std::string ImuParamsName = "res:imu:params";
 // loader has just emitted. Mapping-stage passes read this to window the
 // per-keyframe IMU interval.
 constexpr std::string FrameTimestampNsName = "res:frame:ts_ns";
+
+// v2 pipeline (ONNX feature detect). Consume-once marker (bool) set by the
+// detect pass on frames the model ran on, so readers of its outputs skip the
+// first frame
+constexpr std::string OrtKeypointsReadyName = "gen:ort:kp:rdy";
+// std::vector<raco_lightglue::KeypointPosition>, kBatchSize * keypoints per
+// image
+constexpr std::string OrtKeypointsName = "gen:ort:kp";
+// std::vector<raco_lightglue::KeypointMatch>
+constexpr std::string OrtMatchesName = "gen:ort:match";
+// std::vector<float>, one score per OrtMatchesName row
+constexpr std::string OrtMatchScoresName = "gen:ort:mscore";
 }  // namespace ResourceIdentifier
 
 class FillPyramidPass;

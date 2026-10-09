@@ -1,16 +1,20 @@
 #include "wslam.hpp"
 
+#include <format>
 #include <memory>
 #include <optional>
 #include <print>
 #include <string>
 
+#include "compute/onnx_interop.hpp"
+#include "compute/pass.hpp"
+#include "data/provider_base.hpp"
 #include "export.hpp"
 #include "feature_detect/feature_detect.hpp"
+#include "feature_detect_v2/feature_detect.hpp"
+#include "feature_detect_v2/shared_bindings.hpp"
 #include "map/mapping.hpp"
-#include "compute/pass.hpp"
 #include "pose_estimate_cpu/pose_estimate_cpu.hpp"
-#include "data/provider_base.hpp"
 
 using namespace wslam;
 
@@ -65,4 +69,37 @@ void wslam::impl::CreateWslamPipelineImpl(
 
         return std::nullopt;
     });
+}
+
+std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
+    compute::Compute& compute,
+    std::generator<std::expected<data::Reading<1>, std::string>> provider,
+    const WslamConfig& config) {
+    const auto gpu = compute.getGPUPtr();
+
+    auto model_options = v2::ReadModelOptionsFromEnv();
+    if (!model_options) {
+        return "model selection: " + std::move(model_options).error();
+    }
+
+    std::shared_ptr<Ort::Env> env;
+    try {
+        env = std::make_shared<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "uni_slam");
+    } catch (const Ort::Exception& e) {
+        return std::format("creating ONNX Runtime environment: {}", e.what());
+    }
+
+    auto ort = std::make_shared<compute::OrtProvider>(gpu, std::move(env));
+
+    auto bindings = std::make_shared<v2::SharedBindings>(
+        gpu, model_options->keypoint_count);
+    if (auto err = bindings->initialize()) {
+        return "v2 shared bindings: " + std::move(err).value();
+    }
+
+    compute.addStage(v2::CreateFeatureDetectStage(
+        compute, std::move(bindings), std::move(ort), std::move(provider),
+        model_options->model_path, config));
+
+    return std::nullopt;
 }

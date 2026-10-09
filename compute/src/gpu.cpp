@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 #include <webgpu/webgpu_cpp.h>
+#include <webgpu/webgpu_cpp_print.h>
 
 #include <algorithm>
 #include <cassert>
@@ -376,6 +377,18 @@ std::optional<std::string> GPU::initAdapter() {
     }
 
     adapter_ = std::move(user_data.adapter_);
+
+    wgpu::AdapterInfo info;
+    if (adapter_.GetInfo(&info) != wgpu::Status::Success) {
+        return "could not query adapter info";
+    }
+
+    std::ostringstream types;
+    types << info.backendType << ", " << info.adapterType;
+    spdlog::info("[GPU] Using adapter '{}' ({}; {})",
+                 std::string_view(info.device), types.str(),
+                 std::string_view(info.description));
+
     return std::nullopt;
 }
 
@@ -384,10 +397,54 @@ std::optional<std::string> GPU::initDevice() {
 
     spdlog::info("[GPU] Creating device");
 
-    const wgpu::Limits limits{.maxBufferSize = gigabyte};
+    wgpu::Limits adapter_limits{};
+    if (!adapter_.GetLimits(&adapter_limits)) {
+        return "could not query adapter limits";
+    }
 
-    const std::array<wgpu::FeatureName, 1> features{
-        wgpu::FeatureName::Float32Filterable};
+    if (adapter_limits.maxBufferSize < gigabyte) {
+        return std::format(
+            "adapter max buffer size {} is below the required {}",
+            adapter_limits.maxBufferSize, gigabyte);
+    }
+
+    // The ONNX Runtime WebGPU execution provider runs on this device too, and
+    // only gets the limits and features requested here. Mirror what it would
+    // request for a device of its own (WebGpuContext::GetRequiredLimits and
+    // GetAvailableRequiredFeatures in vendor/onnxruntime).
+    const wgpu::Limits limits{
+        .maxBindGroups = adapter_limits.maxBindGroups,
+        .maxStorageBuffersPerShaderStage
+        = adapter_limits.maxStorageBuffersPerShaderStage,
+        .maxStorageBufferBindingSize
+        = adapter_limits.maxStorageBufferBindingSize,
+        .maxBufferSize = adapter_limits.maxBufferSize,
+        .maxComputeWorkgroupStorageSize
+        = adapter_limits.maxComputeWorkgroupStorageSize,
+        .maxComputeInvocationsPerWorkgroup
+        = adapter_limits.maxComputeInvocationsPerWorkgroup,
+        .maxComputeWorkgroupSizeX = adapter_limits.maxComputeWorkgroupSizeX,
+        .maxComputeWorkgroupSizeY = adapter_limits.maxComputeWorkgroupSizeY,
+        .maxComputeWorkgroupSizeZ = adapter_limits.maxComputeWorkgroupSizeZ,
+        .maxComputeWorkgroupsPerDimension
+        = adapter_limits.maxComputeWorkgroupsPerDimension,
+    };
+
+    std::vector<wgpu::FeatureName> features{
+        wgpu::FeatureName::Float32Filterable,
+    };
+
+    constexpr std::array kOptionalFeatures{
+        wgpu::FeatureName::TimestampQuery,
+        wgpu::FeatureName::ShaderF16,
+        wgpu::FeatureName::Subgroups,
+        wgpu::FeatureName::BufferMapExtendedUsages,
+    };
+    for (const auto feature : kOptionalFeatures) {
+        if (adapter_.HasFeature(feature)) {
+            features.push_back(feature);
+        }
+    }
 
     wgpu::DeviceDescriptor descriptor{};
     descriptor.nextInChain = nullptr;
@@ -907,26 +964,73 @@ std::expected<std::vector<std::byte>, std::string> GPU::readBuffer(
     return readOutputbuffer(binding.getSize(), 0);
 }
 
+std::expected<std::vector<std::byte>, std::string> GPU::readBuffer(
+    const wgpu::Buffer& buffer, size_t size, size_t offset) {
+    if (offset + size > buffer.GetSize()) {
+        return std::unexpected(
+            std::format("reading {} bytes at offset {} overruns the {} byte "
+                        "buffer",
+                        size, offset, buffer.GetSize()));
+    }
+
+    if (auto err = copyToOutput(buffer, offset, size,
+                                std::format("copy {} bytes of dedicated "
+                                            "buffer to output buf",
+                                            size))) {
+        return std::unexpected("copying to output: " + err.value());
+    }
+
+    return readOutputbuffer(size, 0);
+}
+
+std::expected<wgpu::Buffer, std::string> GPU::createDedicatedBuffer(
+    size_t size, wgpu::BufferUsage usage, std::string_view label) {
+    const wgpu::BufferDescriptor desc{
+        .label = label,
+        .usage = usage,
+        .size = size,
+    };
+
+    wgpu::Buffer buffer;
+    auto awaiter = getAwaiter();
+    awaiter.runChecked(
+        [&] { buffer = device_.CreateBuffer(&desc); },
+        std::format(LOG_ID " create dedicated buffer '{}'", label));
+
+    if (auto err = awaiter.executeAll()) {
+        return std::unexpected(std::format("creating dedicated buffer '{}': {}",
+                                           label, err.value()));
+    }
+
+    dedicated_buffers_.push_back(buffer);
+
+    return buffer;
+}
+
 std::optional<std::string> GPU::copyDataToOutput(const BufferBinding& binding) {
     if (binding.getBuffertype() == BufferType::Output) {
         return std::nullopt;
     }
 
-    const auto& buf = getBuffer(binding.getBuffertype());
+    return copyToOutput(getBuffer(binding.getBuffertype()), binding.getOffset(),
+                        binding.getSize(),
+                        std::format("copy {} to output buf", binding));
+}
 
-    if (binding.getSize() >= opts_.output_size) {
+std::optional<std::string> GPU::copyToOutput(const wgpu::Buffer& buffer,
+                                             size_t offset, size_t size,
+                                             std::string label) {
+    if (size >= opts_.output_size) {
         throw std::out_of_range("reading large buffers is not implemented");
     }
 
     const auto encoder = device_.CreateCommandEncoder();
 
-    encoder.CopyBufferToBuffer(buf, binding.getOffset(), output_buf_, 0,
-                               binding.getSize());
+    encoder.CopyBufferToBuffer(buffer, offset, output_buf_, 0, size);
 
     const auto commands = encoder.Finish();
 
-    if (auto err = submitAndWait(
-            commands, std::format("copy {} to output buf", binding))) {
+    if (auto err = submitAndWait(commands, std::move(label))) {
         return "wgpu: " + err.value();
     }
 

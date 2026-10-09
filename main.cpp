@@ -30,6 +30,8 @@ WslamConfig parseArgs(std::span<char*> args) {
     for (std::string_view arg : args) {
         if (arg == "-gui") {
             config.enable_gui = true;
+        } else if (arg == "-v2") {
+            config.use_pipeline_v2 = true;
         } else if (arg.starts_with(kIterFlag)) {
             const auto value = arg.substr(kIterFlag.size());
             uint64_t parsed = 0;
@@ -81,7 +83,10 @@ int main_test(WslamConfig config) {
         = std::make_unique<data::EurocProvider>(
             data::CreateEurocProviderOpts());
 
-    if (auto err = CreateWslamPipeline(comp, shared, *euroc_data, config)) {
+    if (auto err
+        = config.use_pipeline_v2
+              ? CreateWslamPipelineV2(comp, *euroc_data, config)
+              : CreateWslamPipeline(comp, shared, *euroc_data, config)) {
         spdlog::critical(LOG_ID " creating wslam pipeline: {}",
                          std::move(err).value());
         std::terminate();

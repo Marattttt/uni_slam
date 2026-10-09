@@ -3,39 +3,66 @@
 #include <onnxruntime/onnxruntime_cxx_api.h>
 #include <webgpu/webgpu_cpp.h>
 
+#include <expected>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+
 #include "compute/gpu.hpp"
 #include "compute/pass.hpp"
 
 namespace wslam::compute {
+
+// Runs ONNX Runtime's WebGPU execution provider on the device owned by GPU,
+// so tensors can live in buffers the GPU created and owns
 class OrtProvider {
    public:
-    OrtProvider(wgpu::Instance& instance, wgpu::Device& device,
-                std::shared_ptr<Ort::Env> env)
-        : instance_(instance), device_(device), env_(std::move(env)) {}
+    // WebGPU EP context that adopts the GPU's device. Context 0 is reserved for
+    // a device ONNX Runtime creates itself
+    static constexpr int kWebGpuContextId = 1;
 
-    [[nodiscard]] const wgpu::Device& GetDevice() const { return device_; }
-    [[nodiscard]] const wgpu::Instance& GetInstance() const {
-        return instance_;
+    OrtProvider(std::shared_ptr<GPU> gpu, std::shared_ptr<Ort::Env> env)
+        : gpu_(std::move(gpu)), env_(std::move(env)) {}
+
+    [[nodiscard]] const std::shared_ptr<GPU>& getGPU() const { return gpu_; }
+    [[nodiscard]] const std::shared_ptr<Ort::Env>& getEnv() const {
+        return env_;
     }
-    [[nodiscard]] std::shared_ptr<Ort::Env> GetEnv() const { return env_; }
 
     [[nodiscard]] std::expected<Ort::Session, std::string> LoadModel(
         const std::filesystem::path& model_name,
         std::optional<Ort::SessionOptions> extra_opts = {});
 
+    // Memory info of tensors that live in the WebGPU EP's device memory
+    [[nodiscard]] static Ort::MemoryInfo getDeviceMemoryInfo();
+
+    // Views a GPU-owned buffer as a tensor of the given type and shape. The
+    // tensor does not own the buffer, which has to outlive it. ONNX Runtime
+    // binds the whole buffer from offset 0, so the buffer must be a dedicated
+    // one (GPU::createDedicatedBuffer), not a sub-region of a slab
+    [[nodiscard]] static std::expected<Ort::Value, std::string> wrapBuffer(
+        const wgpu::Buffer& buffer, ONNXTensorElementDataType element_type,
+        std::span<const int64_t> shape);
+
    private:
-    const wgpu::Instance& instance_;
-    const wgpu::Device& device_;
+    const std::shared_ptr<GPU> gpu_;
     const std::shared_ptr<Ort::Env> env_;
 };
 
 class OrtPass : public Pass {
    public:
-    OrtPass(std::shared_ptr<OrtProvider> ort, std::string model_path)
+    OrtPass(std::shared_ptr<OrtProvider> ort, std::filesystem::path model_path)
         : ort_(std::move(ort)), model_path_(std::move(model_path)) {}
 
-   private:
+   protected:
+    // Loads model_path_ into session_
+    [[nodiscard]] std::optional<std::string> loadSession();
+
     const std::shared_ptr<OrtProvider> ort_;
-    const std::string model_path_;
+    const std::filesystem::path model_path_;
+
+    std::optional<Ort::Session> session_;
 };
 };  // namespace wslam::compute

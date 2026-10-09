@@ -11,6 +11,7 @@ referenced in .env.
 Options:
   -h, --help        Show this help and exit.
   -gui              Enable the Pangolin visualization GUI.
+  -v2               Run the v2 pipeline.
   awaiter           Enable verbose awaiter logging (LOG_AWAITER_CALLS=ON).
   --max-iters=N     Stop after N top-level pipeline executions (0 = unlimited).
   --map-out=PATH    Write the final factor-graph map to PATH. Must end in
@@ -30,6 +31,7 @@ for arg in "$@"; do
         -h|--help)      print_help; exit 0 ;;
         awaiter)        LOG_AWAITER=ON ;;
         -gui)           RUN_ARGS+=("-gui") ;;
+        -v2)            RUN_ARGS+=("-v2") ;;
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
         --map-out=*)    RUN_ARGS+=("$arg") ;;
         Debug)          BUILD_TYPE="Debug" ;;

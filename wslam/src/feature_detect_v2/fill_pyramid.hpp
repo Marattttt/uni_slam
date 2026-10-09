@@ -9,8 +9,9 @@
 #include "common.hpp"
 #include "compute/gpu.hpp"
 #include "compute/pass.hpp"
+#include "shared_bindings.hpp"
 
-namespace wslam {
+namespace wslam::v2 {
 using ImageProvider
     = std::function<std::optional<std::span<const std::byte>>()>;
 
@@ -22,12 +23,12 @@ struct PassFillPyramidOpts {
 class FillPyramidPass : public compute::GPUPass {
    public:
     FillPyramidPass(std::shared_ptr<compute::GPU> gpu,
-                    GpuSharedBindings& shared_bindings,
+                    std::shared_ptr<SharedBindings> bindings,
                     PassFillPyramidOpts opts)
         : GPUPass(std::move(gpu)),
           image_getter_(std::move(opts.image_getter)),
           storage_(opts.storage),
-          shared_bindings_(shared_bindings) {}
+          bindings_(std::move(bindings)) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> prepareExecute(
@@ -38,7 +39,7 @@ class FillPyramidPass : public compute::GPUPass {
     ImageProvider image_getter_;
     AnyBag& storage_;
 
-    GpuSharedBindings& shared_bindings_;
+    std::shared_ptr<SharedBindings> bindings_;
     wgpu::Sampler sampler_;
 
     // Two per texture view pair, one per bind group, one per compute pass
@@ -70,4 +71,4 @@ class FillPyramidPass : public compute::GPUPass {
     [[nodiscard]] std::optional<std::string> writeLayerN(
         const wgpu::CommandEncoder& encoder, size_t lod);
 };
-};  // namespace wslam
+};  // namespace wslam::v2

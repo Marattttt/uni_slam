@@ -11,6 +11,11 @@ void CreateWslamPipelineImpl(
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
     const WslamConfig& config);
 
+[[nodiscard]] std::optional<std::string> CreateWslamPipelineV2Impl(
+    compute::Compute& compute,
+    std::generator<std::expected<data::Reading<1>, std::string>> provider,
+    const WslamConfig& config);
+
 template <size_t CamCnt>
 [[nodiscard]] std::optional<std::string> SetSensorIntrinsics(
     compute::Compute& comp, data::ProviderBase<CamCnt>& provider) {
@@ -44,6 +49,24 @@ template <size_t CamCnt>
 
     impl::CreateWslamPipelineImpl(compute, shared,
                                   data::AdaptProvider<1U>(provider), config);
+
+    return {};
+}
+
+// Pipeline built around the RaCo-ALIKED-LightGlue ONNX model. For now it only
+// has the feature detect stage
+template <size_t CamCnt>
+[[nodiscard]] std::optional<std::string> CreateWslamPipelineV2(
+    compute::Compute& compute, data::ProviderBase<CamCnt>& provider,
+    const WslamConfig& config) {
+    if (auto err = impl::SetSensorIntrinsics(compute, provider)) {
+        return "getting sensor intrinsics: " + std::move(err).value();
+    }
+
+    if (auto err = impl::CreateWslamPipelineV2Impl(
+            compute, data::AdaptProvider<1U>(provider), config)) {
+        return "creating v2 pipeline: " + std::move(err).value();
+    }
 
     return {};
 }
