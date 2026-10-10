@@ -30,8 +30,7 @@ class FillPyramidPass : public compute::GPUPass {
           shared_bindings_(shared_bindings) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
-    [[nodiscard]] std::optional<std::string> prepareExecute(
-        const wgpu::CommandEncoder& encoder) override;
+    [[nodiscard]] std::optional<std::string> submitWork() override;
     [[nodiscard]] std::string getId() const override;
 
    private:

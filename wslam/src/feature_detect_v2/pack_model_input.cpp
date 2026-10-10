@@ -195,8 +195,7 @@ std::optional<std::string> v2::PackModelInputPass::initComputePipeline() {
     return awaiter.executeAll();
 }
 
-std::optional<std::string> v2::PackModelInputPass::prepareExecute(
-    const wgpu::CommandEncoder& encoder) {
+std::optional<std::string> v2::PackModelInputPass::submitWork() {
     if (!bindings_->hasPrevious()) {
         spdlog::info(LOG_ID " No previous pyramid yet; nothing to pack");
         return std::nullopt;
@@ -207,22 +206,25 @@ std::optional<std::string> v2::PackModelInputPass::prepareExecute(
     const uint32_t groups_x = CeilDiv(model::kInputWidth, kWorkgroupSize);
     const uint32_t groups_y = CeilDiv(model::kInputHeight, kWorkgroupSize);
 
-    auto pack = [&] {
-        const wgpu::ComputePassDescriptor pass_desc{
-            .label = LOG_ID " compute pass",
-        };
-        const wgpu::ComputePassEncoder pass
-            = encoder.BeginComputePass(&pass_desc);
+    return gpu_->submitCommands(
+        LOG_ID " encoder", [&](const wgpu::CommandEncoder& encoder) {
+            auto pack = [&] {
+                const wgpu::ComputePassDescriptor pass_desc{
+                    .label = LOG_ID " compute pass",
+                };
+                const wgpu::ComputePassEncoder pass
+                    = encoder.BeginComputePass(&pass_desc);
 
-        pass.SetPipeline(compute_pipeline_);
-        pass.SetBindGroup(0, bind_group_);
-        pass.DispatchWorkgroups(groups_x, groups_y);
+                pass.SetPipeline(compute_pipeline_);
+                pass.SetBindGroup(0, bind_group_);
+                pass.DispatchWorkgroups(groups_x, groups_y);
 
-        pass.End();
-    };
+                pass.End();
+            };
 
-    return gpu_->getAwaiter()
-        .runChecked(pack, LOG_ID " pack model input")
-        .executeAll()
-        .transform([](const auto& err) { return "awaiter: " + err; });
+            return gpu_->getAwaiter()
+                .runChecked(pack, LOG_ID " pack model input")
+                .executeAll()
+                .transform([](const auto& err) { return "awaiter: " + err; });
+        });
 }

@@ -352,36 +352,41 @@ void PassDetectCorners::saveOutputBindings() {
     shared_bindings_.getStorage().set(kCornersOutputLabel, std::move(binding));
 }
 
-std::optional<std::string> PassDetectCorners::prepareExecute(
-    const wgpu::CommandEncoder& encoder) {
+std::optional<std::string> PassDetectCorners::submitWork() {
     spdlog::info(LOG_ID " Executing");
 
-    if (auto err = writeGPUPassParams(encoder)) {
-        return "writing pass params: " + std::move(err).value();
-    }
+    return gpu_->submitCommands(
+        LOG_ID " encoder",
+        [this](
+            const wgpu::CommandEncoder& encoder) -> std::optional<std::string> {
+            if (auto err = writeGPUPassParams(encoder)) {
+                return "writing pass params: " + std::move(err).value();
+            }
 
-    spdlog::debug(LOG_ID " Writing commands for LoDs");
+            spdlog::debug(LOG_ID " Writing commands for LoDs");
 
-    for (size_t i = 0; i < GPUConst::levels_of_detail; i++) {
-        const wgpu::ComputePassDescriptor pass_desc{
-            .label = std::format("detect corners in LoD {}", i).c_str(),
-        };
-        const auto pass = encoder.BeginComputePass(&pass_desc);
+            for (size_t i = 0; i < GPUConst::levels_of_detail; i++) {
+                const wgpu::ComputePassDescriptor pass_desc{
+                    .label = std::format("detect corners in LoD {}", i).c_str(),
+                };
+                const auto pass = encoder.BeginComputePass(&pass_desc);
 
-        pass.SetPipeline(compute_pipeline_);
-        pass.SetBindGroup(0, common_bind_group_);
-        pass.SetBindGroup(1, per_pass_bind_groups_.at(i));
+                pass.SetPipeline(compute_pipeline_);
+                pass.SetBindGroup(0, common_bind_group_);
+                pass.SetBindGroup(1, per_pass_bind_groups_.at(i));
 
-        const auto texture = shared_bindings_.getTexture(i);
-        const uint32_t w = texture.GetWidth();
-        const uint32_t h = texture.GetHeight();
-        constexpr uint32_t wg = 8;  // matches WORKGROUP_SIZE override
-        pass.DispatchWorkgroups((w + wg - 1) / wg, (h + wg - 1) / wg, 1);
+                const auto texture = shared_bindings_.getTexture(i);
+                const uint32_t w = texture.GetWidth();
+                const uint32_t h = texture.GetHeight();
+                constexpr uint32_t wg = 8;  // matches WORKGROUP_SIZE override
+                pass.DispatchWorkgroups((w + wg - 1) / wg, (h + wg - 1) / wg,
+                                        1);
 
-        pass.End();
-    }
+                pass.End();
+            }
 
-    return std::nullopt;
+            return std::nullopt;
+        });
 }
 
 std::optional<std::string> PassDetectCorners::writeGPUPassParams(

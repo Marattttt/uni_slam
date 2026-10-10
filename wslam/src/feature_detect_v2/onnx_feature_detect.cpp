@@ -191,7 +191,7 @@ void v2::OrtFeatureDetectPass::bindDynamicOutputs(Ort::IoBinding& io_binding) {
     io_binding.BindOutput(model::kMatchScoresName, cpu_memory_info_);
 }
 
-std::optional<std::string> v2::OrtFeatureDetectPass::execute() {
+std::optional<std::string> v2::OrtFeatureDetectPass::submitWork() {
     if (!bindings_->hasPrevious()) {
         spdlog::info(LOG_ID " No previous frame to match against; skipping");
         return std::nullopt;

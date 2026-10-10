@@ -17,8 +17,9 @@
 namespace wslam {
 namespace compute {
 
-// Stage combines execution commands from consecutive GPU passes and sends/waits
-// for them in a batch Still supports regular CPU passes
+// Stage runs consecutive GPU passes back to back, each submitting its own work,
+// and waits once for the whole run. Still supports regular CPU passes, waiting
+// for the GPU passes before each of them
 class GpuStage : public Stage {
    public:
     using PassPtr

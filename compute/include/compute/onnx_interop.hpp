@@ -51,10 +51,15 @@ class OrtProvider {
     const std::shared_ptr<Ort::Env> env_;
 };
 
-class OrtPass : public Pass {
+// A GPU pass: ONNX Runtime submits its own commands to the device queue and
+// flushes them by the end of Session::Run, so a run is queue-ordered after the
+// GPU passes before it and before the ones after it
+class OrtPass : public GPUPass {
    public:
     OrtPass(std::shared_ptr<OrtProvider> ort, std::filesystem::path model_path)
-        : ort_(std::move(ort)), model_path_(std::move(model_path)) {}
+        : GPUPass(ort->getGPU()),
+          ort_(std::move(ort)),
+          model_path_(std::move(model_path)) {}
 
    protected:
     // Loads model_path_ into session_

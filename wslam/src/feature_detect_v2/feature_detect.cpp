@@ -104,7 +104,7 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
 
     stage->add_pass(std::make_unique<PackModelInputPass>(gpu, bindings));
 
-    // CPU pass: the stage submits and waits for the packing above first
+    // GPU pass: ORT submits to the same queue, so it runs after the packing
     stage->add_pass(std::make_unique<OrtFeatureDetectPass>(
         std::move(ort), model_path, bindings, compute.getStorage()));
 

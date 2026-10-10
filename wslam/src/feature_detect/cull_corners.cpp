@@ -289,14 +289,18 @@ std::optional<std::string> CullCornersPass::initComputePipeline() {
     return std::nullopt;
 }
 
-std::optional<std::string> CullCornersPass::prepareExecute(
-    const wgpu::CommandEncoder& encoder) {
+std::optional<std::string> CullCornersPass::submitWork() {
     spdlog::info(LOG_ID " Executing");
 
-    writeWorkflowPass(Workflow::Horizontal, encoder);
-    writeWorkflowPass(Workflow::Vertical, encoder);
+    return gpu_->submitCommands(
+        LOG_ID " encoder",
+        [this](
+            const wgpu::CommandEncoder& encoder) -> std::optional<std::string> {
+            writeWorkflowPass(Workflow::Horizontal, encoder);
+            writeWorkflowPass(Workflow::Vertical, encoder);
 
-    return std::nullopt;
+            return std::nullopt;
+        });
 }
 
 void CullCornersPass::writeWorkflowPass(

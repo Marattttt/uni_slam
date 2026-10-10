@@ -205,19 +205,19 @@ std::optional<std::string> v2::FillPyramidPass::initComputePipeline() {
     return awaiter.executeAll();
 }
 
-std::optional<std::string> v2::FillPyramidPass::prepareExecute(
-    const wgpu::CommandEncoder& encoder) {
+std::optional<std::string> v2::FillPyramidPass::submitWork() {
     spdlog::info(LOG_ID " Executing");
 
+    // A queue write, so it runs right before this pass's submit below
     if (auto err = writeBaseLayer()) {
         return "writing base layer (source frame): " + err.value();
     }
 
-    if (auto err = writeNonBaseLayers(encoder)) {
-        return "writing pyramid layers: " + err.value();
-    }
-
-    return std::nullopt;
+    return gpu_->submitCommands(
+        LOG_ID " encoder", [this](const wgpu::CommandEncoder& encoder) {
+            return writeNonBaseLayers(encoder).transform(
+                [](auto&& err) { return "writing pyramid layers: " + err; });
+        });
 }
 
 std::optional<std::string> v2::FillPyramidPass::writeBaseLayer() {

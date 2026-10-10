@@ -21,8 +21,7 @@ class PreservePyramidPass : public compute::GPUPass {
         : GPUPass(std::move(gpu)), bindings_(std::move(bindings)) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
-    [[nodiscard]] std::optional<std::string> prepareExecute(
-        const wgpu::CommandEncoder& encoder) override;
+    [[nodiscard]] std::optional<std::string> submitWork() override;
     [[nodiscard]] std::string getId() const override;
 
    private:

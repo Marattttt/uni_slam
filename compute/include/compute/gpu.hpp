@@ -5,6 +5,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -164,10 +165,24 @@ class GPU {
     [[nodiscard]] const wgpu::Buffer& getBuffer(BufferType buftype) const;
     [[nodiscard]] Awaiter getAwaiter() const;
 
-    // Submits the command buffer, registers OnSubmittedWorkDone, blocks
-    // until done or timeout exceeded. Prefer this over hand-rolling the
-    // submit-then-wait dance (avoids the queue-serial vs WaitListEvent
-    // mixing trap — see awaiter.hpp).
+    using RecordCommands = std::function<std::optional<std::string>(
+        const wgpu::CommandEncoder& encoder)>;
+
+    // Creates an encoder labelled encoder_label, records into it with record
+    // and submits the result without waiting for it. Nothing is submitted if
+    // record fails
+    [[nodiscard]] std::optional<std::string> submitCommands(
+        std::string_view encoder_label, const RecordCommands& record);
+
+    // Registers OnSubmittedWorkDone and blocks until all work submitted so
+    // far is done or timeout exceeded
+    [[nodiscard]] std::optional<std::string> waitForSubmittedWork(
+        std::string label, std::chrono::nanoseconds timeout
+                           = std::chrono::seconds(kDefaultTimeoutSeconds));
+
+    // Submits the command buffer and waits for it (waitForSubmittedWork).
+    // Prefer this over hand-rolling the submit-then-wait dance (avoids the
+    // queue-serial vs WaitListEvent mixing trap — see awaiter.hpp).
     [[nodiscard]] std::optional<std::string> submitAndWait(
         const wgpu::CommandBuffer& commands, std::string label,
         std::chrono::nanoseconds timeout

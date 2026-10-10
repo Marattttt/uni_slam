@@ -492,15 +492,18 @@ GenerateFeaturesPass::writeConstantValues() {
     return {};
 }
 
-std::optional<std::string> GenerateFeaturesPass::prepareExecute(
-    const wgpu::CommandEncoder& encoder) {
+std::optional<std::string> GenerateFeaturesPass::submitWork() {
     spdlog::info(LOG_ID " Executing");
 
-    for (size_t p = 0; p < kPassCount; p++) {
-        writeSinglePassCommands(encoder, p);
-    }
+    return gpu_->submitCommands(LOG_ID " encoder",
+                                [this](const wgpu::CommandEncoder& encoder)
+                                    -> std::optional<std::string> {
+                                    for (size_t p = 0; p < kPassCount; p++) {
+                                        writeSinglePassCommands(encoder, p);
+                                    }
 
-    return std::nullopt;
+                                    return std::nullopt;
+                                });
 }
 
 void GenerateFeaturesPass::writeSinglePassCommands(

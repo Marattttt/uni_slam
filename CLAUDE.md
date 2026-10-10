@@ -113,10 +113,10 @@ Hierarchy: `Compute` → `Stage` → (`Pass` | `GPUPass`).
 - **`Compute`** owns a list of `Stage`s and a shared `AnyBag` storage. `execute()` runs every stage in order each frame. Returning the sentinel string `kComputeStopExecution` from a stage halts the loop.
 - **`Stage`** is a named, ordered sequence of passes stored as `std::variant<unique_ptr<Pass>, unique_ptr<GPUPass>>`. Returning `kStageStopExecution` stops that stage and bubbles up.
 - **`Pass`** is a pure-CPU leaf. Implements `initialize()` and `execute()`.
-- **`GPUPass`** is a sibling class (NOT a subclass of `Pass`) for WebGPU compute work. Implements `initialize()` and `prepareExecute(const wgpu::CommandEncoder&)` — the encoder is owned by the stage, not the pass.
+- **`GPUPass`** is a sibling class (NOT a subclass of `Pass`) for WebGPU compute work. Implements `initialize()` and `submitWork()`, which records into the pass's own encoder and submits it through `GPU::submitCommands(encoder_label, record)` (label convention: `LOG_ID " encoder"`) **without waiting**. `OrtPass` is a `GPUPass` too: ORT's WebGPU EP submits to the same device queue and flushes by the end of `Session::Run`.
 - **`CustomPass`** wraps an arbitrary CPU lambda; used for buffer clearing and one-off algorithm steps.
 
-GPU dispatch is **batched per stage**: `Stage::execute()` walks its passes, collects every consecutive `GPUPass` into a single `wgpu::CommandEncoder`, then issues one `queue.Submit` and one `OnSubmittedWorkDone` await for the whole batch. A CPU `Pass` between two GPU passes flushes the in-progress batch first. This is why GPU passes no longer call `queue.Submit` themselves — they only record commands into the supplied encoder and return an error string on failure.
+GPU waits are **batched per stage**: `GpuStage::execute()` walks its passes, calls `submitWork()` on every consecutive `GPUPass`, then does one `GPU::waitForSubmittedWork` (`OnSubmittedWorkDone`) for the whole run, under a single perf scope and timeout label. A CPU `Pass` between two GPU passes waits for the run before it first. Ordering between passes comes from the single device queue (submit order), not from a shared encoder — so a pass's queue writes (`queue.WriteTexture`) must be issued before its own `submitCommands`, and GPU passes must never wait on the queue themselves.
 
 The `Awaiter` (in `compute/include/compute/awaiter.hpp`) splits async work into two methods that must not be mixed in one chain when `executeAll` uses a non-zero timeout: `runChecked(callback, label)` wraps a synchronous API call in `PushErrorScope`/`PopErrorScope` (producing `WaitListEvent` futures) for validation-prone init code, while `addFuture(factory, label)` records a `wgpu::Future` returned by the factory (queue-serial for `OnSubmittedWorkDone`/`MapAsync`, no error scopes). Dawn rejects a `WaitAny` whose future set mixes those two sources (`EventManager.cpp` "Mixed source waits with timeouts are not currently supported"). For the common "submit a command buffer and wait for it" pattern, call `GPU::submitAndWait(commands, label, timeout)` instead of assembling it from an `Awaiter` by hand.
 
@@ -220,7 +220,7 @@ lives in `namespace wslam::v2` (the v2 `FillPyramidPass`/`SensorLoaderPass` shar
 names with v1 and are compiled into the same library). Per frame:
 `SensorLoaderPass` → `FillPyramidPass` (Current pyramid) → `PackModelInputPass`
 (Previous + Current LoD0, centre-cropped to 736×480, gray → RGB, NCHW into the
-images buffer) → `OrtFeatureDetectPass` (CPU, `session.Run` with an IoBinding;
+images buffer) → `OrtFeatureDetectPass` (GPU pass in the same wait batch, `session.Run` with an IoBinding;
 skipped on the first frame) → `PreservePyramidPass` (Current → Previous texture
 copy) → `LoadKeypointsPass` (temporary readback). The model's tensor names,
 shapes and row layouts are in `raco_lightglue.hpp`; outputs land in AnyBag under

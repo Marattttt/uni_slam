@@ -29,7 +29,7 @@ class OrtFeatureDetectPass : public compute::OrtPass {
           storage_(storage) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
-    [[nodiscard]] std::optional<std::string> execute() override;
+    [[nodiscard]] std::optional<std::string> submitWork() override;
     [[nodiscard]] std::string getId() const override;
 
    private:

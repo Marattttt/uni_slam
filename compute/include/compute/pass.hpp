@@ -33,8 +33,9 @@ class GPUPass {
 
     [[nodiscard]] virtual std::string getId() const = 0;
     [[nodiscard]] virtual std::optional<std::string> initialize() = 0;
-    [[nodiscard]] virtual std::optional<std::string> prepareExecute(
-        const wgpu::CommandEncoder& encoder) = 0;
+    // Submits the pass's work to the device queue (GPU::submitCommands)
+    // without waiting for it; the stage waits once for consecutive GPU passes
+    [[nodiscard]] virtual std::optional<std::string> submitWork() = 0;
 
    protected:
     std::shared_ptr<GPU> gpu_;

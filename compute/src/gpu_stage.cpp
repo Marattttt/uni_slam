@@ -4,12 +4,12 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include <format>
-#include <functional>
 #include <ranges>
 #include <string_view>
 #include <type_traits>
 #include <variant>
 
+#include "assert.hpp"
 #include "compute/compute.hpp"
 #include "compute/pass.hpp"
 
@@ -76,28 +76,28 @@ std::optional<std::string> GpuStage::executeGPUBatch(
                                      "GPU Batch {{ {} }}", pass_names))}
                                : std::nullopt;
 
-    const auto encoder = std::invoke([&] {
-        const std::string label
-            = std::format("command encoder for passes {{ {} }}", pass_names);
-        const wgpu::CommandEncoderDescriptor desc{.label = label.c_str()};
-        return gpu_->getDevice().CreateCommandEncoder(&desc);
-    });
+    const std::string wait_label
+        = std::format("stage passes {{ {} }}", pass_names);
 
     for (auto* pass : batch) {
-        if (auto err = pass->prepareExecute(encoder)) {
-            return std::format("preparing pass {}: {}", pass->getId(),
+        WSLAM_ASSERT(pass != nullptr, "batch cannot have nullptr pases");
+        if (auto err = pass->submitWork()) {
+            // Earlier passes' work is already on the queue; drain it before
+            // reporting so the queue is idle on teardown
+            if (auto wait_err = gpu_->waitForSubmittedWork(wait_label)) {
+                spdlog::error("{} waiting after failed pass {}: {}", getId(),
+                              pass->getId(), wait_err.value());
+            }
+            return std::format("submitting pass {}: {}", pass->getId(),
                                std::move(err).value());
         }
     }
 
-    const auto commands = encoder.Finish();
-
-    return gpu_->submitAndWait(
-        commands, std::format("stage passes {{ {} }}", pass_names));
+    return gpu_->waitForSubmittedWork(wait_label);
 }
 
 std::optional<std::string> GpuStage::runBatched() {
-    // Batch consecutive GPU passes into a single queue submission
+    // Run consecutive GPU passes back to back and wait for them once
     std::vector<GPUPass*> gpu_batch;
 
     static_assert(std::variant_size_v<PassPtr> == 2,

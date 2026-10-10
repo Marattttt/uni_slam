@@ -23,8 +23,7 @@ class PassDetectCorners : public compute::GPUPass {
 
     [[nodiscard]] std::string getId() const override;
     [[nodiscard]] std::optional<std::string> initialize() override;
-    [[nodiscard]] std::optional<std::string> prepareExecute(
-        const wgpu::CommandEncoder& encoder) override;
+    [[nodiscard]] std::optional<std::string> submitWork() override;
 
    private:
     struct PassParams {

@@ -160,22 +160,42 @@ std::optional<std::string> GPU::clearBuffersAndOffsets() {
     return submitAndWait(commands, "clear buffers");
 }
 
+std::optional<std::string> GPU::submitCommands(std::string_view encoder_label,
+                                               const RecordCommands& record) {
+    const wgpu::CommandEncoderDescriptor desc{.label = encoder_label};
+    const auto encoder = device_.CreateCommandEncoder(&desc);
+
+    if (auto err = record(encoder)) {
+        return err;
+    }
+
+    const auto commands = encoder.Finish();
+    device_.GetQueue().Submit(1, &commands);
+
+    return std::nullopt;
+}
+
 std::optional<std::string> GPU::submitAndWait(
     const wgpu::CommandBuffer& commands, std::string label,
     std::chrono::nanoseconds timeout) {
-    const auto queue = device_.GetQueue();
+    device_.GetQueue().Submit(1, &commands);
 
-    queue.Submit(1, &commands);
+    return waitForSubmittedWork(std::move(label), timeout);
+}
+
+std::optional<std::string> GPU::waitForSubmittedWork(
+    std::string label, std::chrono::nanoseconds timeout) {
+    const auto queue = device_.GetQueue();
 
     auto wait = [&queue]() -> wgpu::Future {
         return queue.OnSubmittedWorkDone(
             wgpu::CallbackMode::WaitAnyOnly,
             [](wgpu::QueueWorkDoneStatus status, wgpu::StringView msg) {
-                spdlog::debug(LOG_ID
-                              " submitAndWait OnSubmittedWorkDone fired. "
-                              "status:{} msg:'{}'",
-                              static_cast<int>(status),
-                              static_cast<std::string>(msg));
+                spdlog::debug(
+                    LOG_ID
+                    " waitForSubmittedWork OnSubmittedWorkDone fired. "
+                    "status:{} msg:'{}'",
+                    static_cast<int>(status), static_cast<std::string>(msg));
             });
     };
 
