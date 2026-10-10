@@ -1,11 +1,15 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <generator>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace Eigen {
@@ -75,9 +79,16 @@ struct IMUReading {
     // NOLINTEND(readability-magic-numbers)
 };
 
+// Frame whose pixels are read only when load() is called, so a consumer can
+// drop frames without paying for reading and decoding their files
+struct PendingFrame {
+    uint64_t timestamp;
+    std::function<std::expected<FrameBW, std::string>()> load;
+};
+
 template <size_t FrameCnt>
 struct Reading {
-    std::array<std::optional<FrameBW>, FrameCnt> frames;
+    std::array<std::optional<PendingFrame>, FrameCnt> frames;
     std::optional<IMUReading> imu;
 };
 

@@ -95,10 +95,15 @@ std::optional<std::string> v2::SensorLoaderPass::execute() {
     // SET FRAMES DATA
     uint64_t latest_ts = 0;
     for (size_t i = 0; i < reading->frames.size(); i++) {
-        const auto& frame = reading->frames[i];
+        const auto& pending = reading->frames[i];
 
-        if (!frame.has_value()) {
+        if (!pending.has_value()) {
             continue;
+        }
+
+        auto frame = pending->load();
+        if (!frame) {
+            return "loading frame: " + std::move(frame).error();
         }
 
         const auto name

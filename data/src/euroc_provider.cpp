@@ -10,7 +10,10 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <format>
 #include <functional>
+#include <string>
+#include <string_view>
 
 #include "data/provider_base.hpp"
 #include "yaml-cpp/exceptions.h"
@@ -333,6 +336,28 @@ std::optional<std::string> EurocProvider::initialize() {
     return std::nullopt;
 }
 
+namespace {
+// Frames are read lazily: consumers often drop them (the second camera, or
+// every frame a reading filter skips)
+PendingFrame MakePendingFrame(const EurocProvider::FrameInfo& info,
+                              std::string_view camera) {
+    return PendingFrame{
+        .timestamp = info.timestamp,
+        .load = [path = info.path, timestamp = info.timestamp,
+                 camera = std::string(
+                     camera)]() -> std::expected<FrameBW, std::string> {
+            auto frame = getLocalFrame(path, timestamp);
+            if (!frame) {
+                return std::unexpected(std::format(
+                    "getting {} frame at ts:{}, path:{}: {}", camera, timestamp,
+                    path.string(), std::move(frame).error()));
+            }
+            return frame;
+        },
+    };
+}
+}  // namespace
+
 std::generator<std::expected<Reading<2>, std::string>>
 EurocProvider::getReadings() {
     if (auto err = initialize()) {
@@ -376,32 +401,12 @@ EurocProvider::getReadings() {
         }
 
         if (cam0_ts == min) {
-            auto frame = getLocalFrame(curr_cam0->path, curr_cam0->timestamp);
-            if (!frame) {
-                spdlog::error(
-                    LOG_ID " could not get frame for cam0 at ts:{}, path:{}",
-                    curr_cam0->timestamp, std::string(curr_cam0->path));
-
-                co_yield std::unexpected("getting cam0 frame: "
-                                         + frame.error());
-            }
-
-            reading->frames[0] = frame.value();
+            reading->frames[0] = MakePendingFrame(*curr_cam0, "cam0");
             curr_cam0++;
         }
 
         if (cam1_ts == min) {
-            auto frame = getLocalFrame(curr_cam1->path, curr_cam1->timestamp);
-            if (!frame) {
-                spdlog::error(
-                    LOG_ID " could not get frame for cam1 at ts:{}, path:{}",
-                    curr_cam1->timestamp, std::string(curr_cam1->path));
-
-                co_yield std::unexpected("getting cam1 frame: "
-                                         + frame.error());
-            }
-
-            reading->frames[1] = frame.value();
+            reading->frames[1] = MakePendingFrame(*curr_cam1, "cam1");
             curr_cam1++;
         }
 
