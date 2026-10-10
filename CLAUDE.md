@@ -39,9 +39,14 @@ WORLD/MAJOR/MINOR version matches the consumer's at compile time.
 Flags:
 - `awaiter` — verbose logging of GPU future add/complete events (`-DLOG_AWAITER_CALLS=ON`).
 - `-gui` — enable the Pangolin visualisation pass.
-- `-v2` — run the v2 pipeline (ONNX feature detect stage only) instead of the default one.
+- `-v2` — run the v2 pipeline (ONNX feature detect + pose estimate, no mapping yet) instead of the default one.
 - `--max-iters=N` — stop after N pipeline iterations (0 = unlimited).
 - `--map-out=PATH.ply` — dump the final factor-graph map to disk.
+- `--keyframes=PATH.json` — v2 only: feed the pipeline only the frames of a keyframe
+  schedule (`wslam/src/keyframe_schedule.hpp`), so every model run pairs two
+  consecutive keyframes; all IMU is still read. `wslam/tests/data/v1_keyframes_V101.json`
+  holds the keyframes v1 selected on V1_01_easy. The loop does not end by itself at
+  the end of the stream (see Data providers below), so pair it with `--max-iters`.
 
 Manual configure/build:
 ```bash
@@ -75,8 +80,22 @@ clang-tidy -p build <file.cpp>     # config in .clang-tidy — excludes vendor/
 clang-format -i <file.cpp>         # config in .clang-format
 ```
 
-There is no automated test suite yet. Adding a compute-library testing API and
-tests for the wslam passes is in progress (see the README modernization checklist).
+GoogleTest suites are built with `-DBUILD_TESTS=ON` (fetches GoogleTest):
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+cmake --build build
+./build/compute/tests/compute_tests
+./build/wslam/tests/wslam_tests --gtest_filter=-*Dataset*   # no GPU / dataset needed
+source .env && ./build/wslam/tests/wslam_tests --gtest_filter=*Dataset*
+```
+
+`wslam_tests` (`wslam/tests/`) reaches the library's internal headers by bare name and
+reads test data from `wslam/tests/data/`. `PoseEstimateDatasetTest` runs v1 and v2 pose
+estimation over the V1_01_easy keyframe schedule and scores both against EuRoC ground
+truth (about 4 min in Debug, mostly ORT); it skips without `EUROC_DIR`,
+`WSLAM_SHADER_SRC_DIR` and `WSLAM_ONNX_MODEL`, and `WSLAM_POSE_REPORT_OUT=path.md`
+saves its report. Results and analysis: `benchmarks/POSE_ESTIMATE_V2_NOTE.md`.
 `wslam/src/feature_detect/brief_tests.inc` is static BRIEF descriptor data, not a
 test file.
 
@@ -157,7 +176,7 @@ GPU passes (`GPUPass` subclasses) inherit `gpu_` from the base class.
 0. **Clear bindings stage** — a single `CustomPass` runs first every frame; calls `clearBuffersAndOffsets()` to zero non-retained GPU regions before new work is dispatched.
 
 1. **Feature detect stage** (`CreateFeatureDetectStage`):
-   - `SensorLoaderPass` (CPU) — pulls the next frame from the `std::generator` data provider, publishes the FrameBW to AnyBag, accumulates IMU samples into a vector under `GetImuVecName()`, and publishes the current frame's timestamp under `FrameTimestampNsName`. `kInitialFramesToSkip` is **0**: the stationary lead-in of the dataset is required — gravity and gyro bias are estimated from it and the first keyframe's zero-velocity prior assumes it (a previous 200-frame skip jumped past V1_01_easy's takeoff and forced a mid-flight gravity estimate, `benchmarks/ACCURACY_ANALYSIS.md` R3).
+   - `SensorLoaderPass` (CPU) — pulls the next frame from the `std::generator` data provider, loads it (frames arrive as `data::PendingFrame`s and are only read from disk when kept), publishes the FrameBW to AnyBag, accumulates IMU samples into a vector under `GetImuVecName()`, and publishes the current frame's timestamp under `FrameTimestampNsName`. `kInitialFramesToSkip` is **0**: the stationary lead-in of the dataset is required — gravity and gyro bias are estimated from it and the first keyframe's zero-velocity prior assumes it (a previous 200-frame skip jumped past V1_01_easy's takeoff and forced a mid-flight gravity estimate, `benchmarks/ACCURACY_ANALYSIS.md` R3).
    - `FillPyramidPass` (GPU) — builds a 6-level LoD image pyramid (scale 1.2× per level, hardcoded for 752×480).
    - `PassDetectCorners` + `CullCornersPass` (GPU) — FAST-style corner detection and NMS.
    - `GenerateFeaturesPass` (GPU) — computes ORB-style BRIEF descriptors (bit patterns from `brief_tests.inc`).
@@ -167,7 +186,7 @@ GPU passes (`GPUPass` subclasses) inherit `gpu_` from the base class.
    - `LoadDataCPUPass` — reads features (and, GUI only, LoD textures) back to CPU via `Awaiter`. Maintains the **reference feature set** (`FeatureSet(1)`): pinned to the last accepted keyframe's features and advanced only when the keyframe gate publishes the consume-once `FeatureReferenceAdvanceName` marker (every frame pre-origin, acceptance only after). All downstream matching/geometry therefore spans *previous keyframe → current frame* — exactly the factor-graph edge.
    - `MatchFeaturesCPU` — BRIEF descriptor matching (reference ↔ current) on CPU with mutual cross-check, Lowe ratio test at **0.85** (looser than textbook 0.75: V101's repetitive texture makes tight ratios reject true matches quasi-randomly, starving re-observation), and a 10%-frame spatial gate applied *before* the Hamming distance. The per-LOD candidate pool is the same LOD ± 1 (same-LOD inclusion is essential; an earlier version searched only neighbouring LODs and capped the match yield at the few % of scale-flickering features). Missing reference (first frame) stops only the stage (`kStageStopExecution`) so the mapping stage still bootstraps.
    - `RansacCPU` — normalised 8-point fundamental-matrix RANSAC with a Sampson-distance inlier test.
-   - `TriangulateCPU` — undistorts the RANSAC inliers, re-fits the essential matrix on calibrated rays, decomposes into four (R, t) candidates, picks the one with the most cheirality passes, then runs linear DLT triangulation and a reprojection-error filter.
+   - `TriangulateCPU` — undistorts the RANSAC inliers (scaled to LOD-0 pixels with `map::util::ToLod0Pixel`, which accounts for `Feature::lod`; it used to ignore it, which roughly doubled v1's rotation error), re-fits the essential matrix on calibrated rays, decomposes into four (R, t) candidates, picks the one with the most cheirality passes, then runs linear DLT triangulation and a reprojection-error filter.
    - `VisualizeDataPass` (when `enable_gui`) — Pangolin GUI for matches, RANSAC inliers, and projected landmarks.
 
 3. **Mapping stage** (`CreateMappingStage` in `wslam/src/map/mapping.hpp`) — incremental visual-inertial SLAM via GTSAM iSAM2 with **smart projection factors**. State (the iSAM2 instance, the cached `Cal3_S2`, pose / landmark counters, the `flat_map<Feature, LandmarkId>` active-track map, IMU bias / velocity propagation, gravity estimate) lives in `MappingState`, injected by reference into all four passes. The frame-vs-keyframe geometry conflation that originally capped accuracy (R1 in `benchmarks/ACCURACY_ANALYSIS.md`) is fixed by the reference-feature-set mechanism above; evaluation history and remaining gaps are tracked in that document. Stage order:
@@ -212,8 +231,9 @@ modifying it, remember the changes are tracked in this repo's history.
 
 ### v2 pipeline: ONNX feature detect (`wslam/src/feature_detect_v2/`)
 
-`CreateWslamPipelineV2()` (selected with `-v2`) builds a standalone pipeline that
-for now has a single `GpuStage`, `v2::CreateFeatureDetectStage`, running the
+`CreateWslamPipelineV2()` (selected with `-v2`) builds a standalone pipeline of two
+stages, feature detect and pose estimate (below); no mapping yet. The `GpuStage`
+`v2::CreateFeatureDetectStage` runs the
 RaCo-ALIKED-LightGlue+ model (`resources/*.onnx`, gitignored; LightGlue-ONNX v3.0)
 through ONNX Runtime's WebGPU EP on the project's own `wgpu::Device`. All v2 code
 lives in `namespace wslam::v2` (the v2 `FillPyramidPass`/`SensorLoaderPass` share
@@ -222,13 +242,29 @@ names with v1 and are compiled into the same library). Per frame:
 (Previous + Current LoD0, centre-cropped to 736×480, gray → RGB, NCHW into the
 images buffer) → `OrtFeatureDetectPass` (GPU pass in the same wait batch, `session.Run` with an IoBinding;
 skipped on the first frame) → `PreservePyramidPass` (Current → Previous texture
-copy) → `LoadKeypointsPass` (temporary readback). The model's tensor names,
+copy). The model's tensor names,
 shapes and row layouts are in `raco_lightglue.hpp`; outputs land in AnyBag under
 the `ResourceIdentifier::Ort*` keys. The model is chosen through `.env`
 (`WSLAM_ONNX_MODEL`, `WSLAM_ONNX_KEYPOINTS`), so the keypoint count is a runtime
 value carried by `v2::SharedBindings::getKeypointCount()`, and the
 keypoint-dependent parts of the contract are functions of it (`KeypointsShape`,
 `KeypointsBytes`, ...).
+
+`v2::CreatePoseEstimateStage` (`wslam/src/pose_estimate_v2/`, CPU `Stage`) is the
+port of v1's pose estimate stage; the model already matched, so there is no matcher:
+- `LoadMatchesPass` — reads the keypoints buffer back and joins it with the model's
+  matches (taken, consume-once) into `v2::KeypointCorrespondence`s: LOD-0 source pixels
+  (`raco_lightglue::ToSourcePixel` adds the crop offset and removes the model's
+  pixel-centre 0.5) plus undistorted rays. Stops the stage on the first frame.
+- `RansacPass` — v1's eight-point F RANSAC + Sampson test, on undistorted pixels. The
+  iteration count follows `log(1 - p) / log(1 - w^8)` for the best inlier ratio `w`
+  (`util::RansacOptions`; `max_iterations` is only a guard); on V101 keyframes it draws
+  ~5 samples.
+- `TriangulatePass` — v1's E re-fit, cheirality pick, DLT and filters.
+The geometry is pure functions in `pose_estimate_v2/util/` (`epipolar_geometry`,
+`camera`). Payload types (`KeypointMatches`, `KeypointRansacResult`,
+`KeypointTriangulationResult`) are in `models.hpp`, keys `ResourceIdentifier::Keypoint*`.
+The GUI is not ported to v2.
 
 ORT interop (`compute/onnx_interop.hpp`) facts that are easy to get wrong:
 - An external device needs `deviceId` > 0 (`OrtProvider::kWebGpuContextId` = 1)
@@ -245,7 +281,9 @@ ORT interop (`compute/onnx_interop.hpp`) facts that are easy to get wrong:
 
 ### Data providers (`data/`)
 
-Providers implement `ProviderBase<N>` and expose a `std::generator<std::expected<Reading<N>, std::string>> getReadings()` coroutine. `AdaptProvider<Requested, Available>` adapts an N-camera provider to an M-camera consumer. Currently only `EurocProvider` is provided; the earlier `TumProvider` has been removed.
+Providers implement `ProviderBase<N>` and expose a `std::generator<std::expected<Reading<N>, std::string>> getReadings()` coroutine. A reading's frames are `PendingFrame`s (timestamp + `load()`), so nothing is read from disk for frames a consumer drops (e.g. cam1 under `AdaptProvider<1>`). `AdaptProvider<Requested, Available>` adapts an N-camera provider to an M-camera consumer. Currently only `EurocProvider` is provided; the earlier `TumProvider` has been removed.
+
+Both `SensorLoaderPass`es take an optional `data::ReadingFilter`: it sees every frame and IMU sample (`ReadingCandidate`: kind, timestamp, per-kind index) *before* any file is read and returns `Keep`, `Skip` or `StopStream`. `MakeKeyframeFilter` (`wslam/src/keyframe_schedule.hpp`) keeps all IMU and only a schedule's frames; a lead-in skip would skip both kinds. The loaders return `kComputeStopExecution` at the end of the stream; `Compute::execute` reports that stop as success, so callers can't tell the stream ended (hence `--max-iters`).
 
 ### Error handling convention
 
