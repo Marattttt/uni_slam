@@ -11,7 +11,6 @@
 #include "compute/gpu_stage.hpp"
 #include "data/provider_base.hpp"
 #include "fill_pyramid.hpp"
-#include "load_keypoints.hpp"
 #include "onnx_feature_detect.hpp"
 #include "pack_model_input.hpp"
 #include "preserve_pyramid.hpp"
@@ -109,10 +108,8 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
     stage->add_pass(std::make_unique<OrtFeatureDetectPass>(
         std::move(ort), model_path, bindings, compute.getStorage()));
 
-    stage->add_pass(std::make_unique<PreservePyramidPass>(gpu, bindings));
-
-    stage->add_pass(std::make_unique<LoadKeypointsPass>(
-        gpu, std::move(bindings), compute.getStorage()));
+    stage->add_pass(
+        std::make_unique<PreservePyramidPass>(gpu, std::move(bindings)));
 
     (void)config;
 

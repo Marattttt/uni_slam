@@ -53,8 +53,8 @@ template <size_t CamCnt>
     return {};
 }
 
-// Pipeline built around the RaCo-ALIKED-LightGlue ONNX model. For now it only
-// has the feature detect stage
+// Pipeline built around the RaCo-ALIKED-LightGlue ONNX model: feature detect
+// and matching, then relative pose estimation. No mapping stage yet
 template <size_t CamCnt>
 [[nodiscard]] std::optional<std::string> CreateWslamPipelineV2(
     compute::Compute& compute, data::ProviderBase<CamCnt>& provider,

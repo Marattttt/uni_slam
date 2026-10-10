@@ -274,6 +274,55 @@ struct MapStats {
     double last_error = 0.0;
 };
 
+namespace v2 {
+// Model match between a keypoint of the previous and one of the current
+// frame. Pixels are LOD-0 source-image coordinates in the convention of the
+// camera intrinsics (the centre of the top-left pixel is (0, 0)), as
+// observed, so still distorted. Rays are the undistorted normalised image
+// plane coordinates of those pixels
+struct KeypointCorrespondence {
+    // Indices into the model's keypoints of each image
+    uint32_t prev_index;
+    uint32_t curr_index;
+    // LightGlue match confidence
+    float score;
+    Eigen::Vector2d prev_px;
+    Eigen::Vector2d curr_px;
+    Eigen::Vector2d prev_ray;
+    Eigen::Vector2d curr_ray;
+};
+
+using KeypointMatches = std::vector<KeypointCorrespondence>;
+
+struct KeypointRansacResult {
+    KeypointMatches inliers;
+    // Fitted on undistorted pixel coordinates (K * ray)
+    Eigen::Matrix3d fundamental_matrix = Eigen::Matrix3d::Zero();
+    RansacStats stats;
+    // Samples the confidence target needed at the final inlier ratio, and
+    // whether that many were drawn before the iteration guard
+    uint64_t required_iterations = 0;
+    bool confidence_reached = false;
+};
+
+// Triangulated point in the current camera frame, in the units of the unit
+// translation of KeypointTriangulationResult
+struct KeypointLandmark {
+    Eigen::Vector3d position_cam_curr;
+    KeypointCorrespondence correspondence;
+    // Mean reprojection error over both views, LOD-0 pixels
+    double reprojection_error_px;
+};
+
+struct KeypointTriangulationResult {
+    // p_curr = rotation * p_prev + translation, translation of unit length
+    Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d translation = Eigen::Vector3d::Zero();
+    std::vector<KeypointLandmark> landmarks;
+    TriangulationStats stats;
+};
+}  // namespace v2
+
 // Lightweight snapshot of the current factor-graph estimate. Published every
 // optimised frame so downstream consumers (GUI, telemetry) can read the map
 // state without touching GTSAM headers.

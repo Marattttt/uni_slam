@@ -13,7 +13,6 @@ add_library(wslam_app
 
     src/feature_detect_v2/feature_detect.cpp
     src/feature_detect_v2/fill_pyramid.cpp
-    src/feature_detect_v2/load_keypoints.cpp
     src/feature_detect_v2/onnx_feature_detect.cpp
     src/feature_detect_v2/pack_model_input.cpp
     src/feature_detect_v2/preserve_pyramid.cpp
@@ -25,6 +24,12 @@ add_library(wslam_app
     src/pose_estimate_cpu/pose_estimate_cpu.cpp
     src/pose_estimate_cpu/ransac_cpu.cpp
     src/pose_estimate_cpu/triangulate_cpu.cpp
+
+    src/pose_estimate_v2/load_matches.cpp
+    src/pose_estimate_v2/pose_estimate.cpp
+    src/pose_estimate_v2/ransac.cpp
+    src/pose_estimate_v2/triangulate.cpp
+    src/pose_estimate_v2/util/epipolar_geometry.cpp
 
     src/map/factor_builder.cpp
     src/map/isam2_update.cpp

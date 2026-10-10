@@ -16,6 +16,7 @@
 #include "keyframe_schedule.hpp"
 #include "map/mapping.hpp"
 #include "pose_estimate_cpu/pose_estimate_cpu.hpp"
+#include "pose_estimate_v2/pose_estimate.hpp"
 
 using namespace wslam;
 
@@ -110,8 +111,11 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
     }
 
     compute.addStage(v2::CreateFeatureDetectStage(
-        compute, std::move(bindings), std::move(ort), std::move(provider),
+        compute, bindings, std::move(ort), std::move(provider),
         model_options->model_path, config, std::move(reading_filter)));
+
+    compute.addStage(
+        v2::CreatePoseEstimateStage(compute, std::move(bindings), config));
 
     return std::nullopt;
 }

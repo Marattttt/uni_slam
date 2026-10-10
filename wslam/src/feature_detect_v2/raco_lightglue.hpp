@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Eigen/Core>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -84,6 +85,18 @@ struct KeypointPosition {
 };
 static_assert(std::is_standard_layout_v<KeypointPosition>
               && sizeof(KeypointPosition) == 2 * sizeof(float));
+
+// Offset from the model's pixel-centre convention to the camera intrinsics',
+// where the centre of the top-left pixel is (0, 0)
+constexpr double kPixelCentreOffset = 0.5;
+
+// Keypoint position in pixels of the source pyramid level (kInputLod), in the
+// convention of the camera intrinsics
+[[nodiscard]] inline Eigen::Vector2d ToSourcePixel(
+    const KeypointPosition& keypoint) {
+    return {static_cast<double>(keypoint.x) + kCropX - kPixelCentreOffset,
+            static_cast<double>(keypoint.y) + kCropY - kPixelCentreOffset};
+}
 
 // Match between a keypoint of the left image and one of the right image of
 // pair pair_index. Indices point into that image's keypoints

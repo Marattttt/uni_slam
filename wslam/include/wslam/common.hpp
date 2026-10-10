@@ -170,13 +170,17 @@ constexpr std::string FrameTimestampNsName = "res:frame:ts_ns";
 // detect pass on frames the model ran on, so readers of its outputs skip the
 // first frame
 constexpr std::string OrtKeypointsReadyName = "gen:ort:kp:rdy";
-// std::vector<raco_lightglue::KeypointPosition>, kBatchSize * keypoints per
-// image
-constexpr std::string OrtKeypointsName = "gen:ort:kp";
 // std::vector<raco_lightglue::KeypointMatch>
 constexpr std::string OrtMatchesName = "gen:ort:match";
 // std::vector<float>, one score per OrtMatchesName row
 constexpr std::string OrtMatchScoresName = "gen:ort:mscore";
+// v2 pose estimate stage, previous -> current frame of the model's pair.
+// v2::KeypointMatches
+constexpr std::string KeypointMatchesName = "gen:kp:match";
+// v2::KeypointRansacResult
+constexpr std::string KeypointRansacName = "gen:kp:ransac";
+// v2::KeypointTriangulationResult
+constexpr std::string KeypointTriangulationName = "gen:kp:tri";
 }  // namespace ResourceIdentifier
 
 class FillPyramidPass;
