@@ -74,3 +74,7 @@ target_link_libraries(wslam_app
     ctre::ctre
     spdlog::spdlog_header_only $<$<BOOL:${MINGW}>:ws2_32>
 )
+
+if(BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
