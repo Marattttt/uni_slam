@@ -8,7 +8,11 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
+#include <type_traits>
+#include <vector>
 
 #include "compute/awaiter.hpp"
 
@@ -190,12 +194,33 @@ class GPU {
 
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string>
     readOutputbuffer(size_t size, size_t offset);
+    // Fills destination with the output buffer's bytes at offset; reads
+    // exactly destination.size() bytes
+    [[nodiscard]] std::optional<std::string> readOutputbufferInto(
+        std::span<std::byte> destination, size_t offset);
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string> readBuffer(
         const BufferBinding& binding);
-    // Reads back a region of a buffer outside the fixed slabs, e.g. one
-    // created by createDedicatedBuffer()
-    [[nodiscard]] std::expected<std::vector<std::byte>, std::string> readBuffer(
-        const wgpu::Buffer& buffer, size_t size, size_t offset = 0);
+    // Reads back count values of T at byte_offset of a buffer outside the
+    // fixed slabs, e.g. one created by createDedicatedBuffer(). The byte
+    // count is count * sizeof(T), so it always matches the result's size
+    template <typename T>
+    [[nodiscard]] std::expected<std::vector<T>, std::string> readBuffer(
+        const wgpu::Buffer& buffer, size_t count, size_t byte_offset = 0)
+        requires std::is_trivially_copyable_v<T>
+    {
+        std::vector<T> values(count);
+        if (auto err
+            = readBufferInto(buffer, std::as_writable_bytes(std::span{values}),
+                             byte_offset)) {
+            return std::unexpected(std::move(err).value());
+        }
+        return values;
+    }
+    // Fills destination with the bytes at byte_offset of a buffer outside
+    // the fixed slabs; reads exactly destination.size() bytes
+    [[nodiscard]] std::optional<std::string> readBufferInto(
+        const wgpu::Buffer& buffer, std::span<std::byte> destination,
+        size_t byte_offset = 0);
 
     // Creates a standalone buffer owned by this GPU (it lives as long as the
     // GPU does). For consumers that bind a whole buffer from offset 0, which

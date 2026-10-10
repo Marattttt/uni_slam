@@ -15,6 +15,7 @@
 #include <optional>
 #include <print>
 #include <ranges>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -984,23 +985,28 @@ std::expected<std::vector<std::byte>, std::string> GPU::readBuffer(
     return readOutputbuffer(binding.getSize(), 0);
 }
 
-std::expected<std::vector<std::byte>, std::string> GPU::readBuffer(
-    const wgpu::Buffer& buffer, size_t size, size_t offset) {
-    if (offset + size > buffer.GetSize()) {
-        return std::unexpected(
-            std::format("reading {} bytes at offset {} overruns the {} byte "
-                        "buffer",
-                        size, offset, buffer.GetSize()));
+std::optional<std::string> GPU::readBufferInto(const wgpu::Buffer& buffer,
+                                               std::span<std::byte> destination,
+                                               size_t byte_offset) {
+    const size_t size = destination.size();
+    if (byte_offset + size > buffer.GetSize()) {
+        return std::format(
+            "reading {} bytes at offset {} overruns the {} byte buffer", size,
+            byte_offset, buffer.GetSize());
     }
 
-    if (auto err = copyToOutput(buffer, offset, size,
+    if (destination.empty()) {
+        return std::nullopt;
+    }
+
+    if (auto err = copyToOutput(buffer, byte_offset, size,
                                 std::format("copy {} bytes of dedicated "
                                             "buffer to output buf",
                                             size))) {
-        return std::unexpected("copying to output: " + err.value());
+        return "copying to output: " + err.value();
     }
 
-    return readOutputbuffer(size, 0);
+    return readOutputbufferInto(destination, 0);
 }
 
 std::expected<wgpu::Buffer, std::string> GPU::createDedicatedBuffer(
@@ -1160,18 +1166,29 @@ std::expected<TextureData, std::string> GPU::readTexture(
 
 std::expected<std::vector<std::byte>, std::string> GPU::readOutputbuffer(
     size_t size, size_t offset) {
+    std::vector<std::byte> result(size);
+
+    if (auto err = readOutputbufferInto(result, offset)) {
+        return std::unexpected(std::move(err).value());
+    }
+
+    return result;
+}
+
+std::optional<std::string> GPU::readOutputbufferInto(
+    std::span<std::byte> destination, size_t offset) {
     struct UserData {
         size_t offset;
-        size_t size;
+        std::span<std::byte> destination;
         wgpu::Buffer& buf;
-        wgpu::Device& device;
-        std::expected<std::vector<std::byte>, std::string> result;
+        std::optional<std::string> error;
     };
-    UserData user_data{.offset = offset,
-                       .size = size,
-                       .buf = output_buf_,
-                       .device = device_,
-                       .result = {}};
+    UserData user_data{
+        .offset = offset,
+        .destination = destination,
+        .buf = output_buf_,
+        .error = {},
+    };
 
     auto wgpu_cb = [](wgpu::MapAsyncStatus status, wgpu::StringView msg,
                       UserData* user_data) {
@@ -1180,24 +1197,29 @@ std::expected<std::vector<std::byte>, std::string> GPU::readOutputbuffer(
                 "[GPU] Map async unsucessful when reading output "
                 "buffer. status: {}; msg: {}",
                 static_cast<int>(status), std::string{msg});
-            user_data->result = std::unexpected(std::string{msg});
+            user_data->error = std::string{msg};
             return;
         }
 
-        const auto* output
-            = static_cast<const std::byte*>(user_data->buf.GetConstMappedRange(
-                user_data->offset, user_data->size));
+        const size_t size = user_data->destination.size();
+        const auto* output = static_cast<const std::byte*>(
+            user_data->buf.GetConstMappedRange(user_data->offset, size));
 
-        assert(output != nullptr);
+        if (output == nullptr) {
+            user_data->error
+                = std::format("no mapped range of {} bytes at offset {}", size,
+                              user_data->offset);
+            return;
+        }
 
-        user_data->result->resize(user_data->size);
-        std::copy_n(output, user_data->size, user_data->result->begin());
+        std::ranges::copy(std::span{output, size},
+                          user_data->destination.begin());
     };
 
     auto future_cb = [&, this]() -> wgpu::Future {
-        return output_buf_.MapAsync(wgpu::MapMode::Read, offset, size,
-                                    wgpu::CallbackMode::WaitAnyOnly, wgpu_cb,
-                                    &user_data);
+        return output_buf_.MapAsync(
+            wgpu::MapMode::Read, offset, destination.size(),
+            wgpu::CallbackMode::WaitAnyOnly, wgpu_cb, &user_data);
     };
 
     auto awaiter = getAwaiter();
@@ -1207,8 +1229,8 @@ std::expected<std::vector<std::byte>, std::string> GPU::readOutputbuffer(
     output_buf_.Unmap();
 
     if (err) {
-        return std::unexpected("gpu callback: " + err.value());
+        return "gpu callback: " + err.value();
     }
 
-    return std::move(user_data.result);
+    return std::move(user_data.error);
 }

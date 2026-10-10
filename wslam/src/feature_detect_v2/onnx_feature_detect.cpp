@@ -4,8 +4,9 @@
 
 #include <algorithm>
 #include <array>
-#include <cstring>
 #include <format>
+#include <ranges>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -255,17 +256,25 @@ std::optional<std::string> v2::OrtFeatureDetectPass::publishMatches(
                            scores_shape, match_count);
     }
 
-    std::vector<model::KeypointMatch> match_rows(match_count);
-    std::vector<float> match_scores(match_count);
+    // Views over the tensors sized by their checked shapes, so the copies
+    // below cannot read past them
+    const std::span match_values{
+        matches.GetTensorData<int64_t>(),
+        match_count * static_cast<size_t>(model::kMatchesColumns)};
+    const std::span score_values{scores.GetTensorData<float>(), match_count};
 
-    if (match_count > 0) {
-        std::memcpy(match_rows.data(), matches.GetTensorData<int64_t>(),
-                    match_count * sizeof(model::KeypointMatch));
-        std::memcpy(match_scores.data(), scores.GetTensorData<float>(),
-                    match_count * sizeof(float));
-    }
+    auto match_rows = match_values | std::views::chunk(model::kMatchesColumns)
+                      | std::views::transform([](const auto& row) {
+                            return model::KeypointMatch{
+                                .pair_index = row[0],
+                                .left_index = row[1],
+                                .right_index = row[2],
+                            };
+                        })
+                      | std::ranges::to<std::vector>();
+    auto match_scores = score_values | std::ranges::to<std::vector>();
 
-    // Guards the KeypointMatch row layout
+    // Rejects rows that don't index the model's pairs and keypoints
     const int64_t keypoint_count = bindings_->getKeypointCount();
     for (const model::KeypointMatch& match : match_rows) {
         const auto is_keypoint_index = [keypoint_count](int64_t index) {

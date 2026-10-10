@@ -3,10 +3,9 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <cstring>
-#include <format>
 #include <ranges>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "common.hpp"
@@ -35,22 +34,13 @@ std::optional<std::string> v2::LoadKeypointsPass::execute() {
     spdlog::info(LOG_ID " Executing");
 
     const int64_t keypoint_count = bindings_->getKeypointCount();
-    const size_t keypoints_bytes = model::KeypointsBytes(keypoint_count);
 
-    auto bytes
-        = gpu_->readBuffer(bindings_->getKeypointsBuffer(), keypoints_bytes);
-    if (!bytes) {
-        return "reading keypoints: " + bytes.error();
+    auto read = gpu_->readBuffer<model::KeypointPosition>(
+        bindings_->getKeypointsBuffer(), model::KeypointsCount(keypoint_count));
+    if (!read) {
+        return "reading keypoints: " + read.error();
     }
-
-    if (bytes->size() != keypoints_bytes) {
-        return std::format("read {} keypoint bytes, expected {}", bytes->size(),
-                           keypoints_bytes);
-    }
-
-    std::vector<model::KeypointPosition> keypoints(
-        model::KeypointsCount(keypoint_count));
-    std::memcpy(keypoints.data(), bytes->data(), keypoints_bytes);
+    std::vector<model::KeypointPosition> keypoints = std::move(read).value();
 
     // Keypoints are stored image by image, keypoint_count each
     const auto per_image = static_cast<size_t>(keypoint_count);
