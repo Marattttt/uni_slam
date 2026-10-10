@@ -95,14 +95,11 @@ constexpr double LodScale(std::unsigned_integral auto lod) {
     return lod_factors.at(static_cast<size_t>(lod));
 }
 
-constexpr Eigen::Vector2d ToLodPixel(const Feature& f,
-                                     std::unsigned_integral auto lod) {
-    const double scale = LodScale(lod);
-    return {static_cast<double>(f.x) * scale, static_cast<double>(f.y) * scale};
-}
-
+// Feature coordinates are in the pixels of the feature's own pyramid level;
+// scales them up to LOD-0 pixels
 constexpr Eigen::Vector2d ToLod0Pixel(const Feature& f) {
-    return ToLodPixel(f, 0U);
+    const double scale = LodScale(f.lod);
+    return {static_cast<double>(f.x) * scale, static_cast<double>(f.y) * scale};
 }
 
 // Maps a LOD-0 pixel through the inverse intrinsic + inverse distortion

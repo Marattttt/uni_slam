@@ -14,10 +14,12 @@
 #include <vector>
 
 #include "common.hpp"
-#include "models.hpp"
 #include "data/provider_base.hpp"
+#include "map_helpers_lods.hpp"
+#include "models.hpp"
 
 using namespace wslam;
+namespace util = wslam::map::util;
 
 #define LOG_ID "[Keyframe Gate pass]"
 
@@ -41,19 +43,6 @@ std::optional<std::string> KeyframeGatePass::initialize() {
 }
 
 namespace {
-
-constexpr double LodScale(uint32_t lod) {
-    double scale = 1.0;
-    for (uint32_t i = 0; i < lod; ++i) {
-        scale *= GPUConst::lod_scale_factor;
-    }
-    return scale;
-}
-
-constexpr Eigen::Vector2d ToLod0Pixel(const Feature& f) {
-    const double scale = LodScale(f.lod);
-    return {static_cast<double>(f.x) * scale, static_cast<double>(f.y) * scale};
-}
 
 // Returns the rotation angle (radians) of a 3x3 rotation, clamped for
 // numerical safety. Mirrors the helper in triangulate_cpu.cpp.
@@ -95,7 +84,7 @@ Eigen::Vector2d UndistortNormalised(const Eigen::Vector2d& dist,
 Eigen::Vector2d UndistortLod0Pixel(const Feature& f,
                                    const Eigen::Vector4d& intrinsics,
                                    const Eigen::Vector4d& distortion) {
-    const Eigen::Vector2d px = ToLod0Pixel(f);
+    const Eigen::Vector2d px = util::ToLod0Pixel(f);
     const double fu = intrinsics[0];
     const double fv = intrinsics[1];
     const double cu = intrinsics[2];
@@ -290,8 +279,8 @@ std::optional<std::string> KeyframeGatePass::execute() {
     parallaxes.reserve(pairs.size());
     size_t new_landmark_count = 0;
     for (const auto& [feat_curr, feat_prev] : pairs) {
-        const auto pp = ToLod0Pixel(feat_prev);
-        const auto pc = ToLod0Pixel(feat_curr);
+        const auto pp = util::ToLod0Pixel(feat_prev);
+        const auto pc = util::ToLod0Pixel(feat_curr);
         const double parallax = (pc - pp).norm();
         parallaxes.push_back(parallax);
         if (!state_->active_landmarks.contains(feat_prev)
