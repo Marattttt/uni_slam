@@ -92,6 +92,25 @@ struct Reading {
     std::optional<IMUReading> imu;
 };
 
+// A reading item offered to a ReadingFilter before any file behind it is
+// read. A Frame item is the reading's set of camera frames, which share one
+// timestamp
+struct ReadingCandidate {
+    enum class Kind : uint8_t { Frame, Imu };
+
+    Kind kind;
+    uint64_t timestamp;
+    // Ordinal among the stream's items of the same kind, counting skipped ones
+    uint64_t index;
+};
+
+enum class ReadingDecision : uint8_t { Keep, Skip, StopStream };
+
+// Decides, per reading item, whether a consumer keeps it. An error aborts the
+// consumer
+using ReadingFilter = std::function<std::expected<ReadingDecision, std::string>(
+    const ReadingCandidate&)>;
+
 /**
  * Summarizes IMU readings by interpolating them to match the
  * specific timestamp of an image frame.

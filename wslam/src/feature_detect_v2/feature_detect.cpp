@@ -86,13 +86,14 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
     compute::Compute& compute, std::shared_ptr<SharedBindings> bindings,
     std::shared_ptr<compute::OrtProvider> ort,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
-    const std::filesystem::path& model_path, const WslamConfig& config) {
+    const std::filesystem::path& model_path, const WslamConfig& config,
+    data::ReadingFilter reading_filter) {
     const auto gpu = compute.getGPUPtr();
     auto stage = std::make_unique<compute::GpuStage>("Feature detect v2", gpu,
                                                      &compute.getPerf());
 
-    stage->add_pass(std::make_unique<SensorLoaderPass>(std::move(provider),
-                                                       compute.getStorage()));
+    stage->add_pass(std::make_unique<SensorLoaderPass>(
+        std::move(provider), compute.getStorage(), std::move(reading_filter)));
 
     StorageImageProvider img_provider{compute.getStorage()};
     stage->add_pass(std::make_unique<FillPyramidPass>(

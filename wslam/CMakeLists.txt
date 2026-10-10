@@ -2,6 +2,7 @@ add_library(wslam_app
     src/common.cpp
     src/wslam.cpp
     src/export.cpp
+    src/keyframe_schedule.cpp
 
     src/feature_detect/cull_corners.cpp
     src/feature_detect/detect_corners.cpp

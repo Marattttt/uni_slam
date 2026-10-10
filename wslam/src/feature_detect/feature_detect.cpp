@@ -43,13 +43,14 @@ class StorageImageProvider {
 std::unique_ptr<compute::Stage> wslam::CreateFeatureDetectStage(
     compute::Compute& compute, GpuSharedBindings& shared_bindings,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
-    const std::string& feature_output_label, WslamConfig config) {
+    const std::string& feature_output_label, WslamConfig config,
+    data::ReadingFilter reading_filter) {
     const auto gpu = compute.getGPUPtr();
     auto stage = std::make_unique<compute::GpuStage>("Feature detect", gpu,
                                                      &compute.getPerf());
 
-    stage->add_pass(std::make_unique<SensorLoaderPass>(std::move(provider),
-                                                       compute.getStorage()));
+    stage->add_pass(std::make_unique<SensorLoaderPass>(
+        std::move(provider), compute.getStorage(), std::move(reading_filter)));
 
     StorageImageProvider img_provider{compute.getStorage()};
     stage->add_pass(std::make_unique<FillPyramidPass>(
@@ -84,4 +85,3 @@ std::unique_ptr<compute::Stage> wslam::CreateFeatureDetectStage(
 
     return stage;
 }
-

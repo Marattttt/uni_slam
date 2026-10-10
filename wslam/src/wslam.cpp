@@ -13,6 +13,7 @@
 #include "feature_detect/feature_detect.hpp"
 #include "feature_detect_v2/feature_detect.hpp"
 #include "feature_detect_v2/shared_bindings.hpp"
+#include "keyframe_schedule.hpp"
 #include "map/mapping.hpp"
 #include "pose_estimate_cpu/pose_estimate_cpu.hpp"
 
@@ -97,9 +98,20 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
         return "v2 shared bindings: " + std::move(err).value();
     }
 
+    data::ReadingFilter reading_filter;
+    if (!config.keyframes_path.empty()) {
+        auto schedule = LoadKeyframeSchedule(config.keyframes_path);
+        if (!schedule) {
+            return "keyframe schedule: " + std::move(schedule).error();
+        }
+        spdlog::info("[WSLAM] Reading only the {} keyframes of sequence '{}'",
+                     schedule->frame_indices.size(), schedule->sequence);
+        reading_filter = MakeKeyframeFilter(std::move(schedule).value());
+    }
+
     compute.addStage(v2::CreateFeatureDetectStage(
         compute, std::move(bindings), std::move(ort), std::move(provider),
-        model_options->model_path, config));
+        model_options->model_path, config, std::move(reading_filter)));
 
     return std::nullopt;
 }

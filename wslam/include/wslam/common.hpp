@@ -32,6 +32,12 @@ struct WslamConfig {
 
     // Run the v2 pipeline (ONNX feature detect) instead of the default one
     bool use_pipeline_v2 = false;
+
+    // Keyframe schedule (JSON, see keyframe_schedule.hpp). When set, the v2
+    // pipeline only reads the listed frames, so every model run pairs two
+    // consecutive keyframes; all IMU samples are still read. Empty means
+    // every frame. v2 only
+    std::filesystem::path keyframes_path;
 };
 
 struct LOD {

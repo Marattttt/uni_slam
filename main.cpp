@@ -26,6 +26,7 @@ using namespace std::chrono_literals;
 WslamConfig parseArgs(std::span<char*> args) {
     constexpr std::string_view kIterFlag = "--max-iters=";
     constexpr std::string_view kMapOutFlag = "--map-out=";
+    constexpr std::string_view kKeyframesFlag = "--keyframes=";
     WslamConfig config;
     for (std::string_view arg : args) {
         if (arg == "-gui") {
@@ -46,6 +47,9 @@ WslamConfig parseArgs(std::span<char*> args) {
         } else if (arg.starts_with(kMapOutFlag)) {
             config.map_out_path = std::filesystem::path(
                 std::string(arg.substr(kMapOutFlag.size())));
+        } else if (arg.starts_with(kKeyframesFlag)) {
+            config.keyframes_path = std::filesystem::path(
+                std::string(arg.substr(kKeyframesFlag.size())));
         }
     }
     return config;
@@ -293,6 +297,12 @@ int main(int argc, char* argv[]) {
 
     const WslamConfig config
         = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});
+
+    // The v1 mapping stage selects keyframes itself from every frame
+    if (!config.keyframes_path.empty() && !config.use_pipeline_v2) {
+        spdlog::critical(LOG_ID " --keyframes is only supported with -v2");
+        return 1;
+    }
 
     spdlog::info(
         LOG_ID " GUI: {}, max iterations: {}, map_out: {}", config.enable_gui,

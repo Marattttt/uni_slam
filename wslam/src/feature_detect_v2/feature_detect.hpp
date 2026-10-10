@@ -36,11 +36,13 @@ struct ModelOptions {
 [[nodiscard]] std::expected<ModelOptions, std::string> ReadModelOptionsFromEnv();
 
 // Detects and matches features between the previous and the current frame
-// with the RaCo-ALIKED-LightGlue model
+// with the RaCo-ALIKED-LightGlue model. reading_filter selects which frames
+// and IMU samples of the provider are used
 std::unique_ptr<compute::Stage> CreateFeatureDetectStage(
     compute::Compute& compute, std::shared_ptr<SharedBindings> bindings,
     std::shared_ptr<compute::OrtProvider> ort,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
-    const std::filesystem::path& model_path, const WslamConfig& config = {});
+    const std::filesystem::path& model_path, const WslamConfig& config = {},
+    data::ReadingFilter reading_filter = {});
 
 };  // namespace wslam::v2

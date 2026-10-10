@@ -17,6 +17,8 @@ Options:
   --map-out=PATH    Write the final factor-graph map to PATH. Must end in
                     .ply; a sibling .json metadata file is derived
                     automatically.
+  --keyframes=PATH  Only feed the frames listed in this keyframe schedule
+                    JSON to the pipeline (all IMU is kept). Requires -v2.
 EOF
 }
 
@@ -34,6 +36,7 @@ for arg in "$@"; do
         -v2)            RUN_ARGS+=("-v2") ;;
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
         --map-out=*)    RUN_ARGS+=("$arg") ;;
+        --keyframes=*)  RUN_ARGS+=("$arg") ;;
         Debug)          BUILD_TYPE="Debug" ;;
         Release)        BUILD_TYPE="RelWithDebInfo" ;;
         *)              echo "error: unknown argument '$arg'" >&2
