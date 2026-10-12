@@ -64,6 +64,10 @@ It sets:
 - `WSLAM_SHADER_SRC_DIR` — directory where `.wgsl` shaders are loaded from at runtime.
 - `EUROC_DIR` — path to EuRoC MAV dataset (`mav0/` root).
 - `WSLAM_ONNX_MODEL` — model file the v2 pipeline runs (required with `-v2`; no default).
+  Point it at the `*_webgpu.onnx` output of `patch_onnx_for_webgpu.py`, not the published
+  model: the published v3.0 models target TensorRT, and under the WebGPU EP their Selu,
+  GridSample (opset 20) and LogSoftmax nodes fall back to the CPU. The patch rewrites them
+  exactly (same matches) and is ~11% faster per pair.
 - `WSLAM_ONNX_KEYPOINTS` — optional keypoints per image the model returns; defaults to
   1024 (`raco_lightglue::kDefaultKeypointCount`). Set it when testing another model
   variant; the model's keypoints output shape is checked against it at startup.
