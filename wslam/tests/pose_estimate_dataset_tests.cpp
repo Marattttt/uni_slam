@@ -32,6 +32,9 @@
 #include "map/map_helpers_lods.hpp"
 #include "models.hpp"
 #include "pose_estimate_cpu/pose_estimate_cpu.hpp"
+#include "pose_estimate_v2/match_scores.hpp"
+#include "pose_estimate_v2/ransac.hpp"
+#include "pose_estimate_v2/triangulate.hpp"
 #include "wslam.hpp"
 
 // Runs the v1 and the v2 pose estimate stage over the keyframes v1 selected
@@ -66,6 +69,8 @@ struct PairEstimate {
 
 struct PipelineRun {
     std::vector<PairEstimate> pairs;
+    // v2 only: the model's matches of each pair, as RANSAC saw them
+    std::vector<v2::KeypointMatches> matches;
     data::CamSensorParams camera;
     double seconds = 0.0;
 };
@@ -233,11 +238,14 @@ std::expected<PipelineRun, std::string> RunV2(
                 ResourceIdentifier::KeypointTriangulationName);
             auto ransac = storage.take<v2::KeypointRansacResult>(
                 ResourceIdentifier::KeypointRansacName);
-            if (pair && triangulation && ransac) {
+            const auto matches = storage.getPtr<v2::KeypointMatches>(
+                ResourceIdentifier::KeypointMatchesName);
+            if (pair && triangulation && ransac && matches) {
                 FillFromTriangulation(*pair, *triangulation);
                 pair->matches = ransac->stats.total_matches;
                 pair->inliers = ransac->stats.inlier_count;
                 run.pairs.push_back(*pair);
+                run.matches.push_back(*matches.value());
             }
             return std::nullopt;
         }));
@@ -379,6 +387,25 @@ struct RelativeTruth {
     Eigen::Vector3d translation;
 };
 
+// Ground truth of the pair (prev_ts, curr_ts), nullopt when either pose is
+// not covered by the ground truth
+std::optional<RelativeTruth> PairTruth(
+    const std::vector<GroundTruthSample>& ground_truth, uint64_t prev_ts,
+    uint64_t curr_ts, const Eigen::Isometry3d& body_from_camera) {
+    const auto prev_pose
+        = CameraPoseAt(ground_truth, prev_ts, body_from_camera);
+    const auto curr_pose
+        = CameraPoseAt(ground_truth, curr_ts, body_from_camera);
+    if (!prev_pose || !curr_pose) {
+        return std::nullopt;
+    }
+    const Eigen::Isometry3d curr_from_prev = curr_pose->inverse() * *prev_pose;
+    return RelativeTruth{
+        .rotation = curr_from_prev.linear(),
+        .translation = curr_from_prev.translation(),
+    };
+}
+
 struct PairScore {
     std::optional<RelativeTruth> truth;
     std::optional<double> v1_rotation_error_deg;
@@ -442,6 +469,100 @@ const char* EnvOrNull(const char* name) {
     return value != nullptr && value[0] != '\0' ? value : nullptr;
 }
 
+// One way of turning the model's matches into a pose, for the ablation
+struct PoseConfig {
+    std::string name;
+    v2::RansacPass::Opts ransac;
+    v2::TriangulatePass::Opts triangulation;
+};
+
+std::string_view WeightingName(v2::ScoreWeighting weighting) {
+    switch (weighting) {
+        case v2::ScoreWeighting::kNone:
+            return "none";
+        case v2::ScoreWeighting::kScore:
+            return "score";
+        case v2::ScoreWeighting::kScoreSquared:
+            return "score^2";
+    }
+    return "?";
+}
+
+PoseConfig MakePoseConfig(float min_score, v2::ScoreWeighting weighting,
+                          bool refine) {
+    PoseConfig config;
+    config.ransac.filter.min_score = min_score;
+    config.ransac.weighting = weighting;
+    config.triangulation.weighting = weighting;
+    config.triangulation.refine = refine;
+    config.name = std::format("floor {:.1f}, weights {}, refine {}", min_score,
+                              WeightingName(weighting), refine ? "on" : "off");
+    return config;
+}
+
+// Errors of one config over the pairs; direction only for scored baselines
+struct ConfigScore {
+    std::vector<std::optional<double>> rotation_error_deg;
+    std::vector<std::optional<double>> direction_error_deg;
+    size_t recovered = 0;
+    size_t filtered_matches = 0;
+    size_t inliers = 0;
+};
+
+ConfigScore ScoreConfig(
+    const PoseConfig& config, const PipelineRun& run,
+    const std::vector<std::optional<RelativeTruth>>& truths) {
+    ConfigScore score;
+    // Seeded once and drawn from across pairs, like the pass's RNG
+    std::mt19937_64 rng(config.ransac.rng_seed);
+
+    for (size_t i = 0; i < run.matches.size(); ++i) {
+        const v2::KeypointRansacResult ransac
+            = v2::RunRansac(run.matches[i], run.camera, config.ransac, rng);
+        const v2::KeypointTriangulationResult triangulation
+            = v2::RunTriangulation(ransac, run.camera, config.triangulation);
+
+        score.filtered_matches += ransac.filtered_matches;
+        score.inliers += ransac.stats.inlier_count;
+
+        std::optional<double> rotation_error;
+        std::optional<double> direction_error;
+        const auto& truth = truths[i];
+        if (triangulation.stats.pose_recovered) {
+            ++score.recovered;
+            if (truth) {
+                rotation_error = RotationAngleDeg(
+                    triangulation.rotation * truth->rotation.transpose());
+                if (truth->translation.norm() >= kMinScoredBaselineM) {
+                    direction_error = DirectionAngleDeg(
+                        triangulation.translation, truth->translation);
+                }
+            }
+        }
+        score.rotation_error_deg.push_back(rotation_error);
+        score.direction_error_deg.push_back(direction_error);
+    }
+    return score;
+}
+
+std::vector<double> Present(const std::vector<std::optional<double>>& values) {
+    std::vector<double> present;
+    for (const auto& value : values) {
+        if (value) {
+            present.push_back(*value);
+        }
+    }
+    return present;
+}
+
+double Mean(const std::vector<double>& values) {
+    if (values.empty()) {
+        return 0.0;
+    }
+    return std::ranges::fold_left(values, 0.0, std::plus{})
+           / static_cast<double>(values.size());
+}
+
 }  // namespace
 
 TEST(PoseEstimateDatasetTest, V2TracksGroundTruthAndV1OnV101Keyframes) {
@@ -494,18 +615,8 @@ TEST(PoseEstimateDatasetTest, V2TracksGroundTruthAndV1OnV101Keyframes) {
         v2_recovered += e2.recovered ? 1 : 0;
 
         PairScore& score = scores[i];
-        const auto prev_pose
-            = CameraPoseAt(*ground_truth, e1.prev_ts, body_from_camera);
-        const auto curr_pose
-            = CameraPoseAt(*ground_truth, e1.curr_ts, body_from_camera);
-        if (prev_pose && curr_pose) {
-            const Eigen::Isometry3d curr_from_prev
-                = curr_pose->inverse() * *prev_pose;
-            score.truth = RelativeTruth{
-                .rotation = curr_from_prev.linear(),
-                .translation = curr_from_prev.translation(),
-            };
-        }
+        score.truth = PairTruth(*ground_truth, e1.prev_ts, e1.curr_ts,
+                                body_from_camera);
 
         const bool score_direction
             = score.truth
@@ -611,4 +722,133 @@ TEST(PoseEstimateDatasetTest, V2TracksGroundTruthAndV1OnV101Keyframes) {
               std::max(1.5 * v1_rotation.median, v1_rotation.median + 0.1))
         << "v2 should not be clearly worse than v1";
     EXPECT_LE(v1_v2_rotation.median, 1.0);
+}
+
+// Runs the v2 model once over the V101 keyframes, then re-estimates every
+// pair from the recorded matches under each config (score floor, score
+// weights, non-linear refinement) and scores it against the ground truth.
+// Prints one summary row per config (also written to
+// $WSLAM_ABLATION_REPORT_OUT when set). Results:
+// benchmarks/POSE_ESTIMATE_V2_NOTE.md
+TEST(PoseEstimateDatasetTest, V2MatchScoreAblation) {
+    const char* euroc_dir = EnvOrNull("EUROC_DIR");
+    if (euroc_dir == nullptr || EnvOrNull("WSLAM_SHADER_SRC_DIR") == nullptr
+        || EnvOrNull("WSLAM_ONNX_MODEL") == nullptr) {
+        GTEST_SKIP() << "needs EUROC_DIR, WSLAM_SHADER_SRC_DIR and "
+                        "WSLAM_ONNX_MODEL (source .env)";
+    }
+
+    spdlog::set_level(spdlog::level::warn);
+    spdlog::cfg::load_env_levels();
+
+    const auto schedule = LoadKeyframeSchedule(kSchedulePath);
+    ASSERT_TRUE(schedule.has_value()) << schedule.error();
+
+    const auto ground_truth
+        = LoadGroundTruth(std::filesystem::path(euroc_dir)
+                          / "state_groundtruth_estimate0" / "data.csv");
+    ASSERT_TRUE(ground_truth.has_value()) << ground_truth.error();
+
+    const auto run = RunV2(*schedule);
+    ASSERT_TRUE(run.has_value()) << "v2: " << run.error();
+
+    const size_t pair_count = schedule->frame_indices.size() - 1;
+    ASSERT_EQ(run->pairs.size(), pair_count);
+    ASSERT_EQ(run->matches.size(), pair_count);
+
+    const Eigen::Isometry3d body_from_camera = BodyFromCamera(run->camera);
+    std::vector<std::optional<RelativeTruth>> truths;
+    size_t model_matches = 0;
+    for (size_t i = 0; i < pair_count; ++i) {
+        truths.push_back(PairTruth(*ground_truth, run->pairs[i].prev_ts,
+                                   run->pairs[i].curr_ts, body_from_camera));
+        model_matches += run->matches[i].size();
+    }
+
+    using v2::ScoreWeighting;
+    constexpr std::array kWeightings{ScoreWeighting::kNone,
+                                     ScoreWeighting::kScore,
+                                     ScoreWeighting::kScoreSquared};
+
+    std::vector<PoseConfig> configs;
+    PoseConfig defaults;
+    defaults.name = "defaults";
+    configs.push_back(defaults);
+    for (const float floor : {0.0F, 0.2F, 0.3F, 0.5F, 0.7F, 0.9F}) {
+        configs.push_back(MakePoseConfig(floor, ScoreWeighting::kNone, false));
+    }
+    for (const bool refine : {false, true}) {
+        for (const ScoreWeighting weighting : kWeightings) {
+            if (!refine && weighting == ScoreWeighting::kNone) {
+                continue;  // the floor 0 row above
+            }
+            configs.push_back(MakePoseConfig(0.0F, weighting, refine));
+        }
+    }
+    for (const float floor : {0.2F, 0.5F}) {
+        for (const bool refine : {false, true}) {
+            for (const ScoreWeighting weighting : kWeightings) {
+                if (!refine && weighting == ScoreWeighting::kNone) {
+                    continue;  // in the floor rows above
+                }
+                configs.push_back(MakePoseConfig(floor, weighting, refine));
+            }
+        }
+    }
+
+    std::string report = std::format(
+        "## v2 match-score ablation on {} ({} pairs, {} model matches)\n\n"
+        "Rotation errors over all pairs, direction errors only for GT "
+        "baselines >= {} m. `filtered` and `inliers` are totals over the "
+        "pairs.\n\n"
+        "| config | recovered | filtered | inliers | rot med | rot p90 | rot "
+        "mean | dir n | dir med | dir p90 | dir mean | dir max |\n"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+        schedule->sequence, pair_count, model_matches, kMinScoredBaselineM);
+
+    std::vector<ConfigScore> scores;
+    for (const PoseConfig& config : configs) {
+        const ConfigScore score = ScoreConfig(config, *run, truths);
+        const auto rotation = Present(score.rotation_error_deg);
+        const auto direction = Present(score.direction_error_deg);
+        const Summary rotation_summary = Summarise(rotation);
+        const Summary direction_summary = Summarise(direction);
+        report += std::format(
+            "| {} | {}/{} | {} | {} | {:.3f} | {:.3f} | {:.3f} | {} | {:.2f} | "
+            "{:.2f} | {:.2f} | {:.2f} |\n",
+            config.name, score.recovered, pair_count, score.filtered_matches,
+            score.inliers, rotation_summary.median, rotation_summary.p90,
+            Mean(rotation), direction_summary.count, direction_summary.median,
+            direction_summary.p90, Mean(direction), direction_summary.max);
+        scores.push_back(score);
+    }
+
+    // Per-pair errors of the floor-0 unweighted config against the defaults
+    const ConfigScore& plain = scores.at(1);
+    const ConfigScore& chosen = scores.at(0);
+    report += std::format(
+        "\nPer pair, `{}` vs `defaults`:\n\n"
+        "| # | frames | GT baseline (m) | rot err | rot err (defaults) | dir "
+        "err | dir err (defaults) |\n|---|---|---|---|---|---|---|\n",
+        configs.at(1).name);
+    for (size_t i = 0; i < pair_count; ++i) {
+        report += std::format(
+            "| {} | {}-{} | {} | {} | {} | {} | {} |\n", i,
+            schedule->frame_indices[i], schedule->frame_indices[i + 1],
+            FormatOptional(truths[i]
+                               ? std::optional(truths[i]->translation.norm())
+                               : std::nullopt),
+            FormatOptional(plain.rotation_error_deg[i]),
+            FormatOptional(chosen.rotation_error_deg[i]),
+            FormatOptional(plain.direction_error_deg[i]),
+            FormatOptional(chosen.direction_error_deg[i]));
+    }
+
+    std::println("{}", report);
+    if (const char* out = EnvOrNull("WSLAM_ABLATION_REPORT_OUT")) {
+        std::ofstream(out) << report;
+    }
+
+    // The defaults must recover every pose the plain config does
+    EXPECT_GE(chosen.recovered, plain.recovered);
 }
