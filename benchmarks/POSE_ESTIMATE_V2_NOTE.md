@@ -178,14 +178,10 @@ Median / p90 / max, degrees:
 - **Robust local optimisation in RANSAC** (LO-RANSAC / MSAC scoring /
   Huber-IRLS re-fit on the Sampson error), against finding 5. This matters
   more than the choice of minimal solver.
-- **5-point essential-matrix RANSAC on the rays** (Nistér). It needs a sample
-  of 5 instead of 8, so (1 − w⁵) instead of (1 − w⁸), and it uses calibration.
-  F is pointless for a calibrated camera.
-- **Non-linear two-view refinement** of (R, t) over the inliers (Sampson or
-  reprojection, a few Gauss-Newton steps) after the linear E, against
-  finding 4.
-- **Use LightGlue's match scores:** PROSAC ordering, or a score threshold
-  (scores reach down to ~0.10, LightGlue's own filter).
+- ~~Essential-matrix RANSAC on the rays~~, ~~non-linear two-view
+  refinement~~ and ~~LightGlue's match scores~~: done, see "Match scores and
+  essential-matrix RANSAC" below. A minimal 5-point solver (Nistér) is still
+  open, but at 93–99.5% inliers it would save samples, not accuracy.
 - **F/H model selection** for low-parallax and pure-rotation pairs (ORB-SLAM
   style). The first 8 pairs are 50 ms apart with 2.6–2.9 cm baselines.
 - **IMU:** a gyro-preintegrated rotation prior to validate or seed R, and to
@@ -216,9 +212,143 @@ Median / p90 / max, degrees:
 - Make v1 detection deterministic (sort each feature block after the atomic
   fill) so v1 numbers are reproducible.
 - The v2 GUI is not ported.
-- The model's pixel-centre convention (keypoint 0.5 = centre of the first
-  pixel) comes from the `raco_lightglue.hpp` comment. It should be checked
-  against the LightGlue-ONNX export; a mistake would be a constant 0.5 px bias.
+- ~~The model's pixel-centre convention~~: checked against the graph, see
+  below.
 - The undistortion (`map::util::UndistortNormalised`) is a fixed-point
   iteration whose rate is about |2·k1·r²| (≈ 0.46 in EuRoC's corners). Twenty
   iterations are plenty, but Newton would converge in 3–4.
+
+## Match scores and essential-matrix RANSAC
+
+The sections above measure the stage as first ported. This section records
+the follow-up that uses the model's extra outputs and drops the fundamental
+matrix. Measured on the same 49 V101 keyframe pairs, RelWithDebInfo; v2 is
+still bit-reproducible.
+
+### What the model gives beyond matches (read from the ONNX graph)
+
+- **Outputs:** `keypoints [2,1024,2]`, `matches [M,3]` and `mscores [M]`. This
+  export has no covariance output: RaCo's covariance head is not in the graph.
+- **`mscores` is already cut at > 0.1 inside the graph**, LightGlue's default
+  `filter_threshold` (constant `val_4026`). Any floor below 0.1 is a no-op.
+- **Keypoints come out of a sorted, descending `TopK`.** A keypoint's index is
+  its RaCo rank. The RaCo paper uses ranking only to truncate a keypoint
+  budget, so it has no two-view use. It may matter for tracks once v2 has
+  mapping.
+- **Pixel centre:** keypoints are `integer pixel + soft-argmax offset + 0.5`
+  (constant `val_169 = 0.5`). The centre of the top-left pixel is therefore
+  (0.5, 0.5), as `raco_lightglue.hpp` assumes, and `ToSourcePixel`'s −0.5 is
+  correct. This closes the item in Implementation above.
+
+### What other LightGlue systems do
+
+| System | Score use | Geometric gate |
+|---|---|---|
+| LightGlue (default) | keep score > 0.1 | — |
+| hloc `superpoint+lightglue` | `match_threshold` 0.2 | — |
+| SuperVINS (README; VINS-Fusion + SP/LG) | `matche_score_threshold` 0.5 | F RANSAC `F_threshold: 1` px |
+| DL-VINS-Factory (RaCo+LG on EuRoC, arXiv 2607.01757) | score ≥ β (value not given); RaCo covariance-weighted residuals, −9% median ATE | MAGSAC++ on **E**, 1 px epipolar |
+| LightGlue authors (cvg/LightGlue#56) | — | OpenCV **E**-RANSAC, best at 1 px; PoseLib LO-RANSAC swept 0.5–3 px |
+| RaCo paper (arXiv 2602.15755) | — | PoseLib RANSAC, threshold swept {0.5, …, 3.0} px |
+
+These systems use score floors from 0.1 to 0.5. The calibrated systems all
+estimate E. The confidence pay-off that is reported comes from weighting
+residuals (DL-VINS's covariances), not from hard floors.
+
+### What changed
+
+- **E instead of F.**
+  - The camera is calibrated and the rays are already undistorted, so RANSAC
+    now fits eight-point **essential** matrices on the rays directly
+    (`util::EstimateEssentialRansac`).
+  - The Sampson inlier test is scaled to pixels by the mean focal length. The
+    gate stays at 3.84 px², and the threshold was not swept.
+  - The triangulation decomposes RANSAC's E instead of re-fitting it.
+  - The final re-fit iterates (re-fit, re-classify; up to 3 rounds while the
+    inlier set grows) and always returns the fit on the returned inliers.
+- **Score floor** (`MatchFilterOptions`): drops matches below `min_score`. If
+  fewer than 100 survive, it keeps the best-scoring 100.
+- **Score weights** (`ScoreWeighting`): scale each constraint in the final
+  linear E re-fit, and each residual in the refinement.
+- **Non-linear refinement** (`util::RefineRelativePose`):
+  - Levenberg-Marquardt on (R, t ∈ S²), 5 DoF.
+  - Minimises the weighted Huber (1 px) Sampson error in pixels.
+  - Numeric Jacobian.
+  - Runs between the cheirality pick and the DLT.
+
+### Ablation (`PoseEstimateDatasetTest.V2MatchScoreAblation`)
+
+The test runs the model once and re-estimates every pair from the recorded
+matches under each config. Rotation error is over all 49 pairs; direction
+error is over the 22 pairs with a ≥ 5 cm GT baseline. Degrees:
+
+| config | rot med | rot p90 | rot mean | dir med | dir p90 | dir mean | dir max |
+|---|---|---|---|---|---|---|---|
+| F pipeline as ported (before) | 0.201 | 0.362 | – | 5.77 | 21.86 | – | 28.37 |
+| E, no floor, unweighted, no refinement | 0.192 | 0.421 | 0.220 | 5.64 | 21.33 | 9.29 | 26.75 |
+| E + floor 0.2 | 0.203 | 0.551 | 0.243 | 5.53 | 23.69 | 9.24 | 30.75 |
+| E + floor 0.5 | 0.192 | 0.376 | 0.236 | 6.63 | 32.27 | 11.33 | 38.38 |
+| E + floor 0.9 | 0.142 | 0.429 | 0.201 | 7.02 | 20.13 | 10.02 | 25.99 |
+| E + weights score | 0.152 | 0.418 | 0.203 | 5.99 | 16.62 | 8.61 | 25.79 |
+| E + weights score² | 0.142 | 0.355 | 0.173 | 6.30 | 15.97 | 8.30 | 25.83 |
+| E + refinement | 0.107 | 0.269 | 0.135 | 4.72 | 10.70 | 5.92 | 15.73 |
+| E + weights score + refinement | 0.082 | 0.212 | 0.122 | 4.76 | 7.88 | 5.21 | 10.42 |
+| E + floor 0.5 + refinement | 0.082 | 0.323 | 0.116 | 4.98 | 6.96 | 5.13 | 9.56 |
+| **E + floor 0.5 + weights score + refinement (defaults)** | **0.082** | **0.215** | **0.106** | **4.63** | **6.98** | **4.94** | **7.65** |
+| E + floor 0.5 + weights score² + refinement | 0.082 | 0.219 | 0.112 | 4.60 | 6.95 | 5.20 | 12.39 |
+
+The full 22-row table is printed by the test. All configs recover 49/49
+poses. The floor at 0.5 drops 5.3% of the 41 412 matches. RANSAC still keeps
+97.9% of the rest.
+
+### Findings
+
+1. **F → E alone is a wash:** 0.192° vs 0.201° rotation, 5.64° vs 5.77°
+   direction median. It is still the right model: it removes the redundant
+   second fit and two spurious DoF. But the error was never in the choice of
+   F vs E.
+2. **Non-linear refinement is the single biggest gain.** It roughly halves
+   rotation error (median 0.19° → 0.11°) and halves p90 direction error
+   (21° → 11°). The linear eight-point fit minimises an algebraic error that
+   over-weights some correspondences. That is exactly finding 4's weakness on
+   long and low-parallax pairs, and it fixes those pairs:
+
+   | pair | frames | dir err, F before | dir err, defaults |
+   |---|---|---|---|
+   | 20 | 703-717 | 28.4 | 4.4 |
+   | 22 | 720-724 | 22.0 | 5.7 |
+   | 31 | 749-752 | 21.9 | 3.4 |
+
+3. **The scores help as weights, not as floors.**
+   - Floors on their own move the numbers around without a trend: p90
+     direction error goes 21 → 24 → 32 → 20 for floors 0 / 0.2 / 0.5 / 0.9.
+     They remove few matches, since LightGlue's scores are mostly near 1, and
+     those matches were mostly inliers anyway.
+   - Score weights help in every setting. With refinement they take p90
+     direction error from 10.7° to 7.9° and max from 15.7° to 10.4°.
+   - With refinement and weights on, the 0.5 floor improves p90, mean and max
+     direction error further. It does so under all three weightings. 0.5 is
+     SuperVINS's value.
+   - `score` and `score²` are within noise of each other. `score` is the
+     default because its worst pair is better (7.65° vs 12.39°).
+4. **Not everything improved.**
+   - Pair 33 (757-763) went from 3.9° (E plain) to 7.0°.
+   - Pair 23 (724-731) went from 5.3° (F) to 7.0°.
+   - The defaults' errors are now concentrated in a 3–8° band instead of a
+     long tail. With 22 scored pairs, differences under ~0.3° in the medians
+     are noise.
+5. **The defaults were chosen on the same 49 pairs they are measured on**, so
+   treat the last row as an upper bound on what to expect elsewhere. The
+   choice was deliberately coarse:
+   - It is the simplest combination that beat the others on every direction
+     summary.
+   - The literature's 0.5 floor was used, not a tuned value.
+   - The inlier gate was left at the conventional 1 px σ.
+
+### Not done
+
+- PROSAC or score-guided sampling. At ≥ 93% inliers RANSAC needs about 5
+  samples, so ordering cannot help.
+- Covariance weighting. The output isn't exported.
+- Use of RaCo rank. There are no tracks yet.
+- An inlier-threshold sweep. It was deliberately left out.

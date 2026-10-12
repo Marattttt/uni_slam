@@ -99,7 +99,10 @@ reads test data from `wslam/tests/data/`. `PoseEstimateDatasetTest` runs v1 and 
 estimation over the V1_01_easy keyframe schedule and scores both against EuRoC ground
 truth (about 4 min in Debug, mostly ORT); it skips without `EUROC_DIR`,
 `WSLAM_SHADER_SRC_DIR` and `WSLAM_ONNX_MODEL`, and `WSLAM_POSE_REPORT_OUT=path.md`
-saves its report. Results and analysis: `benchmarks/POSE_ESTIMATE_V2_NOTE.md`.
+saves its report. `PoseEstimateDatasetTest.V2MatchScoreAblation` runs the model once and
+re-scores the v2 geometry under every score-floor / weighting / refinement config
+(`WSLAM_ABLATION_REPORT_OUT=path.md`). Results and analysis:
+`benchmarks/POSE_ESTIMATE_V2_NOTE.md`.
 `wslam/src/feature_detect/brief_tests.inc` is static BRIEF descriptor data, not a
 test file.
 
@@ -262,14 +265,25 @@ port of v1's pose estimate stage; the model already matched, so there is no matc
   matches (taken, consume-once) into `v2::KeypointCorrespondence`s: LOD-0 source pixels
   (`raco_lightglue::ToSourcePixel` adds the crop offset and removes the model's
   pixel-centre 0.5) plus undistorted rays. Stops the stage on the first frame.
-- `RansacPass` — v1's eight-point F RANSAC + Sampson test, on undistorted pixels. The
-  iteration count follows `log(1 - p) / log(1 - w^8)` for the best inlier ratio `w`
-  (`util::RansacOptions`; `max_iterations` is only a guard); on V101 keyframes it draws
-  ~5 samples.
-- `TriangulatePass` — v1's E re-fit, cheirality pick, DLT and filters.
-The geometry is pure functions in `pose_estimate_v2/util/` (`epipolar_geometry`,
-`camera`). Payload types (`KeypointMatches`, `KeypointRansacResult`,
+- `RansacPass` — drops matches below a LightGlue score floor (`MatchFilterOptions`,
+  0.5 with a top-100 fallback; the model itself already cuts at 0.1), then runs
+  eight-point **essential**-matrix RANSAC on the undistorted rays (the camera is
+  calibrated, so there is no F) with a Sampson test scaled to pixels by the focal
+  length. The iteration count follows `log(1 - p) / log(1 - w^8)` for the best inlier
+  ratio `w` (`util::RansacOptions`; `max_iterations` is only a guard); on V101
+  keyframes it draws ~5 samples. The final least-squares re-fit on the inliers is
+  weighted by the match scores (`ScoreWeighting`).
+- `TriangulatePass` — decomposes RANSAC's E (cheirality pick), refines (R, t) by
+  score-weighted Huber Levenberg-Marquardt on the Sampson error
+  (`util::RefineRelativePose`; this, not the floor or the linear weights, is where most
+  of the accuracy comes from), then DLT and filters.
+The pass bodies are also free functions (`v2::RunRansac`, `v2::RunTriangulation`) so
+`PoseEstimateDatasetTest.V2MatchScoreAblation` can re-score configs on one set of
+recorded model matches. The geometry is pure functions in `pose_estimate_v2/util/`
+(`epipolar_geometry`, `camera`). Payload types (`KeypointMatches`, `KeypointRansacResult`,
 `KeypointTriangulationResult`) are in `models.hpp`, keys `ResourceIdentifier::Keypoint*`.
+The model's keypoints come out of a sorted `TopK`, so a keypoint's index is its RaCo
+rank; nothing uses that yet.
 The GUI is not ported to v2.
 
 ORT interop (`compute/onnx_interop.hpp`) facts that are easy to get wrong:
