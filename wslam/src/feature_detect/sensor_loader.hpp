@@ -36,7 +36,7 @@ class SensorLoaderPass : public compute::Pass {
     // gyro-bias are initialised from a stationary IMU window and the first
     // keyframe's velocity prior assumes ~zero motion. Skipping frames here
     // previously jumped past V1_01_easy's takeoff, forcing a mid-flight
-    // gravity estimate (benchmarks/ACCURACY_ANALYSIS.md R3).
+    // gravity estimate.
     static constexpr uint32_t kInitialFramesToSkip = 0;
 
     AnyBag& storage_;

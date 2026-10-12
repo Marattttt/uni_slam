@@ -49,7 +49,6 @@ benchmarks/.venv/bin/python benchmarks/compare.py \
 
 - Step-by-step re-evaluation checklist (per-experiment dirs, diagnostic
   greps, what "better" looks like): **`HOWTO_REEVALUATE.md`**
-- Current numbers, root-cause analysis, GTSAM primer: **`ACCURACY_ANALYSIS.md`**
 
 ## Format notes
 

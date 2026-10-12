@@ -285,7 +285,7 @@ std::optional<std::string> FactorBuilderPass::execute() {
         // It used to sit behind a 10-keyframe unit-norm warmup ("the IMU
         // prediction is noise-driven early on"), which injected ~1 m
         // steps into a centimetre-scale trajectory and permanently
-        // corrupted the velocity/bias chain (ACCURACY_ANALYSIS.md R2).
+        // corrupted the velocity/bias chain.
         // The warmup's premise no longer holds: the first keyframe is
         // anchored at motion onset with gravity and gyro bias measured
         // from a genuinely stationary window, so pim.predict is metric-

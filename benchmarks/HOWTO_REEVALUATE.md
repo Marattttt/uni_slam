@@ -2,8 +2,7 @@
 
 Checklist for re-running the evaluation after a change to the pipeline
 (mapping stage, front-end, anything). Designed so each experiment leaves a
-named, comparable artifact. Background and how to interpret the numbers:
-`benchmarks/ACCURACY_ANALYSIS.md`.
+named, comparable artifact.
 
 All commands run **from the repo root**. Environment variables are passed
 inline on each command (no `source .env` needed — the values below are the
@@ -100,11 +99,11 @@ want the `.tum` files.
 
 For each experiment, note (a table in your lab notes / the paper is enough):
 
-| number | command that prints it | current value (2026-06-04) |
-|---|---|---|
-| APE RMSE, Sim(3) | step 2 output (`evo_ape ... -as`) | 1.62 m |
-| **Umeyama scale** | `evo_ape tum gt.tum wslam.tum -as -v` → "Scale correction" | **0.18** |
-| RPE RMSE per 1 m | step 2 output (`evo_rpe ... --delta 1 --delta_unit m`) | 2.76 m |
+| number | command that prints it |
+|---|---|
+| APE RMSE, Sim(3) | step 2 output (`evo_ape ... -as`) |
+| **Umeyama scale** | `evo_ape tum gt.tum wslam.tum -as -v` → "Scale correction" |
+| RPE RMSE per 1 m | step 2 output (`evo_rpe ... --delta 1 --delta_unit m`) |
 
 Expected progression as fixes land — check them **in this order**:
 
@@ -124,17 +123,17 @@ norms ~1, pose count ≈ keyframe count from the run log.
 EUROC_DIR=$EUROC WSLAM_SHADER_SRC_DIR=$SHADERS SPDLOG_LEVEL=debug \
     ./build/pc_wslam --max-iters=582 > /tmp/wslam_debug_run.log 2>&1
 
-# R1 — track association health (0.10 before the keyframe-to-keyframe fix;
+# Track association health (0.10 before the keyframe-to-keyframe fix;
 # higher is better — every re-observation lengthens a smart-factor track):
 grep -o "Smart factors: [0-9]* new, [0-9]* re-observed" /tmp/wslam_debug_run.log \
   | awk '{new+=$3; reob+=$5} END {print "re-observation rate:", reob/(new+reob)}'
 
-# R2 — IMU-predicted step sanity (was spiking to ~17 m with the unit-norm
+# IMU-predicted step sanity (was spiking to ~17 m with the unit-norm
 # warmup; want max < ~0.5 m for V101's gentle motion):
 grep -o "metric_step=[0-9.]*" /tmp/wslam_debug_run.log \
   | sort -t= -k2 -n | tail -3
 
-# R3 — gravity init: |g| ≈ 9.81, stationary_window_found=true, window
+# Gravity init: |g| ≈ 9.81, stationary_window_found=true, window
 # timestamps inside the grounded lead-in, and gyro_bias ≈ V101's true bias
 # (-0.002, 0.021, 0.078) rad/s:
 grep "Initialised gravity" /tmp/wslam_debug_run.log

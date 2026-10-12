@@ -132,8 +132,8 @@ Median / p90 / max, degrees:
    ignored `Feature::lod`, so every feature from pyramid level ≥ 1 reached the
    triangulation's essential-matrix fit with coordinates shrunk by 1.2^lod.
    They had passed RANSAC, which scales correctly. Fixing it took v1 from 1.89°
-   to 0.83–0.92° median rotation error. v1 mapping-stage accuracy numbers
-   (`ACCURACY_ANALYSIS.md`) predate the fix and should be re-measured.
+   to 0.83–0.92° median rotation error. v1 mapping-stage accuracy has not
+   been re-measured since the fix.
 3. **v1's remaining error has visible sources:**
    - features above LOD 0 have integer coordinates on their own level, so they
      are quantised to 1.2^lod px at LOD 0

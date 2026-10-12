@@ -78,10 +78,10 @@ class Isam2UpdatePass : public compute::Pass {
         // factor per keyframe edge vs one smart factor per landmark — ~87k
         // landmarks vs 243 IMU edges on full V101). A free global solve lets
         // the visual factors collectively rescale the map, collapsing metric
-        // scale (measured Umeyama scale 1.13 -> 0.001, APE 0.33 m -> 1.42 m
-        // on full V101). The sequential incremental estimate resists this
-        // because each keyframe is anchored step-by-step, so it already holds
-        // scale and accuracy without a batch pass. Left as an opt-in
+        // scale (measured Umeyama scale 1.13 -> 0.001 on full V101). The
+        // sequential incremental estimate resists this because each keyframe
+        // is anchored step-by-step, so it already holds scale and accuracy
+        // without a batch pass. Left as an opt-in
         // (WSLAM_FINAL_BATCH=1) for setups that anchor scale independently.
         // On failure the live estimate is exported instead (map never lost).
         bool final_batch_optimize = false;

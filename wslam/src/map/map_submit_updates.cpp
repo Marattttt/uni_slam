@@ -249,9 +249,9 @@ std::optional<std::string> SubmitUpdatesPass::flush() {
     // NOTE: a final global batch re-optimisation is deliberately NOT run. On
     // monocular-inertial sequences the scale-free smart-projection factors
     // vastly outnumber the scale-bearing IMU factors, so a free global solve
-    // collapses metric scale (measured Umeyama scale 1.13 -> 0.001 on V101, see
-    // benchmarks/ACCURACY_ANALYSIS.md). The sequential incremental estimate
-    // resists this because each keyframe is anchored step-by-step.
+    // collapses metric scale (measured Umeyama scale 1.13 -> 0.001 on V101).
+    // The sequential incremental estimate resists this because each keyframe
+    // is anchored step-by-step.
     spdlog::info(LOG_ID " flush(): publishing final snapshot");
     publishSnapshot();
     return {};

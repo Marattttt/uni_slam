@@ -115,6 +115,6 @@ python -m presenter <map>.ply        # or use present_and_run.sh
 
 `benchmarks/` evaluates accuracy against ORB-SLAM3 and EuRoC ground truth using
 the [evo](https://github.com/MichaelGrupp/evo) toolset. ORB-SLAM3 is vendored as
-a git subtree. See `benchmarks/ACCURACY_ANALYSIS.md` for current numbers and
-`benchmarks/HOWTO_REEVALUATE.md` for the re-evaluation checklist.
+a git subtree. See `benchmarks/HOWTO_REEVALUATE.md` for the re-evaluation
+checklist.
 
