@@ -10,6 +10,7 @@
 #include "common.hpp"
 #include "map/map_helpers_lods.hpp"
 #include "models.hpp"
+#include "ransac.hpp"
 #include "util/camera.hpp"
 #include "util/epipolar_geometry.hpp"
 
@@ -25,9 +26,10 @@ std::string v2::TriangulatePass::getId() const { return LOG_ID; }
 std::optional<std::string> v2::TriangulatePass::initialize() {
     spdlog::info(LOG_ID
                  " Initializing (max_reproj={:.2f} px, depth=[{:.3g},{:.3g}], "
-                 "min_inliers={})",
+                 "min_inliers={}, refine={}, weighting={})",
                  opts_.max_reprojection_px, opts_.min_depth, opts_.max_depth,
-                 opts_.min_inliers);
+                 opts_.min_inliers, opts_.refine,
+                 static_cast<int>(opts_.weighting));
 
     WSLAM_ASSERT(opts_.min_inliers >= util::kEightPointSampleSize,
                  "min_inliers {} is below the eight-point sample size",
@@ -42,34 +44,14 @@ std::optional<std::string> v2::TriangulatePass::initialize() {
     return std::nullopt;
 }
 
-std::optional<std::string> v2::TriangulatePass::execute() {
-    spdlog::info(LOG_ID " Executing");
-
-    WSLAM_ASSERT(camera_.has_value(), "executing before initialize()");
-
-    // The RANSAC pass publishes a result every frame it runs
-    const auto ransac_ptr = storage_.getPtr<KeypointRansacResult>(
-        ResourceIdentifier::KeypointRansacName);
-    WSLAM_ASSERT(ransac_ptr.has_value(), "no RANSAC result in storage");
-    const KeypointRansacResult& ransac = *ransac_ptr.value();
-
+v2::KeypointTriangulationResult v2::RunTriangulation(
+    const KeypointRansacResult& ransac, const data::CamSensorParams& camera,
+    const TriangulatePass::Opts& opts) {
     KeypointTriangulationResult result;
     result.stats.input_matches = ransac.inliers.size();
 
-    const auto publish = [&] {
-        storage_.set(ResourceIdentifier::KeypointTriangulationName,
-                     std::move(result));
-        return std::nullopt;
-    };
-
-    if (!ransac.stats.model_found
-        || ransac.inliers.size() < opts_.min_inliers) {
-        spdlog::warn(LOG_ID
-                     " RANSAC unusable (model_found={}, inliers={}, min={}); "
-                     "writing an empty triangulation",
-                     ransac.stats.model_found, ransac.inliers.size(),
-                     opts_.min_inliers);
-        return publish();
+    if (!ransac.stats.model_found || ransac.inliers.size() < opts.min_inliers) {
+        return result;
     }
 
     std::vector<Eigen::Vector2d> rays_prev;
@@ -81,13 +63,24 @@ std::optional<std::string> v2::TriangulatePass::execute() {
         rays_curr.push_back(inlier.curr_ray);
     }
 
-    const auto recovery = util::RecoverRelativePose(rays_prev, rays_curr);
+    auto recovery = util::RecoverRelativePose(ransac.essential_matrix,
+                                              rays_prev, rays_curr);
     if (!recovery) {
-        spdlog::warn(LOG_ID
-                     " No pose: the essential fit failed or no candidate puts "
-                     "a point in front of both cameras; writing an empty "
-                     "triangulation");
-        return publish();
+        return result;
+    }
+
+    if (opts.refine) {
+        const util::RefineOutcome refined = util::RefineRelativePose(
+            recovery->pose, rays_prev, rays_curr,
+            MatchWeights(ransac.inliers, opts.weighting), FocalLengthPx(camera),
+            opts.refine_options);
+        util::PoseRecovery refined_recovery
+            = util::TriangulateAll(refined.pose, rays_prev, rays_curr);
+        // The refinement only lowers the epipolar cost; a step that moved the
+        // pose onto a cheirality flip would show up as points behind a camera
+        if (refined_recovery.in_front >= recovery->in_front) {
+            recovery = std::move(refined_recovery);
+        }
     }
 
     WSLAM_ASSERT(recovery->points_prev.size() == ransac.inliers.size(),
@@ -101,7 +94,7 @@ std::optional<std::string> v2::TriangulatePass::execute() {
     result.stats.rotation_angle_rad = map::util::ComputeRotationAngle(pose.r);
 
     const auto in_depth_range = [&](double depth) {
-        return depth >= opts_.min_depth && depth <= opts_.max_depth;
+        return depth >= opts.min_depth && depth <= opts.max_depth;
     };
 
     double error_sum = 0.0;
@@ -122,12 +115,12 @@ std::optional<std::string> v2::TriangulatePass::execute() {
         const KeypointCorrespondence& inlier = ransac.inliers[i];
         const double error
             = 0.5
-              * ((util::ProjectToPixel(*point_prev, *camera_) - inlier.prev_px)
+              * ((util::ProjectToPixel(*point_prev, camera) - inlier.prev_px)
                      .norm()
-                 + (util::ProjectToPixel(point_curr, *camera_) - inlier.curr_px)
+                 + (util::ProjectToPixel(point_curr, camera) - inlier.curr_px)
                        .norm());
         // Also rejects NaN
-        if (!(error <= opts_.max_reprojection_px)) {
+        if (!(error <= opts.max_reprojection_px)) {
             continue;
         }
 
@@ -145,15 +138,47 @@ std::optional<std::string> v2::TriangulatePass::execute() {
         result.stats.mean_reprojection_error_px
             = error_sum / static_cast<double>(result.stats.landmark_count);
     }
+    return result;
+}
 
-    constexpr double kRadToDeg = 180.0 / std::numbers::pi;
-    spdlog::info(LOG_ID
-                 " Done: {} landmarks (of {} inliers, {} cheirality passes), "
-                 "mean reproj {:.3f} px, rotation {:.3f} deg",
-                 result.stats.landmark_count, result.stats.input_matches,
-                 result.stats.cheirality_passes,
-                 result.stats.mean_reprojection_error_px,
-                 result.stats.rotation_angle_rad * kRadToDeg);
+std::optional<std::string> v2::TriangulatePass::execute() {
+    spdlog::info(LOG_ID " Executing");
 
-    return publish();
+    WSLAM_ASSERT(camera_.has_value(), "executing before initialize()");
+
+    // The RANSAC pass publishes a result every frame it runs
+    const auto ransac_ptr = storage_.getPtr<KeypointRansacResult>(
+        ResourceIdentifier::KeypointRansacName);
+    WSLAM_ASSERT(ransac_ptr.has_value(), "no RANSAC result in storage");
+    const KeypointRansacResult& ransac = *ransac_ptr.value();
+
+    KeypointTriangulationResult result
+        = RunTriangulation(ransac, *camera_, opts_);
+
+    if (!ransac.stats.model_found
+        || ransac.inliers.size() < opts_.min_inliers) {
+        spdlog::warn(LOG_ID
+                     " RANSAC unusable (model_found={}, inliers={}, min={}); "
+                     "writing an empty triangulation",
+                     ransac.stats.model_found, ransac.inliers.size(),
+                     opts_.min_inliers);
+    } else if (result.stats.cheirality_passes == 0) {
+        spdlog::warn(LOG_ID
+                     " No pose: no decomposition of the essential matrix puts "
+                     "a point in front of both cameras; writing an empty "
+                     "triangulation");
+    } else {
+        constexpr double kRadToDeg = 180.0 / std::numbers::pi;
+        spdlog::info(LOG_ID
+                     " Done: {} landmarks (of {} inliers, {} cheirality "
+                     "passes), mean reproj {:.3f} px, rotation {:.3f} deg",
+                     result.stats.landmark_count, result.stats.input_matches,
+                     result.stats.cheirality_passes,
+                     result.stats.mean_reprojection_error_px,
+                     result.stats.rotation_angle_rad * kRadToDeg);
+    }
+
+    storage_.set(ResourceIdentifier::KeypointTriangulationName,
+                 std::move(result));
+    return std::nullopt;
 }

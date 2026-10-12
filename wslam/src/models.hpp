@@ -296,8 +296,11 @@ using KeypointMatches = std::vector<KeypointCorrespondence>;
 
 struct KeypointRansacResult {
     KeypointMatches inliers;
-    // Fitted on undistorted pixel coordinates (K * ray)
-    Eigen::Matrix3d fundamental_matrix = Eigen::Matrix3d::Zero();
+    // Fitted on the inliers' rays: curr_ray^T * E * prev_ray = 0
+    Eigen::Matrix3d essential_matrix = Eigen::Matrix3d::Zero();
+    // stats.total_matches are the model's matches; these passed the score
+    // filter and went into RANSAC
+    size_t filtered_matches = 0;
     RansacStats stats;
     // Samples the confidence target needed at the final inlier ratio, and
     // whether that many were drawn before the iteration guard

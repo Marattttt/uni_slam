@@ -22,6 +22,8 @@ namespace {
 constexpr double kDegToRad = std::numbers::pi / 180.0;
 constexpr double kImageWidth = 752.0;
 constexpr double kImageHeight = 480.0;
+// Mean focal length of EurocCamera()
+constexpr double kFocalPx = 0.5 * (458.654 + 457.296);
 
 // EuRoC cam0
 data::CamSensorParams EurocCamera() {
@@ -151,29 +153,75 @@ Scene MakeScene(const SceneOptions& options) {
 
 }  // namespace
 
-TEST(EpipolarGeometryTest, FundamentalMatrixFitsNoiseFreeCorrespondences) {
+TEST(EpipolarGeometryTest, EssentialMatrixFitsNoiseFreeCorrespondences) {
     const Scene scene = MakeScene({.points = 50});
 
-    for (const size_t count : {size_t{8}, scene.prev_px.size()}) {
-        const auto prev = std::span{scene.prev_px}.first(count);
-        const auto curr = std::span{scene.curr_px}.first(count);
+    for (const size_t count : {size_t{8}, scene.prev_ray.size()}) {
+        const auto prev = std::span{scene.prev_ray}.first(count);
+        const auto curr = std::span{scene.curr_ray}.first(count);
 
-        const auto f = util::FitFundamentalMatrix(prev, curr);
-        ASSERT_TRUE(f.has_value()) << count << " points";
+        const auto e = util::FitEssentialMatrix(prev, curr);
+        ASSERT_TRUE(e.has_value()) << count << " points";
 
         const Eigen::Vector3d singular_values
-            = Eigen::JacobiSVD<Eigen::Matrix3d>(*f).singularValues();
+            = Eigen::JacobiSVD<Eigen::Matrix3d>(*e).singularValues();
+        EXPECT_NEAR(singular_values(0), singular_values(1), 1e-9)
+            << "E must have two equal singular values";
         EXPECT_LT(singular_values(2), 1e-9 * singular_values(0))
-            << "F must have rank 2";
+            << "E must have rank 2";
 
         // Every correspondence of the scene, not only the fitted ones
-        for (size_t i = 0; i < scene.prev_px.size(); ++i) {
+        for (size_t i = 0; i < scene.prev_ray.size(); ++i) {
             EXPECT_LT(
-                util::SampsonDistance(*f, scene.prev_px[i], scene.curr_px[i]),
-                1e-8)
+                util::SampsonDistance(*e, scene.prev_ray[i], scene.curr_ray[i]),
+                1e-14)
                 << "point " << i << " fitted on " << count;
         }
     }
+}
+
+TEST(EpipolarGeometryTest, UniformWeightsLeaveTheFitUnchanged) {
+    const Scene scene = MakeScene({.points = 100, .noise_px = 0.5});
+
+    const auto unweighted
+        = util::FitEssentialMatrix(scene.prev_ray, scene.curr_ray);
+    const std::vector<double> weights(scene.prev_ray.size(), 0.7);
+    const auto weighted
+        = util::FitEssentialMatrix(scene.prev_ray, scene.curr_ray, weights);
+    ASSERT_TRUE(unweighted.has_value() && weighted.has_value());
+
+    // E is defined up to sign
+    const double sign
+        = unweighted->cwiseProduct(*weighted).sum() < 0.0 ? -1.0 : 1.0;
+    EXPECT_LT((*unweighted - sign * *weighted).norm(), 1e-9);
+}
+
+TEST(EpipolarGeometryTest, DownWeightingNoisyCorrespondencesHelps) {
+    // A third of the correspondences are much noisier than the rest; their
+    // low weight should keep them from dominating the fit
+    const Scene clean = MakeScene({.points = 300, .noise_px = 0.3});
+    const Scene noisy = MakeScene({.points = 300, .noise_px = 4.0});
+
+    std::vector<Eigen::Vector2d> prev;
+    std::vector<Eigen::Vector2d> curr;
+    std::vector<double> weights;
+    for (size_t i = 0; i < clean.prev_ray.size(); ++i) {
+        const bool is_noisy = i % 3 == 0;
+        const Scene& source = is_noisy ? noisy : clean;
+        prev.push_back(source.prev_ray[i]);
+        curr.push_back(source.curr_ray[i]);
+        weights.push_back(is_noisy ? 0.1 : 1.0);
+    }
+
+    const auto pose_error = [&](std::span<const double> fit_weights) {
+        const auto e = util::FitEssentialMatrix(prev, curr, fit_weights);
+        EXPECT_TRUE(e.has_value());
+        const auto recovery = util::RecoverRelativePose(*e, prev, curr);
+        EXPECT_TRUE(recovery.has_value());
+        return DirectionErrorDeg(recovery->pose.t, clean.truth.t);
+    };
+
+    EXPECT_LT(pose_error(weights), 0.5 * pose_error({}));
 }
 
 TEST(EpipolarGeometryTest, RequiredIterationsFollowTheInlierRatio) {
@@ -210,8 +258,9 @@ TEST(EpipolarGeometryTest, RansacSeparatesInliersFromOutliers) {
                                    .outlier_ratio = 0.25});
 
     std::mt19937_64 rng = FixedRng();
-    const util::RansacOutcome outcome = util::EstimateFundamentalRansac(
-        scene.prev_px, scene.curr_px, util::RansacOptions{}, rng);
+    const util::RansacOutcome outcome
+        = util::EstimateEssentialRansac(scene.prev_ray, scene.curr_ray, {},
+                                        kFocalPx, util::RansacOptions{}, rng);
     ASSERT_TRUE(outcome.model_found);
     EXPECT_TRUE(outcome.confidence_reached);
 
@@ -236,8 +285,9 @@ TEST(EpipolarGeometryTest, RansacIterationCountAdaptsToTheInlierRatio) {
                                        .noise_px = noise_px,
                                        .outlier_ratio = outlier_ratio});
         std::mt19937_64 rng = FixedRng();
-        return util::EstimateFundamentalRansac(scene.prev_px, scene.curr_px,
-                                               util::RansacOptions{}, rng);
+        return util::EstimateEssentialRansac(scene.prev_ray, scene.curr_ray, {},
+                                             kFocalPx, util::RansacOptions{},
+                                             rng);
     };
 
     // Noise-free and no outliers: the first sample explains every point
@@ -271,9 +321,9 @@ TEST(EpipolarGeometryTest, RansacReportsTheIterationGuard) {
         = MakeScene({.points = 300, .noise_px = 0.5, .outlier_ratio = 0.6});
 
     std::mt19937_64 rng = FixedRng();
-    const util::RansacOutcome outcome = util::EstimateFundamentalRansac(
-        scene.prev_px, scene.curr_px, util::RansacOptions{.max_iterations = 50},
-        rng);
+    const util::RansacOutcome outcome = util::EstimateEssentialRansac(
+        scene.prev_ray, scene.curr_ray, {}, kFocalPx,
+        util::RansacOptions{.max_iterations = 50}, rng);
 
     EXPECT_EQ(outcome.iterations, 50U);
     if (outcome.model_found) {
@@ -286,8 +336,9 @@ TEST(EpipolarGeometryTest, RansacNeedsEnoughCorrespondences) {
     const Scene scene = MakeScene({.points = 7});
 
     std::mt19937_64 rng = FixedRng();
-    const util::RansacOutcome outcome = util::EstimateFundamentalRansac(
-        scene.prev_px, scene.curr_px, util::RansacOptions{}, rng);
+    const util::RansacOutcome outcome
+        = util::EstimateEssentialRansac(scene.prev_ray, scene.curr_ray, {},
+                                        kFocalPx, util::RansacOptions{}, rng);
 
     EXPECT_FALSE(outcome.model_found);
     EXPECT_EQ(outcome.iterations, 0U);
@@ -328,8 +379,10 @@ TEST(EpipolarGeometryTest, TriangulatesNoiseFreePointsExactly) {
 TEST(EpipolarGeometryTest, RecoversTheNoiseFreePose) {
     const Scene scene = MakeScene({.points = 100});
 
+    const auto e = util::FitEssentialMatrix(scene.prev_ray, scene.curr_ray);
+    ASSERT_TRUE(e.has_value());
     const auto recovery
-        = util::RecoverRelativePose(scene.prev_ray, scene.curr_ray);
+        = util::RecoverRelativePose(*e, scene.prev_ray, scene.curr_ray);
     ASSERT_TRUE(recovery.has_value());
 
     EXPECT_LT(RotationErrorDeg(recovery->pose.r, scene.truth.r), 1e-6);
@@ -349,12 +402,67 @@ TEST(EpipolarGeometryTest, RecoversTheNoiseFreePose) {
 TEST(EpipolarGeometryTest, RecoversTheNoisyPose) {
     const Scene scene = MakeScene({.points = 300, .noise_px = 0.5});
 
+    const auto e = util::FitEssentialMatrix(scene.prev_ray, scene.curr_ray);
+    ASSERT_TRUE(e.has_value());
     const auto recovery
-        = util::RecoverRelativePose(scene.prev_ray, scene.curr_ray);
+        = util::RecoverRelativePose(*e, scene.prev_ray, scene.curr_ray);
     ASSERT_TRUE(recovery.has_value());
 
     EXPECT_LT(RotationErrorDeg(recovery->pose.r, scene.truth.r), 0.2);
     EXPECT_LT(DirectionErrorDeg(recovery->pose.t, scene.truth.t), 2.0);
+}
+
+TEST(EpipolarGeometryTest, RefinementKeepsAnExactPose) {
+    const Scene scene = MakeScene({.points = 100});
+    const util::RelativePose truth{.r = scene.truth.r,
+                                   .t = scene.truth.t.normalized()};
+
+    const util::RefineOutcome outcome = util::RefineRelativePose(
+        truth, scene.prev_ray, scene.curr_ray, {}, kFocalPx);
+
+    EXPECT_LT(outcome.initial_cost, 1e-12);
+    EXPECT_LE(outcome.final_cost, outcome.initial_cost);
+    EXPECT_LT(RotationErrorDeg(outcome.pose.r, truth.r), 1e-6);
+    EXPECT_LT(DirectionErrorDeg(outcome.pose.t, truth.t), 1e-6);
+}
+
+TEST(EpipolarGeometryTest, RefinementConvergesFromAPerturbedPose) {
+    const Scene scene = MakeScene({.points = 300});
+    const util::RelativePose start{
+        .r = Eigen::AngleAxisd(1.0 * kDegToRad, Eigen::Vector3d::UnitY())
+                 .toRotationMatrix()
+             * scene.truth.r,
+        .t = (scene.truth.t.normalized() + Eigen::Vector3d(0.0, 0.08, 0.0))
+                 .normalized(),
+    };
+
+    const util::RefineOutcome outcome = util::RefineRelativePose(
+        start, scene.prev_ray, scene.curr_ray, {}, kFocalPx);
+
+    EXPECT_LT(outcome.final_cost, 1e-6 * outcome.initial_cost);
+    EXPECT_LT(RotationErrorDeg(outcome.pose.r, scene.truth.r), 1e-4);
+    EXPECT_LT(DirectionErrorDeg(outcome.pose.t, scene.truth.t), 1e-3);
+}
+
+TEST(EpipolarGeometryTest, RefinementLowersTheNoisyCost) {
+    const Scene scene = MakeScene({.points = 300, .noise_px = 1.0});
+
+    const auto e = util::FitEssentialMatrix(scene.prev_ray, scene.curr_ray);
+    ASSERT_TRUE(e.has_value());
+    const auto recovery
+        = util::RecoverRelativePose(*e, scene.prev_ray, scene.curr_ray);
+    ASSERT_TRUE(recovery.has_value());
+
+    const util::RefineOutcome outcome = util::RefineRelativePose(
+        recovery->pose, scene.prev_ray, scene.curr_ray, {}, kFocalPx);
+
+    EXPECT_GT(outcome.iterations, 0U);
+    EXPECT_LT(outcome.final_cost, outcome.initial_cost);
+    EXPECT_NEAR(outcome.pose.r.determinant(), 1.0, 1e-9);
+    EXPECT_NEAR(outcome.pose.t.norm(), 1.0, 1e-9);
+    // Still the right pose, not a drift away from it
+    EXPECT_LT(RotationErrorDeg(outcome.pose.r, scene.truth.r), 0.2);
+    EXPECT_LT(DirectionErrorDeg(outcome.pose.t, scene.truth.t), 2.0);
 }
 
 TEST(CameraModelTest, UndistortionInvertsProjection) {

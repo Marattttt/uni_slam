@@ -26,6 +26,7 @@ add_library(wslam_app
     src/pose_estimate_cpu/triangulate_cpu.cpp
 
     src/pose_estimate_v2/load_matches.cpp
+    src/pose_estimate_v2/match_scores.cpp
     src/pose_estimate_v2/pose_estimate.cpp
     src/pose_estimate_v2/ransac.cpp
     src/pose_estimate_v2/triangulate.cpp

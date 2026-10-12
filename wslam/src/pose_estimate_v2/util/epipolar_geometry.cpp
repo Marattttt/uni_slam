@@ -1,11 +1,13 @@
 #include "epipolar_geometry.hpp"
 
 #include <Eigen/Dense>
+#include <Eigen/Geometry>
 #include <Eigen/SVD>
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <utility>
 
 #include "assert.hpp"
 
@@ -18,17 +20,22 @@ Eigen::Vector2d Transform(const Eigen::Matrix3d& t, const Eigen::Vector2d& p) {
 
 // Least-squares solution M of curr^T * M * prev = 0 after applying the
 // normalising transforms, as the right singular vector of the stacked
-// constraints with the smallest singular value. Returned in normalised space
+// constraints with the smallest singular value. Each constraint row is
+// scaled by its weight when `weights` is not empty. Returned in normalised
+// space
 Eigen::Matrix3d SolveEpipolarConstraint(std::span<const Eigen::Vector2d> prev,
                                         std::span<const Eigen::Vector2d> curr,
+                                        std::span<const double> weights,
                                         const Eigen::Matrix3d& t_prev,
                                         const Eigen::Matrix3d& t_curr) {
     Eigen::MatrixXd a(static_cast<Eigen::Index>(prev.size()), 9);
     for (size_t i = 0; i < prev.size(); ++i) {
         const Eigen::Vector2d p = Transform(t_prev, prev[i]);
         const Eigen::Vector2d c = Transform(t_curr, curr[i]);
+        const double w = weights.empty() ? 1.0 : weights[i];
         a.row(static_cast<Eigen::Index>(i)) << c.x() * p.x(), c.x() * p.y(),
             c.x(), c.y() * p.x(), c.y() * p.y(), c.y(), p.x(), p.y(), 1.0;
+        a.row(static_cast<Eigen::Index>(i)) *= w;
     }
 
     // Only V is needed; U would be an N x N matrix
@@ -48,22 +55,25 @@ Eigen::Matrix3d SolveEpipolarConstraint(std::span<const Eigen::Vector2d> prev,
 }
 
 void CheckCorrespondences(std::span<const Eigen::Vector2d> prev,
-                          std::span<const Eigen::Vector2d> curr) {
+                          std::span<const Eigen::Vector2d> curr,
+                          std::span<const double> weights) {
     WSLAM_ASSERT(prev.size() == curr.size(), "{} previous vs {} current points",
                  prev.size(), curr.size());
-    WSLAM_ASSERT(prev.size() >= kEightPointSampleSize,
-                 "{} correspondences, the eight-point fit needs {}",
-                 prev.size(), kEightPointSampleSize);
+    WSLAM_ASSERT(weights.empty() || weights.size() == prev.size(),
+                 "{} weights for {} correspondences", weights.size(),
+                 prev.size());
 }
 
-std::vector<size_t> ClassifyInliers(const Eigen::Matrix3d& f,
+std::vector<size_t> ClassifyInliers(const Eigen::Matrix3d& e,
                                     std::span<const Eigen::Vector2d> prev,
                                     std::span<const Eigen::Vector2d> curr,
-                                    double threshold) {
+                                    double focal_px, double threshold_px2) {
+    // Compare in ray units rather than scaling every distance
+    const double threshold = threshold_px2 / (focal_px * focal_px);
     std::vector<size_t> inliers;
     inliers.reserve(prev.size());
     for (size_t i = 0; i < prev.size(); ++i) {
-        if (SampsonDistance(f, prev[i], curr[i]) < threshold) {
+        if (SampsonDistance(e, prev[i], curr[i]) < threshold) {
             inliers.push_back(i);
         }
     }
@@ -89,17 +99,202 @@ std::array<size_t, kEightPointSampleSize> SampleDistinct(size_t n,
     return sample;
 }
 
-std::optional<Eigen::Matrix3d> FitSample(std::span<const Eigen::Vector2d> prev,
+// Least-squares essential matrix on the correspondences at `indices`
+std::optional<Eigen::Matrix3d> FitSubset(std::span<const Eigen::Vector2d> prev,
                                          std::span<const Eigen::Vector2d> curr,
+                                         std::span<const double> weights,
                                          std::span<const size_t> indices) {
-    std::array<Eigen::Vector2d, kEightPointSampleSize> sample_prev;
-    std::array<Eigen::Vector2d, kEightPointSampleSize> sample_curr;
-    for (size_t i = 0; i < indices.size(); ++i) {
-        sample_prev.at(i) = prev[indices[i]];
-        sample_curr.at(i) = curr[indices[i]];
+    std::vector<Eigen::Vector2d> subset_prev;
+    std::vector<Eigen::Vector2d> subset_curr;
+    std::vector<double> subset_weights;
+    subset_prev.reserve(indices.size());
+    subset_curr.reserve(indices.size());
+    subset_weights.reserve(weights.empty() ? 0 : indices.size());
+    for (const size_t index : indices) {
+        subset_prev.push_back(prev[index]);
+        subset_curr.push_back(curr[index]);
+        if (!weights.empty()) {
+            subset_weights.push_back(weights[index]);
+        }
     }
-    return FitFundamentalMatrix(sample_prev, sample_curr);
+    return FitEssentialMatrix(subset_prev, subset_curr, subset_weights);
 }
+
+// Least-squares re-fit on the inliers, re-classified by `classify` so the
+// threshold applies to the refined model, for up to `rounds` rounds while
+// the inlier set changes. A re-fit whose inliers shrink was bent by a bad
+// point; the fit on the previous set is kept then. On return `e` is the fit
+// on `inliers` (or left as is when no fit succeeds)
+void RefitOnInliers(std::span<const Eigen::Vector2d> prev,
+                    std::span<const Eigen::Vector2d> curr,
+                    std::span<const double> weights, const auto& classify,
+                    uint32_t rounds, std::vector<size_t>& inliers,
+                    Eigen::Matrix3d& e) {
+    const auto refit = FitSubset(prev, curr, weights, inliers);
+    if (!refit) {
+        return;
+    }
+    e = *refit;
+
+    for (uint32_t round = 0; round < rounds; ++round) {
+        auto candidates = classify(e);
+        if (candidates.size() < inliers.size() || candidates == inliers) {
+            return;
+        }
+        const auto next = FitSubset(prev, curr, weights, candidates);
+        if (!next) {
+            return;
+        }
+        inliers = std::move(candidates);
+        e = *next;
+    }
+}
+
+Eigen::Matrix3d Skew(const Eigen::Vector3d& v) {
+    Eigen::Matrix3d s;
+    s << 0.0, -v.z(), v.y(), v.z(), 0.0, -v.x(), -v.y(), v.x(), 0.0;
+    return s;
+}
+
+// Signed Sampson error of one correspondence, in ray units: the algebraic
+// residual over the norm of its gradient. NaN when undefined
+double SignedSampsonError(const Eigen::Matrix3d& e, const Eigen::Vector2d& prev,
+                          const Eigen::Vector2d& curr) {
+    const Eigen::Vector3d xp = prev.homogeneous();
+    const Eigen::Vector3d xc = curr.homogeneous();
+    const Eigen::Vector3d e_xp = e * xp;
+    const Eigen::Vector3d et_xc = e.transpose() * xc;
+    const double gradient_norm2
+        = e_xp.head<2>().squaredNorm() + et_xc.head<2>().squaredNorm();
+    if (gradient_norm2 < 1e-24) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return xc.dot(e_xp) / std::sqrt(gradient_norm2);
+}
+
+// Pose on the 5-DoF manifold around a base pose: rotation increment
+// exp(omega) applied on the left, translation moved within the tangent plane
+// of the unit sphere at the base translation
+struct PoseChart {
+    RelativePose base;
+    Eigen::Vector3d tangent_a;
+    Eigen::Vector3d tangent_b;
+
+    explicit PoseChart(RelativePose pose) : base(std::move(pose)) {
+        base.t.normalize();
+        // Any vector not parallel to t spans the tangent plane with it
+        const Eigen::Vector3d helper = std::abs(base.t.x()) < 0.9
+                                           ? Eigen::Vector3d::UnitX()
+                                           : Eigen::Vector3d::UnitY();
+        tangent_a = base.t.cross(helper).normalized();
+        tangent_b = base.t.cross(tangent_a);
+    }
+
+    [[nodiscard]] RelativePose apply(
+        const Eigen::Matrix<double, 5, 1>& delta) const {
+        const Eigen::Vector3d omega = delta.head<3>();
+        const double angle = omega.norm();
+        const Eigen::Matrix3d rotation
+            = angle > 0.0
+                  ? Eigen::AngleAxisd(angle, omega / angle).toRotationMatrix()
+                  : Eigen::Matrix3d::Identity();
+        return RelativePose{
+            .r = rotation * base.r,
+            .t = (base.t + delta(3) * tangent_a + delta(4) * tangent_b)
+                     .normalized(),
+        };
+    }
+};
+
+double HuberCost(double residual, double delta) {
+    const double magnitude = std::abs(residual);
+    return magnitude <= delta ? residual * residual
+                              : 2.0 * delta * magnitude - delta * delta;
+}
+
+// IRLS weight that turns the squared residual into the Huber cost
+double HuberWeight(double residual, double delta) {
+    const double magnitude = std::abs(residual);
+    return magnitude <= delta ? 1.0 : delta / magnitude;
+}
+
+using Vector5d = Eigen::Matrix<double, 5, 1>;
+using Matrix5d = Eigen::Matrix<double, 5, 5>;
+
+// Robust weighted Sampson cost of a pose over fixed correspondences, the
+// objective of RefineRelativePose
+class SampsonProblem {
+   public:
+    SampsonProblem(std::span<const Eigen::Vector2d> rays_prev,
+                   std::span<const Eigen::Vector2d> rays_curr,
+                   std::span<const double> weights, double focal_px,
+                   double huber_px)
+        : rays_prev_(rays_prev),
+          rays_curr_(rays_curr),
+          weights_(weights),
+          focal_px_(focal_px),
+          huber_px_(huber_px) {}
+
+    [[nodiscard]] Eigen::Index size() const {
+        return static_cast<Eigen::Index>(rays_prev_.size());
+    }
+
+    // Signed Sampson errors in pixels; undefined ones contribute nothing
+    [[nodiscard]] Eigen::VectorXd residuals(const RelativePose& pose) const {
+        const Eigen::Matrix3d e = EssentialFromPose(pose);
+        Eigen::VectorXd out(size());
+        for (Eigen::Index i = 0; i < size(); ++i) {
+            const auto index = static_cast<size_t>(i);
+            const double error
+                = SignedSampsonError(e, rays_prev_[index], rays_curr_[index]);
+            out(i) = std::isnan(error) ? 0.0 : focal_px_ * error;
+        }
+        return out;
+    }
+
+    [[nodiscard]] double cost(const Eigen::VectorXd& residuals) const {
+        double sum = 0.0;
+        for (Eigen::Index i = 0; i < size(); ++i) {
+            sum += weight(i) * HuberCost(residuals(i), huber_px_);
+        }
+        return sum;
+    }
+
+    // Gauss-Newton system (J^T W J, J^T W r) of the IRLS-weighted squares at
+    // the chart's base pose, whose residuals are `residuals`. The Jacobian is
+    // a central difference over the chart
+    [[nodiscard]] std::pair<Matrix5d, Vector5d> normalEquations(
+        const PoseChart& chart, const Eigen::VectorXd& residuals) const {
+        constexpr double kStep = 1e-7;
+
+        Eigen::MatrixXd jacobian(size(), 5);
+        for (Eigen::Index k = 0; k < 5; ++k) {
+            Vector5d step = Vector5d::Zero();
+            step(k) = kStep;
+            jacobian.col(k) = (this->residuals(chart.apply(step))
+                               - this->residuals(chart.apply(-step)))
+                              / (2.0 * kStep);
+        }
+
+        Eigen::VectorXd irls(size());
+        for (Eigen::Index i = 0; i < size(); ++i) {
+            irls(i) = weight(i) * HuberWeight(residuals(i), huber_px_);
+        }
+        return {jacobian.transpose() * irls.asDiagonal() * jacobian,
+                jacobian.transpose() * irls.asDiagonal() * residuals};
+    }
+
+   private:
+    std::span<const Eigen::Vector2d> rays_prev_;
+    std::span<const Eigen::Vector2d> rays_curr_;
+    std::span<const double> weights_;
+    double focal_px_;
+    double huber_px_;
+
+    [[nodiscard]] double weight(Eigen::Index i) const {
+        return weights_.empty() ? 1.0 : weights_[static_cast<size_t>(i)];
+    }
+};
 }  // namespace
 
 Eigen::Matrix3d NormalisingTransform(std::span<const Eigen::Vector2d> points) {
@@ -130,47 +325,46 @@ Eigen::Matrix3d NormalisingTransform(std::span<const Eigen::Vector2d> points) {
     return t;
 }
 
-std::optional<Eigen::Matrix3d> FitFundamentalMatrix(
-    std::span<const Eigen::Vector2d> prev,
-    std::span<const Eigen::Vector2d> curr) {
-    CheckCorrespondences(prev, curr);
-
-    const Eigen::Matrix3d t_prev = NormalisingTransform(prev);
-    const Eigen::Matrix3d t_curr = NormalisingTransform(curr);
-
-    const Eigen::Matrix3d f_normalised
-        = SolveEpipolarConstraint(prev, curr, t_prev, t_curr);
-
-    // Rank 2: F maps every point to a line through the epipole. The
-    // similarity transforms preserve rank, so it can be enforced before
-    // denormalising
-    const Eigen::JacobiSVD<Eigen::Matrix3d> svd(
-        f_normalised, Eigen::ComputeFullU | Eigen::ComputeFullV);
-    Eigen::Vector3d singular_values = svd.singularValues();
-    singular_values(2) = 0.0;
-    const Eigen::Matrix3d f_rank2 = svd.matrixU() * singular_values.asDiagonal()
-                                    * svd.matrixV().transpose();
-
-    Eigen::Matrix3d f = t_curr.transpose() * f_rank2 * t_prev;
-    if (!f.allFinite()) {
-        return std::nullopt;
-    }
-    return f;
-}
-
-double SampsonDistance(const Eigen::Matrix3d& f, const Eigen::Vector2d& prev,
+double SampsonDistance(const Eigen::Matrix3d& m, const Eigen::Vector2d& prev,
                        const Eigen::Vector2d& curr) {
-    const Eigen::Vector3d xp = prev.homogeneous();
-    const Eigen::Vector3d xc = curr.homogeneous();
-    const Eigen::Vector3d f_xp = f * xp;
-    const Eigen::Vector3d ft_xc = f.transpose() * xc;
-    const double residual = xc.dot(f_xp);
-    const double gradient_norm2
-        = f_xp.head<2>().squaredNorm() + ft_xc.head<2>().squaredNorm();
-    if (gradient_norm2 < 1e-12) {
+    const double error = SignedSampsonError(m, prev, curr);
+    if (std::isnan(error)) {
         return std::numeric_limits<double>::infinity();
     }
-    return residual * residual / gradient_norm2;
+    return error * error;
+}
+
+std::optional<Eigen::Matrix3d> FitEssentialMatrix(
+    std::span<const Eigen::Vector2d> rays_prev,
+    std::span<const Eigen::Vector2d> rays_curr,
+    std::span<const double> weights) {
+    CheckCorrespondences(rays_prev, rays_curr, weights);
+    WSLAM_ASSERT(rays_prev.size() >= kEightPointSampleSize,
+                 "{} correspondences, the eight-point fit needs {}",
+                 rays_prev.size(), kEightPointSampleSize);
+
+    const Eigen::Matrix3d t_prev = NormalisingTransform(rays_prev);
+    const Eigen::Matrix3d t_curr = NormalisingTransform(rays_curr);
+
+    const Eigen::Matrix3d e_normalised = SolveEpipolarConstraint(
+        rays_prev, rays_curr, weights, t_prev, t_curr);
+    const Eigen::Matrix3d e_raw = t_curr.transpose() * e_normalised * t_prev;
+    if (!e_raw.allFinite()) {
+        return std::nullopt;
+    }
+
+    // Unlike rank, equal singular values do not survive the denormalising
+    // transforms, so the essential constraint is enforced on the final
+    // matrix. Its scale is arbitrary; unit singular values
+    const Eigen::JacobiSVD<Eigen::Matrix3d> svd(
+        e_raw, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    Eigen::Matrix3d e = svd.matrixU()
+                        * Eigen::Vector3d(1.0, 1.0, 0.0).asDiagonal()
+                        * svd.matrixV().transpose();
+    if (!e.allFinite()) {
+        return std::nullopt;
+    }
+    return e;
 }
 
 uint64_t RequiredRansacIterations(double inlier_ratio, double confidence,
@@ -201,26 +395,31 @@ uint64_t RequiredRansacIterations(double inlier_ratio, double confidence,
     return std::max<uint64_t>(1, static_cast<uint64_t>(bound));
 }
 
-RansacOutcome EstimateFundamentalRansac(std::span<const Eigen::Vector2d> prev,
-                                        std::span<const Eigen::Vector2d> curr,
-                                        const RansacOptions& options,
-                                        std::mt19937_64& rng) {
-    WSLAM_ASSERT(prev.size() == curr.size(), "{} previous vs {} current points",
-                 prev.size(), curr.size());
+RansacOutcome EstimateEssentialRansac(
+    std::span<const Eigen::Vector2d> rays_prev,
+    std::span<const Eigen::Vector2d> rays_curr, std::span<const double> weights,
+    double focal_px, const RansacOptions& options, std::mt19937_64& rng) {
+    CheckCorrespondences(rays_prev, rays_curr, weights);
     WSLAM_ASSERT(options.min_inliers >= kEightPointSampleSize,
                  "min_inliers {} is below the sample size {}",
                  options.min_inliers, kEightPointSampleSize);
     WSLAM_ASSERT(options.inlier_threshold > 0.0, "inlier threshold {}",
                  options.inlier_threshold);
     WSLAM_ASSERT(options.max_iterations > 0, "no iterations allowed");
+    WSLAM_ASSERT(focal_px > 0.0, "focal length {}", focal_px);
 
     RansacOutcome outcome;
-    if (prev.size() < options.min_inliers) {
+    if (rays_prev.size() < options.min_inliers) {
         return outcome;
     }
 
+    const auto classify = [&](const Eigen::Matrix3d& e) {
+        return ClassifyInliers(e, rays_prev, rays_curr, focal_px,
+                               options.inlier_threshold);
+    };
+
     std::vector<size_t> best_inliers;
-    Eigen::Matrix3d best_f = Eigen::Matrix3d::Zero();
+    Eigen::Matrix3d best_e = Eigen::Matrix3d::Zero();
     // Unknown until a first model gives an inlier ratio
     uint64_t required = std::numeric_limits<uint64_t>::max();
 
@@ -228,21 +427,21 @@ RansacOutcome EstimateFundamentalRansac(std::span<const Eigen::Vector2d> prev,
            && outcome.iterations < required) {
         ++outcome.iterations;
 
-        const auto sample = SampleDistinct(prev.size(), rng);
-        const auto f = FitSample(prev, curr, sample);
-        if (!f) {
+        const auto sample = SampleDistinct(rays_prev.size(), rng);
+        // Minimal samples are exact fits, which weights do not change
+        const auto e = FitSubset(rays_prev, rays_curr, {}, sample);
+        if (!e) {
             ++outcome.degenerate_samples;
             continue;
         }
 
-        auto inliers
-            = ClassifyInliers(*f, prev, curr, options.inlier_threshold);
+        auto inliers = classify(*e);
         if (inliers.size() > best_inliers.size()) {
             best_inliers = std::move(inliers);
-            best_f = *f;
+            best_e = *e;
             required = RequiredRansacIterations(
                 static_cast<double>(best_inliers.size())
-                    / static_cast<double>(prev.size()),
+                    / static_cast<double>(rays_prev.size()),
                 options.confidence);
         }
     }
@@ -254,59 +453,17 @@ RansacOutcome EstimateFundamentalRansac(std::span<const Eigen::Vector2d> prev,
     outcome.required_iterations = required;
     outcome.confidence_reached = outcome.iterations >= required;
 
-    // Re-fit on every inlier and re-classify, so the threshold applies to
-    // the refined model. Kept only when it does not lose inliers
-    std::vector<Eigen::Vector2d> inlier_prev;
-    std::vector<Eigen::Vector2d> inlier_curr;
-    inlier_prev.reserve(best_inliers.size());
-    inlier_curr.reserve(best_inliers.size());
-    for (const size_t index : best_inliers) {
-        inlier_prev.push_back(prev[index]);
-        inlier_curr.push_back(curr[index]);
-    }
+    RefitOnInliers(rays_prev, rays_curr, weights, classify,
+                   options.refit_rounds, best_inliers, best_e);
 
-    if (const auto refined = FitFundamentalMatrix(inlier_prev, inlier_curr)) {
-        auto refined_inliers
-            = ClassifyInliers(*refined, prev, curr, options.inlier_threshold);
-        if (refined_inliers.size() >= best_inliers.size()) {
-            best_f = *refined;
-            best_inliers = std::move(refined_inliers);
-        }
-    }
-
-    outcome.fundamental_matrix = best_f;
+    outcome.essential_matrix = best_e;
     outcome.inliers = std::move(best_inliers);
     outcome.model_found = true;
     return outcome;
 }
 
-std::optional<Eigen::Matrix3d> FitEssentialMatrix(
-    std::span<const Eigen::Vector2d> rays_prev,
-    std::span<const Eigen::Vector2d> rays_curr) {
-    CheckCorrespondences(rays_prev, rays_curr);
-
-    const Eigen::Matrix3d t_prev = NormalisingTransform(rays_prev);
-    const Eigen::Matrix3d t_curr = NormalisingTransform(rays_curr);
-
-    const Eigen::Matrix3d e_normalised
-        = SolveEpipolarConstraint(rays_prev, rays_curr, t_prev, t_curr);
-    const Eigen::Matrix3d e_raw = t_curr.transpose() * e_normalised * t_prev;
-    if (!e_raw.allFinite()) {
-        return std::nullopt;
-    }
-
-    // Unlike rank, equal singular values do not survive the denormalising
-    // transforms, so the essential constraint is enforced on the final
-    // matrix. Its scale is arbitrary; unit singular values
-    const Eigen::JacobiSVD<Eigen::Matrix3d> svd(
-        e_raw, Eigen::ComputeFullU | Eigen::ComputeFullV);
-    Eigen::Matrix3d e = svd.matrixU()
-                        * Eigen::Vector3d(1.0, 1.0, 0.0).asDiagonal()
-                        * svd.matrixV().transpose();
-    if (!e.allFinite()) {
-        return std::nullopt;
-    }
-    return e;
+Eigen::Matrix3d EssentialFromPose(const RelativePose& pose) {
+    return Skew(pose.t) * pose.r;
 }
 
 std::array<RelativePose, 4> DecomposeEssential(const Eigen::Matrix3d& e) {
@@ -368,32 +525,31 @@ std::optional<Eigen::Vector3d> TriangulatePoint(
     return point;
 }
 
-std::optional<PoseRecovery> RecoverRelativePose(
-    std::span<const Eigen::Vector2d> rays_prev,
-    std::span<const Eigen::Vector2d> rays_curr) {
-    CheckCorrespondences(rays_prev, rays_curr);
+PoseRecovery TriangulateAll(const RelativePose& pose,
+                            std::span<const Eigen::Vector2d> rays_prev,
+                            std::span<const Eigen::Vector2d> rays_curr) {
+    CheckCorrespondences(rays_prev, rays_curr, {});
 
-    const auto e = FitEssentialMatrix(rays_prev, rays_curr);
-    if (!e) {
-        return std::nullopt;
-    }
+    PoseRecovery recovery;
+    recovery.pose = pose;
+    recovery.points_prev.reserve(rays_prev.size());
 
-    std::optional<PoseRecovery> best;
-    for (const RelativePose& candidate : DecomposeEssential(*e)) {
-        PoseRecovery recovery;
-        recovery.pose = candidate;
-        recovery.points_prev.reserve(rays_prev.size());
-
-        for (size_t i = 0; i < rays_prev.size(); ++i) {
-            const auto point
-                = TriangulatePoint(candidate, rays_prev[i], rays_curr[i]);
-            recovery.points_prev.push_back(point);
-            if (point && point->z() > 0.0
-                && (candidate.r * *point + candidate.t).z() > 0.0) {
-                ++recovery.in_front;
-            }
+    for (size_t i = 0; i < rays_prev.size(); ++i) {
+        const auto point = TriangulatePoint(pose, rays_prev[i], rays_curr[i]);
+        recovery.points_prev.push_back(point);
+        if (point && point->z() > 0.0 && (pose.r * *point + pose.t).z() > 0.0) {
+            ++recovery.in_front;
         }
+    }
+    return recovery;
+}
 
+std::optional<PoseRecovery> RecoverRelativePose(
+    const Eigen::Matrix3d& e, std::span<const Eigen::Vector2d> rays_prev,
+    std::span<const Eigen::Vector2d> rays_curr) {
+    std::optional<PoseRecovery> best;
+    for (const RelativePose& candidate : DecomposeEssential(e)) {
+        PoseRecovery recovery = TriangulateAll(candidate, rays_prev, rays_curr);
         // Ties keep the earlier candidate
         if (!best || recovery.in_front > best->in_front) {
             best = std::move(recovery);
@@ -404,6 +560,81 @@ std::optional<PoseRecovery> RecoverRelativePose(
         return std::nullopt;
     }
     return best;
+}
+
+RefineOutcome RefineRelativePose(const RelativePose& pose,
+                                 std::span<const Eigen::Vector2d> rays_prev,
+                                 std::span<const Eigen::Vector2d> rays_curr,
+                                 std::span<const double> weights,
+                                 double focal_px,
+                                 const RefineOptions& options) {
+    CheckCorrespondences(rays_prev, rays_curr, weights);
+    WSLAM_ASSERT(focal_px > 0.0, "focal length {}", focal_px);
+    WSLAM_ASSERT(options.huber_px > 0.0, "Huber threshold {}",
+                 options.huber_px);
+
+    const SampsonProblem problem(rays_prev, rays_curr, weights, focal_px,
+                                 options.huber_px);
+
+    RefineOutcome outcome;
+    outcome.pose = PoseChart(pose).base;
+    Eigen::VectorXd current = problem.residuals(outcome.pose);
+    outcome.initial_cost = problem.cost(current);
+    outcome.final_cost = outcome.initial_cost;
+
+    // Five parameters need at least five residuals
+    if (rays_prev.size() < 5) {
+        return outcome;
+    }
+
+    constexpr double kMaxDamping = 1e10;
+    constexpr double kMinDamping = 1e-12;
+    double damping = 1e-4;
+
+    for (uint32_t iteration = 0; iteration < options.max_iterations;
+         ++iteration) {
+        const PoseChart chart(outcome.pose);
+        const auto [hessian, gradient]
+            = problem.normalEquations(chart, current);
+
+        // Levenberg-Marquardt: raise the damping until a step lowers the
+        // cost, or give up when none does
+        bool stepped = false;
+        double gain = 0.0;
+        while (!stepped && damping < kMaxDamping) {
+            Matrix5d damped = hessian;
+            damped.diagonal() += damping * hessian.diagonal().cwiseMax(1e-12);
+            const Vector5d delta = damped.ldlt().solve(-gradient);
+            // A non-finite step would zero every residual (undefined ones
+            // count as zero), so it must not reach the cost comparison
+            const RelativePose candidate
+                = chart.apply(delta.allFinite() ? delta : Vector5d::Zero());
+            Eigen::VectorXd candidate_residuals = problem.residuals(candidate);
+            const double candidate_cost = problem.cost(candidate_residuals);
+            if (delta.allFinite() && candidate_cost < outcome.final_cost) {
+                gain = (outcome.final_cost - candidate_cost)
+                       / std::max(outcome.final_cost, 1e-300);
+                outcome.pose = candidate;
+                outcome.final_cost = candidate_cost;
+                current = std::move(candidate_residuals);
+                stepped = true;
+            } else {
+                damping *= 10.0;
+            }
+        }
+
+        if (!stepped) {
+            break;
+        }
+        ++outcome.iterations;
+        // Trust the quadratic model more after a successful step
+        damping = std::max(damping / 10.0, kMinDamping);
+        if (gain < options.relative_tolerance) {
+            break;
+        }
+    }
+
+    return outcome;
 }
 
 }  // namespace wslam::v2::util

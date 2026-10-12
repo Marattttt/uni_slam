@@ -11,7 +11,9 @@
 
 // Two-view epipolar geometry used by the v2 pose estimate passes. Pure
 // functions over point correspondences: `prev[i]` and `curr[i]` are the same
-// scene point seen in the previous and the current view
+// scene point seen in the previous and the current view. The camera is
+// calibrated, so everything works on rays (undistorted normalised image plane
+// coordinates) and the epipolar matrix is the essential matrix
 namespace wslam::v2::util {
 
 // Points per minimal sample of the eight-point algorithm
@@ -23,18 +25,23 @@ constexpr size_t kEightPointSampleSize = 8;
 [[nodiscard]] Eigen::Matrix3d NormalisingTransform(
     std::span<const Eigen::Vector2d> points);
 
-// Normalised eight-point fit of F with curr^T * F * prev = 0, rank 2
-// enforced. Takes at least kEightPointSampleSize correspondences. nullopt
-// when the result is not finite
-[[nodiscard]] std::optional<Eigen::Matrix3d> FitFundamentalMatrix(
-    std::span<const Eigen::Vector2d> prev,
-    std::span<const Eigen::Vector2d> curr);
-
 // First-order (Sampson) approximation of the squared geometric distance of
-// a correspondence to the epipolar geometry F. Infinite when undefined
-[[nodiscard]] double SampsonDistance(const Eigen::Matrix3d& f,
+// a correspondence to the epipolar geometry `m` (E on rays, F on pixels), in
+// the squared units of the coordinates. Infinite when undefined
+[[nodiscard]] double SampsonDistance(const Eigen::Matrix3d& m,
                                      const Eigen::Vector2d& prev,
                                      const Eigen::Vector2d& curr);
+
+// Eight-point fit of the essential matrix on calibrated (normalised image
+// plane) coordinates, ray_curr^T * E * ray_prev = 0. The essential
+// constraint (two equal singular values, one zero) is enforced on the final,
+// denormalised matrix. `weights`, when not empty, scales each
+// correspondence's constraint, so a weight of 2 counts like the
+// correspondence twice over. nullopt when the result is not finite
+[[nodiscard]] std::optional<Eigen::Matrix3d> FitEssentialMatrix(
+    std::span<const Eigen::Vector2d> rays_prev,
+    std::span<const Eigen::Vector2d> rays_curr,
+    std::span<const double> weights = {});
 
 struct RansacOptions {
     // Probability that at least one drawn sample is all inliers when the
@@ -55,11 +62,15 @@ struct RansacOptions {
     // needs ~70k samples). Stopping here means `confidence` was not reached,
     // which the result reports
     uint32_t max_iterations = 10000;
+
+    // Least-squares re-fits on the inliers after sampling, each followed by
+    // re-classifying every correspondence (see EstimateEssentialRansac)
+    uint32_t refit_rounds = 3;
 };
 
 struct RansacOutcome {
-    // Valid when model_found
-    Eigen::Matrix3d fundamental_matrix = Eigen::Matrix3d::Zero();
+    // Valid when model_found. Fitted on all of `inliers`
+    Eigen::Matrix3d essential_matrix = Eigen::Matrix3d::Zero();
     // Indices of the inlier correspondences, ascending
     std::vector<size_t> inliers;
     // Samples drawn
@@ -80,22 +91,21 @@ struct RansacOutcome {
                                                 size_t sample_size
                                                 = kEightPointSampleSize);
 
-// Adaptive RANSAC over eight-point fundamental-matrix fits with a Sampson
-// inlier test, followed by a re-fit on all inliers that is kept when it does
-// not lose inliers. Fewer correspondences than options.min_inliers give no
-// model
-[[nodiscard]] RansacOutcome EstimateFundamentalRansac(
-    std::span<const Eigen::Vector2d> prev,
-    std::span<const Eigen::Vector2d> curr, const RansacOptions& options,
-    std::mt19937_64& rng);
-
-// Eight-point fit of the essential matrix on calibrated (normalised image
-// plane) coordinates, ray_curr^T * E * ray_prev = 0. The essential
-// constraint (two equal singular values, one zero) is enforced on the final,
-// denormalised matrix. nullopt when the result is not finite
-[[nodiscard]] std::optional<Eigen::Matrix3d> FitEssentialMatrix(
+// Adaptive RANSAC over eight-point essential-matrix fits on rays. The inlier
+// test is the Sampson distance scaled to squared pixels by `focal_px`, so
+// options.inlier_threshold is in pixels as for an image-space fit.
+//
+// The best sample's inliers are then re-fitted by (weighted) least squares
+// and re-classified, up to options.refit_rounds times, for as long as the
+// inlier set changes without shrinking. The returned matrix is always the
+// least-squares fit on the returned inliers. `weights` (empty, or one per
+// correspondence) only enter these re-fits: a minimal sample is an exact
+// fit, which weights do not change. Fewer correspondences than
+// options.min_inliers give no model
+[[nodiscard]] RansacOutcome EstimateEssentialRansac(
     std::span<const Eigen::Vector2d> rays_prev,
-    std::span<const Eigen::Vector2d> rays_curr);
+    std::span<const Eigen::Vector2d> rays_curr, std::span<const double> weights,
+    double focal_px, const RansacOptions& options, std::mt19937_64& rng);
 
 // Motion taking a point from the previous camera frame to the current one:
 // p_curr = r * p_prev + t
@@ -103,6 +113,9 @@ struct RelativePose {
     Eigen::Matrix3d r = Eigen::Matrix3d::Identity();
     Eigen::Vector3d t = Eigen::Vector3d::Zero();
 };
+
+// Essential matrix [t]x * r of a pose
+[[nodiscard]] Eigen::Matrix3d EssentialFromPose(const RelativePose& pose);
 
 // The four (R, t) an essential matrix decomposes into (Hartley-Zisserman
 // 9.6.2), t of unit length
@@ -124,11 +137,43 @@ struct PoseRecovery {
     size_t in_front = 0;
 };
 
-// Fits E to the rays, then picks the decomposition with the most points in
-// front of both cameras. nullopt when E cannot be fitted or no candidate puts
-// any point in front of both cameras
-[[nodiscard]] std::optional<PoseRecovery> RecoverRelativePose(
-    std::span<const Eigen::Vector2d> rays_prev,
+// Triangulates every correspondence under `pose` and counts the points in
+// front of both cameras
+[[nodiscard]] PoseRecovery TriangulateAll(
+    const RelativePose& pose, std::span<const Eigen::Vector2d> rays_prev,
     std::span<const Eigen::Vector2d> rays_curr);
+
+// Picks the decomposition of `e` with the most points in front of both
+// cameras. nullopt when no candidate puts any point in front of both
+[[nodiscard]] std::optional<PoseRecovery> RecoverRelativePose(
+    const Eigen::Matrix3d& e, std::span<const Eigen::Vector2d> rays_prev,
+    std::span<const Eigen::Vector2d> rays_curr);
+
+struct RefineOptions {
+    // Residuals beyond this many pixels are down-weighted (Huber)
+    double huber_px = 1.0;
+    uint32_t max_iterations = 20;
+    // Stops when a step lowers the cost by less than this fraction
+    double relative_tolerance = 1e-10;
+};
+
+struct RefineOutcome {
+    RelativePose pose;
+    // Robust weighted cost (squared pixels) before and after
+    double initial_cost = 0.0;
+    double final_cost = 0.0;
+    // Steps taken
+    uint32_t iterations = 0;
+};
+
+// Levenberg-Marquardt refinement of (R, t), t on the unit sphere (5 DoF),
+// minimising the robust weighted sum of squared Sampson errors of
+// E = [t]x * R over the correspondences, in pixels via `focal_px`. `weights`
+// is empty or one per correspondence. Only cost-lowering steps are taken,
+// so final_cost <= initial_cost
+[[nodiscard]] RefineOutcome RefineRelativePose(
+    const RelativePose& pose, std::span<const Eigen::Vector2d> rays_prev,
+    std::span<const Eigen::Vector2d> rays_curr, std::span<const double> weights,
+    double focal_px, const RefineOptions& options = {});
 
 }  // namespace wslam::v2::util
