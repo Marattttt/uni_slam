@@ -12,6 +12,9 @@ Options:
   -h, --help        Show this help and exit.
   -gui              Enable the Pangolin visualization GUI.
   -v2               Run the v2 pipeline.
+  --device=gpu|cpu  Where compute runs (default gpu). cpu runs Dawn on its
+                    SwiftShader CPU adapter and, with -v2, the model on
+                    ONNX Runtime's CPU execution provider.
   awaiter           Enable verbose awaiter logging (LOG_AWAITER_CALLS=ON).
   --max-iters=N     Stop after N top-level pipeline executions (0 = unlimited).
   --map-out=PATH    Write the final factor-graph map to PATH. Must end in
@@ -40,6 +43,7 @@ for arg in "$@"; do
         awaiter)        LOG_AWAITER=ON ;;
         -gui)           RUN_ARGS+=("-gui") ;;
         -v2)            RUN_ARGS+=("-v2") ;;
+        --device=*)     RUN_ARGS+=("$arg") ;;
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
         --map-out=*)    RUN_ARGS+=("$arg") ;;
         --keyframes=*)  RUN_ARGS+=("$arg") ;;

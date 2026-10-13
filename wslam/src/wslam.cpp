@@ -123,6 +123,13 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
     const WslamConfig& config) {
     const auto gpu = compute.getGPUPtr();
 
+    // The ORT pass is chosen by the config, the adapter by Compute
+    if (gpu->getComputeDevice() != config.compute_device) {
+        return std::format(
+            "compute was prepared for the {} but the pipeline asks for the {}",
+            gpu->getComputeDevice(), config.compute_device);
+    }
+
     auto model_options = v2::ReadModelOptionsFromEnv();
     if (!model_options) {
         return "model selection: " + std::move(model_options).error();

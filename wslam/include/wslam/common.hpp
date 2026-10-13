@@ -21,6 +21,11 @@ namespace wslam {
 struct WslamConfig {
     bool enable_gui = false;
 
+    // Where compute runs: the Dawn adapter of either pipeline and, in v2, the
+    // execution provider ONNX Runtime runs the model on. Has to match the
+    // device compute::Compute was prepared with
+    compute::ComputeDevice compute_device = compute::ComputeDevice::Gpu;
+
     // Stop after this many top-level pipeline executions. 0 means run until
     // the data provider is exhausted or a stage signals full stop.
     uint64_t max_iterations = 0;
@@ -186,6 +191,10 @@ constexpr std::string FrameTimestampNsName = "res:frame:ts_ns";
 // detect pass on frames the model ran on, so readers of its outputs skip the
 // first frame
 constexpr std::string OrtKeypointsReadyName = "gen:ort:kp:rdy";
+// std::vector<raco_lightglue::KeypointPosition>, raco_lightglue::KeypointsShape
+// rows. Published only when the model runs on the CPU; on the GPU the
+// keypoints stay in SharedBindings' keypoints buffer
+constexpr std::string OrtKeypointsName = "gen:ort:kp";
 // std::vector<raco_lightglue::KeypointMatch>
 constexpr std::string OrtMatchesName = "gen:ort:match";
 // std::vector<float>, one score per OrtMatchesName row

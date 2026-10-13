@@ -20,7 +20,12 @@ Dawn `EXCLUDE_FROM_ALL` *and* its FetchContent wrapper forces
 `cmake --install` on its own build directory and by a local patch to that
 wrapper (see `vendor/onnxruntime/cmake/external/onnxruntime_external_deps.cmake`,
 marked `LOCAL (uni_slam)`); and Dawn is now a **shared** library where it used
-to be a static archive. **Eigen is pinned to 3.4.0** in `cmake/configureDependencies.cmake`
+to be a static archive. The same script also builds **SwiftShader**, Dawn's CPU
+adapter used by `--device=cpu`: Dawn's dependency fetcher skips it, so the script
+checks it out into `vendor/onnxruntime/build/swiftshader` at the commit pinned in
+Dawn's `DEPS` (it fails if Dawn moves), configures Dawn with
+`DAWN_ENABLE_SWIFTSHADER=ON`, and installs `libvk_swiftshader.so` next to
+`libwebgpu_dawn.so`, which is where Dawn looks for it at run time. **Eigen is pinned to 3.4.0** in `cmake/configureDependencies.cmake`
 because GTSAM 4.3a1 bundles Eigen 3.4.0 and statically asserts the Eigen
 WORLD/MAJOR/MINOR version matches the consumer's at compile time.
 
@@ -40,6 +45,13 @@ Flags:
 - `awaiter` — verbose logging of GPU future add/complete events (`-DLOG_AWAITER_CALLS=ON`).
 - `-gui` — enable the Pangolin visualisation pass.
 - `-v2` — run the v2 pipeline (ONNX feature detect + pose estimate + fixed-lag mapping) instead of the default one.
+- `--device=gpu|cpu` — where compute runs (`compute::ComputeDevice`, `WslamConfig::compute_device`;
+  default `gpu`). `cpu` forces Dawn onto its SwiftShader CPU adapter (`forceFallbackAdapter`,
+  which discards every other adapter) and, with `-v2`, runs the model on ONNX Runtime's CPU EP
+  (`OrtCpuFeatureDetectPass`). `gpu` requests a `HighPerformance` adapter: Dawn searches
+  SwiftShader before the system drivers and, without a power preference, ranks all adapter
+  types equally, so the default request lands on SwiftShader. `GPU::initAdapter` rejects an
+  adapter whose type doesn't match the requested device either way.
 - `-no-mapping` — v2 only: drop the mapping stage; the model then pairs consecutive frames.
 - `--record-frontend=PATH.msgpack` — v2 with mapping only: record the front-end output
   for replaying the mapping stage without the GPU (see `MappingReplayTest` below).
@@ -153,7 +165,7 @@ Hierarchy: `Compute` → `Stage` → (`Pass` | `GPUPass`).
 - **`Compute`** owns a list of `Stage`s and a shared `AnyBag` storage. `execute()` runs every stage in order each frame. Returning the sentinel string `kComputeStopExecution` from a stage halts the loop.
 - **`Stage`** is a named, ordered sequence of passes stored as `std::variant<unique_ptr<Pass>, unique_ptr<GPUPass>>`. Returning `kStageStopExecution` stops that stage and bubbles up.
 - **`Pass`** is a pure-CPU leaf. Implements `initialize()` and `execute()`.
-- **`GPUPass`** is a sibling class (NOT a subclass of `Pass`) for WebGPU compute work. Implements `initialize()` and `submitWork()`, which records into the pass's own encoder and submits it through `GPU::submitCommands(encoder_label, record)` (label convention: `LOG_ID " encoder"`) **without waiting**. `OrtPass` is a `GPUPass` too: ORT's WebGPU EP submits to the same device queue and flushes by the end of `Session::Run`.
+- **`GPUPass`** is a sibling class (NOT a subclass of `Pass`) for WebGPU compute work. Implements `initialize()` and `submitWork()`, which records into the pass's own encoder and submits it through `GPU::submitCommands(encoder_label, record)` (label convention: `LOG_ID " encoder"`) **without waiting**. `OrtPass` is a `GPUPass` too: ORT's WebGPU EP submits to the same device queue and flushes by the end of `Session::Run`. Its sibling `OrtCpuPass` is a plain `Pass` that runs the model on ORT's CPU EP (`OrtProvider::LoadModel(path, use_webgpu_ep = false)`), with tensors in host memory.
 - **`CustomPass`** wraps an arbitrary CPU lambda; used for buffer clearing and one-off algorithm steps.
 
 GPU waits are **batched per stage**: `GpuStage::execute()` walks its passes, calls `submitWork()` on every consecutive `GPUPass`, then does one `GPU::waitForSubmittedWork` (`OnSubmittedWorkDone`) for the whole run, under a single perf scope and timeout label. A CPU `Pass` between two GPU passes waits for the run before it first. Ordering between passes comes from the single device queue (submit order), not from a shared encoder — so a pass's queue writes (`queue.WriteTexture`) must be issued before its own `submitCommands`, and GPU passes must never wait on the queue themselves.
@@ -266,7 +278,12 @@ names with v1 and are compiled into the same library). Per frame:
 *previous* frame, when it became the reference) → `FillPyramidPass` (Current pyramid) →
 `PackModelInputPass` (Previous + Current LoD0, centre-cropped to 736×480, gray → RGB,
 NCHW into the images buffer) → `OrtFeatureDetectPass` (GPU pass in the same wait batch,
-`session.Run` with an IoBinding; skipped on the first frame). Previous is the model's
+`session.Run` with an IoBinding; skipped on the first frame). With `--device=cpu` the
+last pass is `OrtCpuFeatureDetectPass` instead (`onnx_cpu_feature_detect.*`): it reads
+the images buffer back, runs the model on ORT's CPU EP, and publishes the keypoints
+under `OrtKeypointsName` (on the GPU they stay in the keypoints buffer). Model
+validation, dynamic-output binding and match publishing shared by both passes live in
+`onnx_utils.*`. Previous is the model's
 **reference** image, chosen by `v2::ReferenceAdvance`: `EveryFrame` (no mapping:
 consecutive frames) or `OnKeyframeMarker` (with mapping: it advances only when the
 mapping stage set `FeatureReferenceAdvanceName` — every frame before the first
@@ -282,7 +299,7 @@ keypoint-dependent parts of the contract are functions of it (`KeypointsShape`,
 
 `v2::CreatePoseEstimateStage` (`wslam/src/pose_estimate_v2/`, CPU `Stage`) is the
 port of v1's pose estimate stage; the model already matched, so there is no matcher:
-- `LoadMatchesPass` — reads the keypoints buffer back and joins it with the model's
+- `LoadMatchesPass` — takes the published keypoints (CPU run) or reads the keypoints buffer back, and joins them with the model's
   matches (taken, consume-once) into `v2::KeypointCorrespondence`s: LOD-0 source pixels
   (`raco_lightglue::ToSourcePixel` adds the crop offset and removes the model's
   pixel-centre 0.5) plus undistorted rays. Stops the stage on the first frame.

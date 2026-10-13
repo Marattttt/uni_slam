@@ -12,6 +12,8 @@ Options:
   -h, --help        Show this help and exit.
   -gui              Enable the Pangolin visualization GUI.
   awaiter           Enable verbose awaiter logging (LOG_AWAITER_CALLS=ON).
+  --device=gpu|cpu  Where compute runs (default gpu). cpu runs Dawn on its
+                    SwiftShader CPU adapter.
   --max-iters=N     Stop after N top-level pipeline executions (0 = unlimited).
   --map-out=PATH    Path the final factor-graph map is written to. Must end
                     in .ply; a sibling .json metadata file is derived
@@ -32,6 +34,7 @@ for arg in "$@"; do
         awaiter)        LOG_AWAITER=ON ;;
         -gui)           RUN_ARGS+=("-gui") ;;
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
+        --device=*)     RUN_ARGS+=("$arg") ;;
         --map-out=*)    MAP_OUT="${arg#--map-out=}" ;;
         *)              echo "error: unknown argument '$arg'" >&2
                         print_help >&2

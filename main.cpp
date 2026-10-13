@@ -28,6 +28,7 @@ WslamConfig parseArgs(std::span<char*> args) {
     constexpr std::string_view kMapOutFlag = "--map-out=";
     constexpr std::string_view kKeyframesFlag = "--keyframes=";
     constexpr std::string_view kRecordFrontendFlag = "--record-frontend=";
+    constexpr std::string_view kDeviceFlag = "--device=";
     WslamConfig config;
     for (std::string_view arg : args) {
         if (arg == "-gui") {
@@ -53,6 +54,16 @@ WslamConfig parseArgs(std::span<char*> args) {
                 std::string(arg.substr(kKeyframesFlag.size())));
         } else if (arg == "-no-mapping") {
             config.enable_mapping = false;
+        } else if (arg.starts_with(kDeviceFlag)) {
+            const auto value = arg.substr(kDeviceFlag.size());
+            if (value == "gpu") {
+                config.compute_device = compute::ComputeDevice::Gpu;
+            } else if (value == "cpu") {
+                config.compute_device = compute::ComputeDevice::Cpu;
+            } else {
+                spdlog::warn(LOG_ID " Ignoring unknown --device value '{}'",
+                             value);
+            }
         } else if (arg.starts_with(kRecordFrontendFlag)) {
             config.frontend_recording_out = std::filesystem::path(
                 std::string(arg.substr(kRecordFrontendFlag.size())));
@@ -78,7 +89,8 @@ extern "C" void handleShutdownSignal(int signal) {
 
 int main_test(WslamConfig config) {
     compute::Compute comp;
-    if (auto err = comp.prepare(compute::createDefaultConfig())) {
+    if (auto err
+        = comp.prepare(compute::createDefaultConfig(config.compute_device))) {
         spdlog::critical(LOG_ID " initializing: {}", err.value());
         std::terminate();
     }
@@ -317,11 +329,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    spdlog::info(
-        LOG_ID " GUI: {}, max iterations: {}, map_out: {}", config.enable_gui,
-        config.max_iterations == 0 ? std::string("unlimited")
-                                   : std::to_string(config.max_iterations),
-        config.map_out_path.empty() ? std::string("(none)")
-                                    : config.map_out_path.string());
+    spdlog::info(LOG_ID " Device: {}, GUI: {}, max iterations: {}, map_out: {}",
+                 config.compute_device, config.enable_gui,
+                 config.max_iterations == 0
+                     ? std::string("unlimited")
+                     : std::to_string(config.max_iterations),
+                 config.map_out_path.empty() ? std::string("(none)")
+                                             : config.map_out_path.string());
     return main_test(config);
 }

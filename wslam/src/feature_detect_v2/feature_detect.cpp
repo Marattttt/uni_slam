@@ -11,6 +11,7 @@
 #include "compute/gpu_stage.hpp"
 #include "data/provider_base.hpp"
 #include "fill_pyramid.hpp"
+#include "onnx_cpu_feature_detect.hpp"
 #include "onnx_feature_detect.hpp"
 #include "pack_model_input.hpp"
 #include "preserve_pyramid.hpp"
@@ -109,11 +110,21 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
 
     stage->add_pass(std::make_unique<PackModelInputPass>(gpu, bindings));
 
-    // GPU pass: ORT submits to the same queue, so it runs after the packing
-    stage->add_pass(std::make_unique<OrtFeatureDetectPass>(
-        std::move(ort), model_path, std::move(bindings), compute.getStorage()));
-
-    (void)config;
+    switch (config.compute_device) {
+        case compute::ComputeDevice::Gpu:
+            // GPU pass: ORT submits to the same queue, so it runs after the
+            // packing
+            stage->add_pass(std::make_unique<OrtFeatureDetectPass>(
+                std::move(ort), model_path, std::move(bindings),
+                compute.getStorage()));
+            break;
+        case compute::ComputeDevice::Cpu:
+            // CPU pass: the stage waits for the packing before running it
+            stage->add_pass(std::make_unique<OrtCpuFeatureDetectPass>(
+                std::move(ort), model_path, std::move(bindings),
+                compute.getStorage()));
+            break;
+    }
 
     return stage;
 }

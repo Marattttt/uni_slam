@@ -87,16 +87,28 @@ std::optional<std::string> v2::LoadMatchesPass::execute() {
     WSLAM_ASSERT(matches->size() == scores->size(), "{} matches but {} scores",
                  matches->size(), scores->size());
 
-    auto read = gpu_->readBuffer<model::KeypointPosition>(
-        bindings_->getKeypointsBuffer(),
-        model::KeypointsCount(bindings_->getKeypointCount()));
-    if (!read) {
-        return "reading keypoints: " + read.error();
+    // A model run on the CPU publishes its keypoints; on the GPU they stay in
+    // the keypoints buffer
+    std::vector<model::KeypointPosition> keypoints;
+    if (auto published = storage_.take<std::vector<model::KeypointPosition>>(
+            ResourceIdentifier::OrtKeypointsName)) {
+        keypoints = std::move(published).value();
+    } else {
+        auto read = gpu_->readBuffer<model::KeypointPosition>(
+            bindings_->getKeypointsBuffer(),
+            model::KeypointsCount(bindings_->getKeypointCount()));
+        if (!read) {
+            return "reading keypoints: " + read.error();
+        }
+        keypoints = std::move(read).value();
     }
+    WSLAM_ASSERT(keypoints.size()
+                     == model::KeypointsCount(bindings_->getKeypointCount()),
+                 "got {} keypoints", keypoints.size());
 
     size_t dropped = 0;
-    KeypointMatches correspondences = buildCorrespondences(
-        *matches, *scores, read.value(), camera, dropped);
+    KeypointMatches correspondences
+        = buildCorrespondences(*matches, *scores, keypoints, camera, dropped);
 
     if (dropped > 0) {
         spdlog::warn(LOG_ID

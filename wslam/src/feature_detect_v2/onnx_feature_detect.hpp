@@ -42,13 +42,7 @@ class OrtFeatureDetectPass : public compute::OrtPass {
     std::optional<Ort::IoBinding> io_binding_;
     Ort::MemoryInfo cpu_memory_info_{nullptr};
 
-    [[nodiscard]] std::optional<std::string> validateModel() const;
     [[nodiscard]] std::optional<std::string> initBinding();
-    // Binds the data-dependent outputs (matches, scores) to CPU memory ORT
-    // allocates during the run
-    void bindDynamicOutputs(Ort::IoBinding& io_binding);
-    [[nodiscard]] std::optional<std::string> publishMatches(
-        std::vector<Ort::Value>& outputs);
 };
 
 }  // namespace wslam::v2

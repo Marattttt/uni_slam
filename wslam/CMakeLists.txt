@@ -14,7 +14,9 @@ add_library(wslam_app
 
     src/feature_detect_v2/feature_detect.cpp
     src/feature_detect_v2/fill_pyramid.cpp
+    src/feature_detect_v2/onnx_cpu_feature_detect.cpp
     src/feature_detect_v2/onnx_feature_detect.cpp
+    src/feature_detect_v2/onnx_utils.cpp
     src/feature_detect_v2/pack_model_input.cpp
     src/feature_detect_v2/preserve_pyramid.cpp
     src/feature_detect_v2/sensor_loader.cpp
