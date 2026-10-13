@@ -4,6 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Run
 
+**This machine has no discrete GPU.** Pass `--device=cpu` for most runs (e.g.
+`./run.sh -v2 --device=cpu ...`); with the default `--device=gpu` the project
+picks the integrated GPU, which is slow.
+
 ONNX Runtime, Pangolin and GTSAM must all be pre-built and installed into
 `vendor/onnxruntime/install/`, `vendor/pangolin/install/` and
 `vendor/gtsam/install/` before CMake will succeed — they are not fetched by
