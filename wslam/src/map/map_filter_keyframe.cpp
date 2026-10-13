@@ -14,11 +14,12 @@
 #include "anybag.hpp"
 #include "assert.hpp"
 #include "common.hpp"
+#include "compute/stage.hpp"
+#include "data/provider_base.hpp"
 #include "map_common.hpp"
 #include "map_helpers_lods.hpp"
 #include "models.hpp"
-#include "data/provider_base.hpp"
-#include "compute/stage.hpp"
+#include "utils.hpp"
 
 using namespace wslam;
 using namespace wslam::map;
@@ -32,105 +33,6 @@ std::optional<std::string> FilterKeyframePass::initialize() {
     spdlog::info(LOG_ID " Initializing (no-op)");
     return {};
 }
-
-namespace {
-struct StationaryWindow {
-    std::span<const data::IMUReading> samples;
-    double score = std::numeric_limits<double>::infinity();
-};
-
-std::expected<StationaryWindow, std::string> FindStationaryWindow(
-    std::span<const data::IMUReading> readings, size_t window_size,
-    double max_score) {
-    if (window_size == 0) {
-        return std::unexpected("window size 0");
-    }
-    if (readings.size() == 0) {
-        return std::unexpected("buffer size 0");
-    }
-
-    // Quietness of one window: population standard deviation of the
-    // acceleration magnitude, plus the mean angular-velocity deviation from
-    // the window's own mean. Subtracting the window mean makes the gyroscope
-    // term immune to a constant bias, and using acceleration *magnitude*
-    // makes the accelerometer term immune to a constant gravity vector, so a
-    // parked vehicle scores near zero.
-    const auto score_window
-        = [](std::span<const data::IMUReading> window) -> double {
-        const auto sample_count = static_cast<double>(window.size());
-
-        Eigen::Vector3d mean_angular_velocity = Eigen::Vector3d::Zero();
-        double acceleration_magnitude_sum = 0.0;
-        double acceleration_magnitude_squared_sum = 0.0;
-        for (const data::IMUReading& reading : window) {
-            mean_angular_velocity
-                += Eigen::Vector3d(static_cast<double>(reading.wx()),
-                                   static_cast<double>(reading.wy()),
-                                   static_cast<double>(reading.wz()));
-            const double acceleration_magnitude
-                = Eigen::Vector3d(static_cast<double>(reading.ax()),
-                                  static_cast<double>(reading.ay()),
-                                  static_cast<double>(reading.az()))
-                      .norm();
-            acceleration_magnitude_sum += acceleration_magnitude;
-            acceleration_magnitude_squared_sum
-                += acceleration_magnitude * acceleration_magnitude;
-        }
-        mean_angular_velocity /= sample_count;
-
-        double angular_velocity_deviation_sum = 0.0;
-        for (const data::IMUReading& reading : window) {
-            const Eigen::Vector3d angular_velocity(
-                static_cast<double>(reading.wx()),
-                static_cast<double>(reading.wy()),
-                static_cast<double>(reading.wz()));
-            angular_velocity_deviation_sum
-                += (angular_velocity - mean_angular_velocity).norm();
-        }
-
-        const double mean_acceleration_magnitude
-            = acceleration_magnitude_sum / sample_count;
-        const double acceleration_magnitude_variance
-            = std::max(0.0, acceleration_magnitude_squared_sum / sample_count
-                                - mean_acceleration_magnitude
-                                      * mean_acceleration_magnitude);
-
-        return std::sqrt(acceleration_magnitude_variance)
-               + angular_velocity_deviation_sum / sample_count;
-    };
-
-    const auto step = std::max(1UZ, window_size / 2);
-    const auto windows
-        = readings | std::views::slide(window_size) | std::views::stride(step);
-
-    StationaryWindow best{.samples = readings};
-    for (const auto& chunk : windows) {
-        // chunk leaves a short final window when the buffer isn't an exact
-        // multiple of window_size. A one- or two-sample window has almost no
-        // spread and would win with a meaningless score, so skip it -- unless
-        // the buffer is smaller than a single window, in which case that lone
-        // short chunk *is* the whole buffer and we score it, recovering the
-        // old "average everything" fallback.
-        const bool is_full_window = chunk.size() == window_size;
-        if (!is_full_window && readings.size() >= window_size) {
-            continue;
-        }
-        const std::span<const data::IMUReading> window(chunk);
-        const double score = score_window(window);
-        if (score < best.score) {
-            best = {.samples = window, .score = score};
-        }
-    }
-
-    if (best.score >= max_score) {
-        return std::unexpected(std::format(
-            "no window quiet enough to be stationary (best score {:.4f} >= "
-            "{:.4f}; best window {} samples of {} total)",
-            best.score, max_score, best.samples.size(), readings.size()));
-    }
-    return best;
-}
-};  // namespace
 
 std::optional<std::string> FilterKeyframePass::execute() {
     spdlog::info(LOG_ID " Executing");
@@ -483,51 +385,6 @@ std::optional<std::string> FilterKeyframePass::setDeltaTimestamps(
     return {};
 }
 
-namespace {
-std::pair<Eigen::Vector3d, Eigen::Vector3d> MeanAccelGyroImu(
-    std::span<const data::IMUReading> readings) {
-    Eigen::Vector3f accel_sum = Eigen::Vector3f::Zero();
-    Eigen::Vector3f gyro_sum = Eigen::Vector3f::Zero();
-
-    for (const auto& r : readings) {
-        accel_sum += Eigen::Vector3f{r.ax(), r.ay(), r.az()};
-        gyro_sum += Eigen::Vector3f{r.wx(), r.wy(), r.wz()};
-    }
-
-    Eigen::Vector3d accel
-        = accel_sum.cast<double>() / static_cast<double>(readings.size());
-    Eigen::Vector3d gyro
-        = gyro_sum.cast<double>() / static_cast<double>(readings.size());
-
-    return {accel, gyro};
-}
-
-std::pair<Eigen::Vector3d, Eigen::Vector3d> recoverGravityAndGyroBias(
-    const StationaryWindow& window, const data::CamSensorParams& cam,
-    const data::IMUSensorParams& imu) {
-    // The mean accel is in the IMU sensor frame; gravity must end up in the
-    // camera (= world) frame. Both extrinsics are sensor->body (T_BS), so the
-    // IMU->camera rotation is R(T_body_cam^-1 * T_body_imu) =
-    // R_body_cam^T * R_body_imu. Composing imu.T_BS keeps this correct for any
-    // provider.
-    const Eigen::Matrix3d r_body_cam = cam.T_BS.block<3, 3>(0, 0);
-    const Eigen::Matrix3d r_body_imu = imu.T_BS.block<3, 3>(0, 0);
-    const Eigen::Matrix3d r_cam_imu = r_body_cam.transpose() * r_body_imu;
-
-    const auto [accel_mean, gyro_mean] = MeanAccelGyroImu(window.samples);
-
-    // Specific force on a stationary IMU is the negative of gravity; rotate the
-    // negated mean accel from the IMU frame into the camera/world frame.
-    const auto gravity = r_cam_imu * -accel_mean;
-
-    // The mean gyro reading of a stationary IMU is its bias (kept in the IMU
-    // frame, which is where the CombinedImuFactor expects it).
-    const auto gyro_bias = gyro_mean;
-
-    return {gravity, gyro_bias};
-}
-};  // namespace
-
 std::optional<std::string> FilterKeyframePass::initializeFirstFrame(
     std::span<const data::IMUReading> imu_readings) const {
     const auto cam_params = storage_.getPtr<data::CamSensorParams>(
@@ -538,15 +395,15 @@ std::optional<std::string> FilterKeyframePass::initializeFirstFrame(
         ResourceIdentifier::ImuParamsName);
     WSLAM_ASSERT(imu_params.has_value() && imu_params.value() != nullptr);
 
-    const auto window
-        = FindStationaryWindow(imu_readings, filter_.gravity_window_samples,
-                               filter_.max_score_for_stationary);
+    const auto window = utils::FindStationaryWindow(
+        imu_readings, filter_.gravity_window_samples,
+        filter_.max_score_for_stationary);
 
     if (!window) {
         return "finding stationary window: " + std::move(window).error();
     }
 
-    const auto [gravity, gyro_bias] = recoverGravityAndGyroBias(
+    const auto [gravity, gyro_bias] = utils::RecoverGravityAndGyroBias(
         window.value(), *cam_params.value(), *imu_params.value());
 
     shared_.gravity_world = gravity;

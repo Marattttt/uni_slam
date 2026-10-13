@@ -39,7 +39,10 @@ WORLD/MAJOR/MINOR version matches the consumer's at compile time.
 Flags:
 - `awaiter` — verbose logging of GPU future add/complete events (`-DLOG_AWAITER_CALLS=ON`).
 - `-gui` — enable the Pangolin visualisation pass.
-- `-v2` — run the v2 pipeline (ONNX feature detect + pose estimate, no mapping yet) instead of the default one.
+- `-v2` — run the v2 pipeline (ONNX feature detect + pose estimate + fixed-lag mapping) instead of the default one.
+- `-no-mapping` — v2 only: drop the mapping stage; the model then pairs consecutive frames.
+- `--record-frontend=PATH.msgpack` — v2 with mapping only: record the front-end output
+  for replaying the mapping stage without the GPU (see `MappingReplayTest` below).
 - `--max-iters=N` — stop after N pipeline iterations (0 = unlimited).
 - `--map-out=PATH.ply` — dump the final factor-graph map to disk.
 - `--keyframes=PATH.json` — v2 only: feed the pipeline only the frames of a keyframe
@@ -71,6 +74,8 @@ It sets:
 - `WSLAM_ONNX_KEYPOINTS` — optional keypoints per image the model returns; defaults to
   1024 (`raco_lightglue::kDefaultKeypointCount`). Set it when testing another model
   variant; the model's keypoints output shape is checked against it at startup.
+- `WSLAM_FRONTEND_RECORDING` — optional front-end recording for `MappingReplayTest`
+  (kept outside the repo).
 - `TUM_FR1_RGBD_DIR` — path to TUM RGB-D dataset (the TUM provider has been removed, so this variable is currently unused).
 
 ASan + UBSan are opt-in via `-DENABLE_SANITIZERS=TRUE` (default off). When enabled
@@ -103,6 +108,14 @@ saves its report. `PoseEstimateDatasetTest.V2MatchScoreAblation` runs the model 
 re-scores the v2 geometry under every score-floor / weighting / refinement config
 (`WSLAM_ABLATION_REPORT_OUT=path.md`). Results and analysis:
 `benchmarks/POSE_ESTIMATE_V2_NOTE.md`.
+`LocalSmootherTest`/`JobWorkerTest` cover the v2 mapping back-end machinery (no data).
+`MappingReplayTest` replays a front-end recording (`WSLAM_FRONTEND_RECORDING=path.msgpack`,
+made by `pc_wslam -v2 --max-iters=N --record-frontend=PATH`; skips without it) through
+the CPU RANSAC/triangulation passes and the v2 mapping stage, fails at the first
+keyframe decision that differs from the recording (re-record after changing the gate)
+and checks the final map against the recording run's; `WSLAM_REPLAY_MAP_OUT=map.ply`
+exports the replayed map for `benchmarks/compare.py`. Most of its time is
+`TriangulatePass`'s refinement, so it is much faster in an optimised build.
 `wslam/src/feature_detect/brief_tests.inc` is static BRIEF descriptor data, not a
 test file.
 
@@ -114,7 +127,7 @@ The build is split into a header-only interface library plus three compiled
 libraries, linked by the thin `pc_wslam` executable (`main.cpp`):
 
 - `base/` (`wslam::base`, INTERFACE) — shared header-only utilities (`anybag.hpp`,
-  `assert.hpp`, `unique_any.hpp`). Kept flat: `base/` itself is the include root, so
+  `assert.hpp`, `unique_any.hpp`, `job_worker.hpp`). Kept flat: `base/` itself is the include root, so
   consumers include e.g. `"anybag.hpp"`. Carries the `stdc++exp` link requirement of
   `WSLAM_ASSERT`'s `std::stacktrace` as an INTERFACE dependency, so consumers inherit it.
 - `compute/` (`wslam::compute`) — public headers in `compute/include/compute/`, sources
@@ -122,7 +135,8 @@ libraries, linked by the thin `pc_wslam` executable (`main.cpp`):
 - `data/` (`wslam::data`) — public headers in `data/include/data/`, sources in `data/src/`.
 - `wslam/` (`wslam::app`) — the public API is only `wslam/include/wslam/wslam.hpp` and
   `common.hpp`; everything else lives under `wslam/src/` (`feature_detect/`, `map/`,
-  `pose_estimate_cpu/`, `viz/`, plus `common.cpp`, `export.*`, `models.hpp`,
+  `pose_estimate_cpu/`, `viz/`, the v2 `feature_detect_v2/`, `pose_estimate_v2/`,
+  `map_v2/`, plus `common.cpp`, `export.*`, `frontend_recording.*`, `models.hpp`,
   `mapping_state.hpp`).
 
 Each compiled library exposes its public directory with
@@ -240,18 +254,25 @@ modifying it, remember the changes are tracked in this repo's history.
 
 ### v2 pipeline: ONNX feature detect (`wslam/src/feature_detect_v2/`)
 
-`CreateWslamPipelineV2()` (selected with `-v2`) builds a standalone pipeline of two
-stages, feature detect and pose estimate (below); no mapping yet. The `GpuStage`
+`CreateWslamPipelineV2()` (selected with `-v2`) builds a standalone pipeline of three
+stages: feature detect, pose estimate and mapping (below; `WslamConfig::enable_mapping`,
+`-no-mapping` drops it). The `GpuStage`
 `v2::CreateFeatureDetectStage` runs the
 RaCo-ALIKED-LightGlue+ model (`resources/*.onnx`, gitignored; LightGlue-ONNX v3.0)
 through ONNX Runtime's WebGPU EP on the project's own `wgpu::Device`. All v2 code
 lives in `namespace wslam::v2` (the v2 `FillPyramidPass`/`SensorLoaderPass` share
 names with v1 and are compiled into the same library). Per frame:
-`SensorLoaderPass` → `FillPyramidPass` (Current pyramid) → `PackModelInputPass`
-(Previous + Current LoD0, centre-cropped to 736×480, gray → RGB, NCHW into the
-images buffer) → `OrtFeatureDetectPass` (GPU pass in the same wait batch, `session.Run` with an IoBinding;
-skipped on the first frame) → `PreservePyramidPass` (Current → Previous texture
-copy). The model's tensor names,
+`SensorLoaderPass` → `PreservePyramidPass` (Current → Previous texture copy of the
+*previous* frame, when it became the reference) → `FillPyramidPass` (Current pyramid) →
+`PackModelInputPass` (Previous + Current LoD0, centre-cropped to 736×480, gray → RGB,
+NCHW into the images buffer) → `OrtFeatureDetectPass` (GPU pass in the same wait batch,
+`session.Run` with an IoBinding; skipped on the first frame). Previous is the model's
+**reference** image, chosen by `v2::ReferenceAdvance`: `EveryFrame` (no mapping:
+consecutive frames) or `OnKeyframeMarker` (with mapping: it advances only when the
+mapping stage set `FeatureReferenceAdvanceName` — every frame before the first
+keyframe, then on accepted keyframes — so the model always pairs the last keyframe
+with the current frame, exactly the factor-graph edge). The preserve pass runs at the
+start of the next frame because acceptance is decided after the detect stage. The model's tensor names,
 shapes and row layouts are in `raco_lightglue.hpp`; outputs land in AnyBag under
 the `ResourceIdentifier::Ort*` keys. The model is chosen through `.env`
 (`WSLAM_ONNX_MODEL`, `WSLAM_ONNX_KEYPOINTS`), so the keypoint count is a runtime
@@ -283,8 +304,48 @@ recorded model matches. The geometry is pure functions in `pose_estimate_v2/util
 (`epipolar_geometry`, `camera`). Payload types (`KeypointMatches`, `KeypointRansacResult`,
 `KeypointTriangulationResult`) are in `models.hpp`, keys `ResourceIdentifier::Keypoint*`.
 The model's keypoints come out of a sorted `TopK`, so a keypoint's index is its RaCo
-rank; nothing uses that yet.
+rank; the v2 mapping stage relies on it being deterministic (below).
 The GUI is not ported to v2.
+
+`v2::mapping::CreateMappingStage` (`wslam/src/map_v2/`, `namespace wslam::v2::mapping`
+— not `v2::map`, which would shadow `wslam::map` inside v2 code) ports the v1 mapping
+rewrite to the model's correspondences and replaces iSAM2 with a sliding-window
+`gtsam::BatchFixedLagSmoother`. Graph and priors are v1's (smart projection factors,
+`CombinedImuFactor`, no visual between factor, ids from 1, hybrid initial guess);
+shared IMU helpers and env knobs live in `map/utils.{hpp,cpp}`. Stage order
+**Filter → Drain → Associate → Build → Submit**:
+- `FilterKeyframePass` — v1's gate (min landmarks, rotation OR median parallax over all
+  inliers, min new landmarks, bootstrap/gravity window). *Takes* the triangulation and
+  RANSAC results so an early-stopped pose estimate never maps stale geometry. Publishes
+  the reference marker and a `KeyframeCandidate`.
+- `DrainSmootherPass` → `SubmitSmootherPass::drainPending()` — blocks on the previous
+  keyframe's update (only accepted keyframes reach it), archives keyframes that left
+  the window (`SharedBindings::archived_poses`, last in-window estimate), and *retires*
+  every landmark whose smart factor the smoother marginalised (its info is in the
+  marginal; last triangulation goes to `archived_landmarks`). The archive is append-only
+  and is the input meant for later re-observation handling on another thread.
+- `AssociateLandmarksPass` — after the drain, so it sees retirements. Tracks are keyed
+  by the model's keypoint index in the last keyframe image (`active_landmarks`) and
+  confirmed by pixel (`LookupTrack`, 0.5 px): the model re-detects the keyframe image
+  when it becomes the reference. A match continues a landmark only if its factor is
+  still in the window; otherwise it starts a new one (prev + curr observations).
+- `BuildFactorsPass` — factors + values, every new key stamped with its keyframe index
+  (`SmootherTime`); re-observed smart factors are cloned, old slot in `remove_slots`.
+- `SubmitSmootherPass` — submits to `SmootherWorker` without waiting.
+`SmootherWorker` (`smoother_worker.hpp`) owns a `LocalSmoother` (a
+`BatchFixedLagSmoother` whose `update(..., remove_slots)` frees slots through the
+protected `removeFactors()`: the base `factorsToRemove` only nulls them, which leaks one
+slot per re-observation) on a `base::JobWorker` thread (one job in flight). The window is
+counted in keyframes (`WSLAM_SMOOTHER_WINDOW`, default 10; lag = N − 1);
+`WSLAM_SMOOTHER_MAX_ITERS` (default 10) caps LM per update. The base API returns no
+factor indices, so the result carries `live_slots` (factor pointer → slot); a submitted
+smart factor missing from it was marginalised. Never mutate a submitted factor or call
+`point()` on one while a job runs. Snapshot = archive + in-window estimate.
+
+`frontend_recording.{hpp,cpp}` (`v2::FrontendRecorder` / `v2::FrontendReplay`,
+MessagePack): with mapping the front end depends on the keyframe decisions, so a
+recording is a golden run — per frame the model's matches, new IMU samples and whether
+mapping advanced the reference, plus the run's final keyframes.
 
 ORT interop (`compute/onnx_interop.hpp`) facts that are easy to get wrong:
 - An external device needs `deviceId` > 0 (`OrtProvider::kWebGpuContextId` = 1)

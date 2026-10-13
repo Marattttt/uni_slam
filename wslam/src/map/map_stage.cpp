@@ -9,70 +9,19 @@
 
 #include "anybag.hpp"
 #include "compute/compute.hpp"
+#include "compute/stage.hpp"
 #include "map_build_factors.hpp"
 #include "map_common.hpp"
 #include "map_filter_keyframe.hpp"
 #include "map_submit_updates.hpp"
 #include "mapping.hpp"
-#include "compute/stage.hpp"
+#include "utils.hpp"
 
 using namespace wslam;
 
 #define LOG_ID "[Mapping stage]"
 
-namespace {
-
-// Env-var overrides for the mapping back-end's performance/accuracy levers.
-// Defaults live in SubmitUpdatesPass::Opts; these let a benchmark sweep flip
-// each knob without recompiling. See benchmarks/HOWTO_REEVALUATE.
-const char* envOrNull(const char* name) {
-    const char* value = std::getenv(name);
-    return (value != nullptr && value[0] != '\0') ? value : nullptr;
-}
-
-double envDouble(const char* name, double fallback) {
-    if (const char* value = envOrNull(name)) {
-        try {
-            return std::stod(value);
-        } catch (...) {
-            spdlog::warn(LOG_ID " ignoring non-numeric {}='{}'", name, value);
-        }
-    }
-    return fallback;
-}
-
-int envInt(const char* name, int fallback) {
-    if (const char* value = envOrNull(name)) {
-        try {
-            return std::stoi(value);
-        } catch (...) {
-            spdlog::warn(LOG_ID " ignoring non-integer {}='{}'", name, value);
-        }
-    }
-    return fallback;
-}
-
-uint32_t envU32(const char* name, uint32_t fallback) {
-    const int value = envInt(name, static_cast<int>(fallback));
-    return value < 0 ? fallback : static_cast<uint32_t>(value);
-}
-
-bool envCholesky(bool fallback) {
-    if (const char* value = envOrNull("WSLAM_ISAM_FACTORIZATION")) {
-        const std::string s(value);
-        if (s == "CHOLESKY" || s == "cholesky") {
-            return true;
-        }
-        if (s == "QR" || s == "qr") {
-            return false;
-        }
-        spdlog::warn(LOG_ID " ignoring unknown WSLAM_ISAM_FACTORIZATION='{}'",
-                     value);
-    }
-    return fallback;
-}
-
-}  // namespace
+namespace utils = wslam::map::utils;
 
 MappingStage wslam::CreateMappingStage(compute::Compute& compute,
                                        AnyBag& storage,
@@ -85,7 +34,8 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // passes (which move into Compute) live — see the note there.
     auto bindings = std::make_shared<map::MappingSharedBindings>();
 
-    auto stage = std::make_unique<compute::Stage>("Mapping", &compute.getPerf());
+    auto stage
+        = std::make_unique<compute::Stage>("Mapping", &compute.getPerf());
 
     auto filter = std::make_unique<map::FilterKeyframePass>(compute, *bindings);
 
@@ -96,15 +46,15 @@ MappingStage wslam::CreateMappingStage(compute::Compute& compute,
     // cadence for an apples-to-apples baseline.
     map::SubmitUpdatesPass::Opts submit_opts{};
     submit_opts.snapshot_every_n_keyframes
-        = config.enable_gui ? 1U : envU32("WSLAM_SNAPSHOT_EVERY_N", 0U);
+        = config.enable_gui ? 1U : utils::EnvU32("WSLAM_SNAPSHOT_EVERY_N", 0U);
 
     // Live-loop iSAM2 levers. Code defaults are the chosen configuration; each
     // knob is env-overridable for benchmark sweeps (see HOWTO_REEVALUATE).
-    submit_opts.relinearize_threshold = envDouble(
+    submit_opts.relinearize_threshold = utils::EnvDouble(
         "WSLAM_ISAM_RELIN_THRESH", submit_opts.relinearize_threshold);
-    submit_opts.use_cholesky = envCholesky(submit_opts.use_cholesky);
+    submit_opts.use_cholesky = utils::EnvCholesky(submit_opts.use_cholesky);
     submit_opts.extra_updates
-        = envU32("WSLAM_ISAM_EXTRA_UPDATES", submit_opts.extra_updates);
+        = utils::EnvU32("WSLAM_ISAM_EXTRA_UPDATES", submit_opts.extra_updates);
 
     spdlog::info(LOG_ID
                  " back-end config: relin_thresh={}, "

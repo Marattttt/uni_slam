@@ -19,6 +19,12 @@ Options:
                     automatically.
   --keyframes=PATH  Only feed the frames listed in this keyframe schedule
                     JSON to the pipeline (all IMU is kept). Requires -v2.
+  -no-mapping       v2 only: run without the mapping stage; the model then
+                    pairs consecutive frames.
+  --record-frontend=PATH
+                    v2 only: record the front-end output (model matches,
+                    IMU, keyframe decisions) to PATH (.msgpack) for
+                    replaying the mapping stage without the GPU.
 EOF
 }
 
@@ -37,6 +43,8 @@ for arg in "$@"; do
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
         --map-out=*)    RUN_ARGS+=("$arg") ;;
         --keyframes=*)  RUN_ARGS+=("$arg") ;;
+        -no-mapping)    RUN_ARGS+=("$arg") ;;
+        --record-frontend=*) RUN_ARGS+=("$arg") ;;
         Debug)          BUILD_TYPE="Debug" ;;
         Release)        BUILD_TYPE="RelWithDebInfo" ;;
         *)              echo "error: unknown argument '$arg'" >&2

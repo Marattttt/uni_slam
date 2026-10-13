@@ -27,6 +27,7 @@ WslamConfig parseArgs(std::span<char*> args) {
     constexpr std::string_view kIterFlag = "--max-iters=";
     constexpr std::string_view kMapOutFlag = "--map-out=";
     constexpr std::string_view kKeyframesFlag = "--keyframes=";
+    constexpr std::string_view kRecordFrontendFlag = "--record-frontend=";
     WslamConfig config;
     for (std::string_view arg : args) {
         if (arg == "-gui") {
@@ -50,6 +51,11 @@ WslamConfig parseArgs(std::span<char*> args) {
         } else if (arg.starts_with(kKeyframesFlag)) {
             config.keyframes_path = std::filesystem::path(
                 std::string(arg.substr(kKeyframesFlag.size())));
+        } else if (arg == "-no-mapping") {
+            config.enable_mapping = false;
+        } else if (arg.starts_with(kRecordFrontendFlag)) {
+            config.frontend_recording_out = std::filesystem::path(
+                std::string(arg.substr(kRecordFrontendFlag.size())));
         }
     }
     return config;
@@ -301,6 +307,13 @@ int main(int argc, char* argv[]) {
     // The v1 mapping stage selects keyframes itself from every frame
     if (!config.keyframes_path.empty() && !config.use_pipeline_v2) {
         spdlog::critical(LOG_ID " --keyframes is only supported with -v2");
+        return 1;
+    }
+    if (!config.frontend_recording_out.empty()
+        && (!config.use_pipeline_v2 || !config.enable_mapping)) {
+        spdlog::critical(LOG_ID
+                         " --record-frontend needs -v2 with the mapping stage: "
+                         "the recording replays its keyframe decisions");
         return 1;
     }
 

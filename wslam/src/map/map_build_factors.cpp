@@ -25,8 +25,9 @@
 
 #include "assert.hpp"
 #include "common.hpp"
-#include "map_common.hpp"
 #include "data/provider_base.hpp"
+#include "map_common.hpp"
+#include "utils.hpp"
 
 using namespace wslam;
 using namespace wslam::map;
@@ -39,97 +40,6 @@ std::optional<std::string> BuildFactorsPass::initialize() {
     spdlog::info(LOG_ID " initializing (no-op)");
     return {};
 }
-
-namespace {
-namespace impl {
-// Build preintegration parameters from noise densities and the
-// startup gravity estimate
-std::shared_ptr<gtsam::PreintegrationCombinedParams> createIMUCalibration(
-    const data::CamSensorParams& cam, const data::IMUSensorParams& imu,
-    const Eigen::Vector3d& gravity, double imu_integration_sigma) {
-    const double gyro_var
-        = imu.gyroscope_noise_density * imu.gyroscope_noise_density;
-    const double accel_var
-        = imu.accelerometer_noise_density * imu.accelerometer_noise_density;
-    const double gyro_bias_var
-        = imu.gyroscope_random_walk * imu.gyroscope_random_walk;
-    const double accel_bias_var
-        = imu.accelerometer_random_walk * imu.accelerometer_random_walk;
-
-    auto calib = gtsam::PreintegrationCombinedParams::MakeSharedU();
-    calib->n_gravity = gravity;
-    calib->setGyroscopeCovariance(gtsam::Matrix3::Identity() * gyro_var);
-    calib->setAccelerometerCovariance(gtsam::Matrix3::Identity() * accel_var);
-    calib->setIntegrationCovariance(
-        gtsam::Matrix3::Identity()
-        * (imu_integration_sigma * imu_integration_sigma));
-    calib->setBiasOmegaCovariance(gtsam::Matrix3::Identity() * gyro_bias_var);
-    calib->setBiasAccCovariance(gtsam::Matrix3::Identity() * accel_bias_var);
-    calib->setBiasAccOmegaInit(gtsam::Matrix6::Identity() * 1e-5);
-
-    // body_P_sensor = pose of the IMU in the navigation body frame, which this
-    // pipeline takes to be the camera frame (the pose variables are camera
-    // poses). Both extrinsics use the sensor->body T_BS convention, so:
-    //   T_cam_imu = T_body_cam^-1 * T_body_imu
-    // Composing imu.T_BS keeps this correct for any provider, including one
-    // whose IMU frame differs from its body frame.
-    //
-    // Remark: a provider whose body frame coincides with its IMU frame (as in
-    // EuRoC) must set imu.T_BS to identity, which collapses this to
-    // T_body_cam^-1.
-    const gtsam::Pose3 T_body_cam(cam.T_BS);
-    const gtsam::Pose3 T_body_imu(imu.T_BS);
-    calib->setBodyPSensor(T_body_cam.inverse() * T_body_imu);
-    return calib;
-}
-
-// Integrate the between-keyframe IMU window into 'combined'
-// Returns the number of samples integrated.
-uint32_t IntegrateIMUWindow(gtsam::PreintegratedCombinedMeasurements& combined,
-                            std::span<const data::IMUReading> readings,
-                            uint64_t prev_kf_ts, uint64_t curr_kf_ts) {
-    uint64_t last_ts = prev_kf_ts;
-    uint32_t integrated = 0;
-
-    const auto integrate
-        = [&combined, &integrated](const data::IMUReading& r, double dt_s) {
-              const gtsam::Vector3 accel{r.ax(), r.ay(), r.az()};
-              const gtsam::Vector3 gyro{r.wx(), r.wy(), r.wz()};
-              combined.integrateMeasurement(accel, gyro, dt_s);
-              integrated++;
-          };
-
-    const auto is_good_ts
-        = [prev_kf_ts](auto&& r) { return r.timestamp > prev_kf_ts; };
-
-    size_t skipped_frames = 0;
-    for (const auto& r : readings | std::views::filter(is_good_ts)) {
-        if (r.timestamp > last_ts
-            && static_cast<double>(r.timestamp - last_ts) > 1e9) {
-            skipped_frames++;
-        }
-
-        const auto dt_s = static_cast<double>(r.timestamp - last_ts) * 1e-9;
-        last_ts = r.timestamp;
-        integrate(r, dt_s);
-    }
-
-    if (skipped_frames > 0) {
-        spdlog::warn(LOG_ID " Skipped {} frames when integrating IMU",
-                     skipped_frames);
-    }
-
-    // Tail up to the keyframe timestamp. Guard against an empty window —
-    // readings.back() on an empty span is UB (this guard was missing before).
-    if (!readings.empty() && curr_kf_ts > last_ts) {
-        const double dt = static_cast<double>(curr_kf_ts - last_ts) * 1e-9;
-        integrate(readings.back(), dt);
-    }
-
-    return integrated;
-}
-}  // namespace impl
-}  // namespace
 
 auto BuildFactorsPass::computeSensorCalibration() const -> std::expected<
     std::optional<std::tuple<decltype(imu_calibration_),
@@ -162,8 +72,8 @@ auto BuildFactorsPass::computeSensorCalibration() const -> std::expected<
         cam.intrinsics(0), cam.intrinsics(1), 0.0, cam.intrinsics(2),
         cam.intrinsics(3));
 
-    auto imu_cal = impl::createIMUCalibration(cam, imu, shared_.gravity_world,
-                                              opts_.integration_sigma);
+    auto imu_cal = utils::CreateImuCalibration(cam, imu, shared_.gravity_world,
+                                               opts_.integration_sigma);
 
     return std::make_tuple(imu_cal, cam_cal);
 }
@@ -226,7 +136,7 @@ std::expected<FactorBundle, std::string> BuildFactorsPass::integrateImu(
 
     gtsam::PreintegratedCombinedMeasurements combined{imu_calibration_,
                                                       shared_.last_bias};
-    const uint32_t integrated = impl::IntegrateIMUWindow(
+    const uint32_t integrated = utils::IntegrateImuWindow(
         combined, std::span(delta.imu), delta.prev_kf_ts, delta.curr_kf_ts);
 
     bundle.new_factors.emplace_shared<gtsam::CombinedImuFactor>(

@@ -11,6 +11,7 @@
 #include "compute/onnx_interop.hpp"
 #include "compute/stage.hpp"
 #include "data/provider_base.hpp"
+#include "preserve_pyramid.hpp"
 #include "shared_bindings.hpp"
 
 // Path of the RaCo-ALIKED-LightGlue model the v2 pipeline runs. Required
@@ -33,16 +34,19 @@ struct ModelOptions {
 
 // Reads the model selection from WSLAM_ONNX_MODEL_ENV and
 // WSLAM_ONNX_KEYPOINTS_ENV
-[[nodiscard]] std::expected<ModelOptions, std::string> ReadModelOptionsFromEnv();
+[[nodiscard]] std::expected<ModelOptions, std::string>
+ReadModelOptionsFromEnv();
 
-// Detects and matches features between the previous and the current frame
-// with the RaCo-ALIKED-LightGlue model. reading_filter selects which frames
-// and IMU samples of the provider are used
+// Detects and matches features between the reference (Previous) and the
+// current frame with the RaCo-ALIKED-LightGlue model. reference_advance
+// selects which frames become the reference: every frame, or the keyframes the
+// mapping stage accepts. reading_filter selects which frames and IMU samples
+// of the provider are used
 std::unique_ptr<compute::Stage> CreateFeatureDetectStage(
     compute::Compute& compute, std::shared_ptr<SharedBindings> bindings,
     std::shared_ptr<compute::OrtProvider> ort,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
-    const std::filesystem::path& model_path, const WslamConfig& config = {},
-    data::ReadingFilter reading_filter = {});
+    const std::filesystem::path& model_path, ReferenceAdvance reference_advance,
+    const WslamConfig& config = {}, data::ReadingFilter reading_filter = {});
 
 };  // namespace wslam::v2

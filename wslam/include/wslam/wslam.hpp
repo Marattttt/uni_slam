@@ -54,7 +54,8 @@ template <size_t CamCnt>
 }
 
 // Pipeline built around the RaCo-ALIKED-LightGlue ONNX model: feature detect
-// and matching, then relative pose estimation. No mapping stage yet
+// and matching, relative pose estimation, then (config.enable_mapping)
+// sliding-window visual-inertial mapping
 template <size_t CamCnt>
 [[nodiscard]] std::optional<std::string> CreateWslamPipelineV2(
     compute::Compute& compute, data::ProviderBase<CamCnt>& provider,

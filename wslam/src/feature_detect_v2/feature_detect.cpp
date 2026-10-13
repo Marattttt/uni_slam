@@ -67,10 +67,9 @@ std::expected<v2::ModelOptions, std::string> v2::ReadModelOptionsFromEnv() {
             text.data(), text.data() + text.size(), keypoint_count);
         if (error != std::errc{} || end != text.data() + text.size()
             || keypoint_count <= 0) {
-            return std::unexpected(
-                std::format(WSLAM_ONNX_KEYPOINTS_ENV
-                            "='{}' is not a positive integer",
-                            text));
+            return std::unexpected(std::format(
+                WSLAM_ONNX_KEYPOINTS_ENV "='{}' is not a positive integer",
+                text));
         }
         options.keypoint_count = keypoint_count;
     }
@@ -85,14 +84,20 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
     compute::Compute& compute, std::shared_ptr<SharedBindings> bindings,
     std::shared_ptr<compute::OrtProvider> ort,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
-    const std::filesystem::path& model_path, const WslamConfig& config,
-    data::ReadingFilter reading_filter) {
+    const std::filesystem::path& model_path, ReferenceAdvance reference_advance,
+    const WslamConfig& config, data::ReadingFilter reading_filter) {
     const auto gpu = compute.getGPUPtr();
     auto stage = std::make_unique<compute::GpuStage>("Feature detect v2", gpu,
                                                      &compute.getPerf());
 
     stage->add_pass(std::make_unique<SensorLoaderPass>(
         std::move(provider), compute.getStorage(), std::move(reading_filter)));
+
+    // Before the fill pass: it moves the previous frame, still in Current, to
+    // Previous when that frame became the reference. Queue order keeps the
+    // copy ahead of the fill overwriting Current
+    stage->add_pass(std::make_unique<PreservePyramidPass>(
+        gpu, bindings, compute.getStorage(), reference_advance));
 
     StorageImageProvider img_provider{compute.getStorage()};
     stage->add_pass(std::make_unique<FillPyramidPass>(
@@ -106,10 +111,7 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
 
     // GPU pass: ORT submits to the same queue, so it runs after the packing
     stage->add_pass(std::make_unique<OrtFeatureDetectPass>(
-        std::move(ort), model_path, bindings, compute.getStorage()));
-
-    stage->add_pass(
-        std::make_unique<PreservePyramidPass>(gpu, std::move(bindings)));
+        std::move(ort), model_path, std::move(bindings), compute.getStorage()));
 
     (void)config;
 

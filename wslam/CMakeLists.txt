@@ -3,6 +3,7 @@ add_library(wslam_app
     src/wslam.cpp
     src/export.cpp
     src/keyframe_schedule.cpp
+    src/frontend_recording.cpp
 
     src/feature_detect/cull_corners.cpp
     src/feature_detect/detect_corners.cpp
@@ -40,7 +41,15 @@ add_library(wslam_app
     src/map/map_filter_keyframe.cpp
     src/map/map_submit_updates.cpp
     src/map/map_stage.cpp
+    src/map/utils.cpp
     src/map/mapping.cpp
+
+    src/map_v2/associate_landmarks.cpp
+    src/map_v2/build_factors.cpp
+    src/map_v2/filter_keyframe.cpp
+    src/map_v2/map_stage.cpp
+    src/map_v2/smoother_worker.cpp
+    src/map_v2/submit_updates.cpp
 
     src/viz/viz.cpp
     src/viz/vizualize_data.cpp

@@ -223,6 +223,9 @@ std::expected<PipelineRun, std::string> RunV2(
     WslamConfig config{};
     config.use_pipeline_v2 = true;
     config.keyframes_path = kSchedulePath;
+    // Pose estimation alone: the model pairs consecutive scheduled keyframes,
+    // and the recorder below takes the geometry the mapping stage would
+    config.enable_mapping = false;
     if (auto err = CreateWslamPipelineV2(compute, euroc, config)) {
         return std::unexpected("creating pipeline: " + std::move(err).value());
     }

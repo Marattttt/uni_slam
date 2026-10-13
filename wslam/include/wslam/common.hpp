@@ -38,6 +38,17 @@ struct WslamConfig {
     // consecutive keyframes; all IMU samples are still read. Empty means
     // every frame. v2 only
     std::filesystem::path keyframes_path;
+
+    // Run the mapping stage after pose estimation. The model's reference frame
+    // then tracks the keyframes mapping accepts; without mapping it advances
+    // every frame. v2 only
+    bool enable_mapping = true;
+
+    // Record the front-end output (model matches, IMU, keyframe decisions) of
+    // the run to this MessagePack file, for replaying the mapping stage without
+    // the GPU (see frontend_recording.hpp). Empty means no recording. v2 with
+    // mapping only
+    std::filesystem::path frontend_recording_out;
 };
 
 struct LOD {
@@ -146,6 +157,8 @@ constexpr std::string MatchedFeaturesName = "gen:feat:match";
 // when a keyframe is accepted (the reference must track the latest
 // keyframe so matching/triangulation span exactly the graph edge) and on
 // every pre-origin frame (frame-to-frame matching while bootstrapping).
+// The v2 pipeline uses it the same way: its PreservePyramidPass consumes it
+// and makes the frame the model's reference image.
 // NOTE: constexpr std::string requires the literal to fit in SSO (15
 // chars on libstdc++), same as every other key in this namespace.
 constexpr std::string FeatureReferenceAdvanceName = "gen:feat:refadv";
@@ -156,6 +169,9 @@ constexpr std::string MapSnapshotName = "gen:map:snap";
 // Per-accepted-keyframe factor-graph delta produced by BuildFactorsPass and
 // consumed by the iSAM update pass (graph + values + smart-factor bookkeeping).
 constexpr std::string FactorBundleName = "gen:map:facbndl";
+// v2 mapping: keyframe accepted by the filter pass, before landmark
+// association (v2::map::KeyframeCandidate)
+constexpr std::string KeyframeCandidateName = "gen:map:kfcand";
 
 constexpr std::string GetCameraIntrinsicsName(uint32_t cam_idx) {
     return std::format("res:cam:intrinsics:{}", cam_idx);
