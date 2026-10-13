@@ -47,11 +47,12 @@ constexpr const char* kWebGpuEPBufferName = "WebGPU_Buf";
 }  // namespace
 
 std::expected<Ort::Session, std::string> OrtProvider::LoadModel(
-    const std::filesystem::path& model_name,
+    const std::filesystem::path& model_name, bool use_webgpu_ep,
     std::optional<Ort::SessionOptions> extra_opts) {
     WSLAM_ASSERT(!extra_opts, "custom session options are not implemented");
 
-    spdlog::info(LOG_ID " loading model {}", model_name.string());
+    spdlog::info(LOG_ID " loading model {} on the {} execution provider",
+                 model_name.string(), use_webgpu_ep ? "WebGPU" : "CPU");
 
     // WebGPU EP reads the instance and device as the integer values of the raw
     // WGPUInstance / WGPUDevice handles
@@ -62,6 +63,11 @@ std::expected<Ort::Session, std::string> OrtProvider::LoadModel(
 
     try {
         Ort::SessionOptions opts;
+        if (!use_webgpu_ep) {
+            // The CPU execution provider is the one a session always has
+            return Ort::Session{*env_, model_name.c_str(), opts};
+        }
+
         opts.AppendExecutionProvider(
             "WebGPU", {
                           {"deviceId", std::to_string(kWebGpuContextId)},
@@ -122,6 +128,17 @@ std::expected<Ort::Value, std::string> OrtProvider::wrapBuffer(
 
 std::optional<std::string> OrtPass::loadSession() {
     auto session = ort_->LoadModel(model_path_);
+    if (!session) {
+        return std::move(session).error();
+    }
+
+    session_ = std::move(session).value();
+
+    return std::nullopt;
+}
+
+std::optional<std::string> OrtCpuPass::loadSession() {
+    auto session = ort_->LoadModel(model_path_, /*use_webgpu_ep=*/false);
     if (!session) {
         return std::move(session).error();
     }

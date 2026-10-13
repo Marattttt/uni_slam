@@ -376,8 +376,18 @@ std::optional<std::string> GPU::initAdapter() {
         userdata->adapter_ = std::move(adapter);
     };
 
+    // Despite its name, forceFallbackAdapter is not a fallback: Dawn then
+    // discards every adapter but its fallback one, SwiftShader, which runs on
+    // the CPU. Without SwiftShader in the Dawn build there is no adapter.
+    // Dawn searches SwiftShader first and, without a power preference, ranks
+    // all adapter types the same, so a GPU has to be asked for explicitly:
+    // HighPerformance ranks discrete GPUs, then integrated ones, then the CPU
+    const bool is_cpu = compute_device_ == ComputeDevice::Cpu;
     wgpu::RequestAdapterOptions options{
         .nextInChain = nullptr,
+        .powerPreference = is_cpu ? wgpu::PowerPreference::Undefined
+                                  : wgpu::PowerPreference::HighPerformance,
+        .forceFallbackAdapter = is_cpu,
         .compatibleSurface = nullptr,
     };
 
@@ -394,6 +404,10 @@ std::optional<std::string> GPU::initAdapter() {
         std::string err = user_data.errormsg.empty()
                               ? "timeout or unknown error"
                               : user_data.errormsg;
+        if (is_cpu) {
+            err += "; the CPU adapter is SwiftShader, which Dawn must be built "
+                   "with (build_onnxruntime.sh)";
+        }
         return "wgpu RequestAdapter failed: " + err;
     }
 
@@ -406,9 +420,15 @@ std::optional<std::string> GPU::initAdapter() {
 
     std::ostringstream types;
     types << info.backendType << ", " << info.adapterType;
-    spdlog::info("[GPU] Using adapter '{}' ({}; {})",
+    spdlog::info("[GPU] Using adapter '{}' ({}; {}) for {} compute",
                  std::string_view(info.device), types.str(),
-                 std::string_view(info.description));
+                 std::string_view(info.description), compute_device_);
+
+    if (is_cpu != (info.adapterType == wgpu::AdapterType::CPU)) {
+        return std::format("{} compute got the adapter '{}' of type {}",
+                           compute_device_, std::string_view(info.device),
+                           types.str());
+    }
 
     return std::nullopt;
 }

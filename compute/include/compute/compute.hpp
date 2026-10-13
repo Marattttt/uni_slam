@@ -36,9 +36,11 @@ struct ComputeConfig {
     const std::function<wgpu::UncapturedErrorCallback<void>> errorCallback_;
     const std::filesystem::path shader_module_path_prefix_;
     const std::filesystem::path perf_logs_output_;
+    const ComputeDevice compute_device_ = ComputeDevice::Gpu;
 };
 
-ComputeConfig createDefaultConfig();
+ComputeConfig createDefaultConfig(ComputeDevice compute_device
+                                  = ComputeDevice::Gpu);
 
 constexpr std::string kComputeStopExecution = "COMP_STOP";
 constexpr std::string kFullStopExecution = "FULL_STOP";

@@ -39,7 +39,8 @@ void Compute::addStage(std::unique_ptr<Stage> stage) {
     stages_.emplace_back(std::move(stage));
 }
 
-ComputeConfig wslam::compute::createDefaultConfig() {
+ComputeConfig wslam::compute::createDefaultConfig(
+    ComputeDevice compute_device) {
     const char* shader_dir = std::getenv(WSLAM_SHADER_SRC_DIR_ENV);
     if (shader_dir == nullptr) {
         shader_dir = ".";
@@ -55,6 +56,7 @@ ComputeConfig wslam::compute::createDefaultConfig() {
         .errorCallback_ = impl::print_device_captured_error,
         .shader_module_path_prefix_ = shader_dir,
         .perf_logs_output_ = logs_out,
+        .compute_device_ = compute_device,
     };
 }
 
@@ -73,7 +75,7 @@ std::optional<std::string> Compute::prepare(const ComputeConfig& opts) {
     gpu_ = std::make_shared<GPU>(
         std::make_shared<GPU::DeviceCb>(opts.deviceLostCallback_),
         std::make_shared<GPU::ErrorCb>(opts.errorCallback_),
-        opts.shader_module_path_prefix_);
+        opts.shader_module_path_prefix_, opts.compute_device_);
 
     std::optional<std::string> err;
 

@@ -51,6 +51,11 @@ enum class BufferType : uint8_t {
 
 wgpu::BufferBindingType BufferTypeToWgpuBindingType(BufferType bt);
 
+// Where compute runs. Gpu: Dawn on a hardware adapter, ONNX Runtime on its
+// WebGPU execution provider on the same device. Cpu: Dawn on its CPU adapter
+// (SwiftShader), ONNX Runtime on its CPU execution provider
+enum class ComputeDevice : uint8_t { Gpu, Cpu };
+
 // Stores RGB data of an image
 struct TextureData {
     uint32_t width;
@@ -133,8 +138,10 @@ class GPU {
     using Opts = GpuBufferSizes;
 
     GPU(DeviceCbPtr deviceLostCallback, ErrorCbPtr errorCallback,
-        std::filesystem::path prefix, Opts opts = {})
+        std::filesystem::path prefix,
+        ComputeDevice compute_device = ComputeDevice::Gpu, Opts opts = {})
         : path_prefix_(std::move(prefix)),
+          compute_device_(compute_device),
           opts_(opts),
           device_lost_callback_(std::move(deviceLostCallback)),
           uncaptured_error_callback_(std::move(errorCallback)) {}
@@ -149,6 +156,9 @@ class GPU {
     [[nodiscard]] const wgpu::Device& getDevice() const;
     [[nodiscard]] const wgpu::Instance& getInstance() const;
     [[nodiscard]] const wgpu::Limits& getLimits() const;
+    [[nodiscard]] ComputeDevice getComputeDevice() const {
+        return compute_device_;
+    }
 
     struct BgBinding {
         BufferType buf_type;
@@ -266,6 +276,7 @@ class GPU {
     void unAssignBuffer(BufferBinding& binding);
 
     const std::filesystem::path path_prefix_;
+    const ComputeDevice compute_device_;
     const Opts opts_;
 
     wgpu::Instance instance_;
@@ -329,6 +340,31 @@ struct std::formatter<wslam::compute::BufferType> {
                 break;
             case BufferType::COUNT:
                 assert(false && "invalid buffer type COUNT");
+        }
+
+        return std::format_to(ctx.out(), "{}", str);
+    }
+};
+
+template <>
+struct std::formatter<wslam::compute::ComputeDevice> {
+    using ComputeDevice = wslam::compute::ComputeDevice;
+
+    static constexpr auto parse(std::format_parse_context& ctx) {
+        return ctx.begin();
+    }
+
+    static constexpr auto format(const ComputeDevice& compute_device,
+                                 std::format_context& ctx) {
+        const char* str = nullptr;
+
+        switch (compute_device) {
+            case ComputeDevice::Gpu:
+                str = "gpu";
+                break;
+            case ComputeDevice::Cpu:
+                str = "cpu";
+                break;
         }
 
         return std::format_to(ctx.out(), "{}", str);

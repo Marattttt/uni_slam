@@ -15,8 +15,9 @@
 
 namespace wslam::compute {
 
-// Runs ONNX Runtime's WebGPU execution provider on the device owned by GPU,
-// so tensors can live in buffers the GPU created and owns
+// Runs ONNX Runtime models on its WebGPU execution provider on the device
+// owned by GPU, so tensors can live in buffers the GPU created and owns, or on
+// its CPU execution provider
 class OrtProvider {
    public:
     // WebGPU EP context that adopts the GPU's device. Context 0 is reserved for
@@ -31,8 +32,9 @@ class OrtProvider {
         return env_;
     }
 
+    // use_webgpu_ep false leaves the session on the CPU execution provider
     [[nodiscard]] std::expected<Ort::Session, std::string> LoadModel(
-        const std::filesystem::path& model_name,
+        const std::filesystem::path& model_name, bool use_webgpu_ep = true,
         std::optional<Ort::SessionOptions> extra_opts = {});
 
     // Memory info of tensors that live in the WebGPU EP's device memory
@@ -60,6 +62,24 @@ class OrtPass : public GPUPass {
         : GPUPass(ort->getGPU()),
           ort_(std::move(ort)),
           model_path_(std::move(model_path)) {}
+
+   protected:
+    // Loads model_path_ into session_
+    [[nodiscard]] std::optional<std::string> loadSession();
+
+    const std::shared_ptr<OrtProvider> ort_;
+    const std::filesystem::path model_path_;
+
+    std::optional<Ort::Session> session_;
+};
+
+// A CPU pass: runs the model on ONNX Runtime's CPU execution provider, so its
+// tensors live in host memory
+class OrtCpuPass : public Pass {
+   public:
+    OrtCpuPass(std::shared_ptr<OrtProvider> ort,
+               std::filesystem::path model_path)
+        : ort_(std::move(ort)), model_path_(std::move(model_path)) {}
 
    protected:
     // Loads model_path_ into session_

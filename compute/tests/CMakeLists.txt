@@ -1,4 +1,5 @@
 add_executable(compute_tests
+    gpu_tests.cpp
     stage_tests.cpp
     pass_tests.cpp
     onnxruntime_tests.cpp
