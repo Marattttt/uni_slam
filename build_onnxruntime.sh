@@ -9,10 +9,30 @@ ORT_DIR="$PWD/vendor/onnxruntime"
 BUILD_DIR="$ORT_DIR/build/$BUILD_TYPE"
 INSTALL_DIR="$ORT_DIR/install/$BUILD_TYPE"
 
+# SwiftShader, Dawn's CPU (fallback) adapter, which the --device=cpu run uses.
+# Dawn's fetch_dawn_dependencies.py does not fetch it, so it is checked out here
+# at the commit Dawn's DEPS pins. It lives next to the per-type build directories
+# so a rebuild does not have to fetch it again.
+SWIFTSHADER_DIR="$ORT_DIR/build/swiftshader"
+SWIFTSHADER_URL="https://swiftshader.googlesource.com/SwiftShader"
+SWIFTSHADER_COMMIT="a7c547b55474c3d8bde53711eae24ae0e28bbc0a"
+
 rm -r "$BUILD_DIR"
 rm -r "$INSTALL_DIR"
 
 set -euo pipefail
+
+if [ "$(git -C "$SWIFTSHADER_DIR" rev-parse HEAD 2>/dev/null)" != "$SWIFTSHADER_COMMIT" ]; then
+	rm -rf "$SWIFTSHADER_DIR"
+	git init -q "$SWIFTSHADER_DIR"
+	git -C "$SWIFTSHADER_DIR" remote add origin "$SWIFTSHADER_URL"
+	# A shallow fetch of the one commit, or the whole history if the server
+	# refuses to serve a commit by its hash
+	if ! git -C "$SWIFTSHADER_DIR" fetch --depth 1 origin "$SWIFTSHADER_COMMIT"; then
+		git -C "$SWIFTSHADER_DIR" fetch origin
+	fi
+	git -C "$SWIFTSHADER_DIR" checkout -q "$SWIFTSHADER_COMMIT"
+fi
 
 # ONNX Runtime keeps its CMakeLists.txt in cmake/, not at the repository root.
 #
@@ -36,6 +56,9 @@ set -euo pipefail
 # short-circuiting to system packages. Without it, find_package(re2) picks up Arch's
 # re2, whose config pulls in the system abseil on top of the abseil ORT has already
 # built from cmake/deps.txt, and the duplicated absl:: targets abort the configure.
+#
+# DAWN_ENABLE_SWIFTSHADER builds SwiftShader's Vulkan driver alongside Dawn and
+# lets Dawn's Vulkan backend discover it as its fallback adapter.
 cmake \
 	-G Ninja \
 	-B "$BUILD_DIR" \
@@ -49,9 +72,22 @@ cmake \
 	-D onnxruntime_BUILD_SHARED_LIB=ON \
 	-D onnxruntime_BUILD_DAWN_SHARED_LIBRARY=ON \
 	-D onnxruntime_BUILD_UNIT_TESTS=OFF \
-	-D DAWN_WERROR=OFF
+	-D DAWN_WERROR=OFF \
+	-D DAWN_ENABLE_SWIFTSHADER=ON \
+	-D DAWN_SWIFTSHADER_DIR="$SWIFTSHADER_DIR"
+
+# The SwiftShader checkout has to be the one this Dawn was tested against
+DAWN_DEPS="$BUILD_DIR/_deps/dawn-src/DEPS"
+if ! grep -q "SwiftShader@$SWIFTSHADER_COMMIT" "$DAWN_DEPS"; then
+	echo "Dawn pins a different SwiftShader commit than $SWIFTSHADER_COMMIT:" >&2
+	grep "SwiftShader@" "$DAWN_DEPS" >&2
+	echo "Update SWIFTSHADER_COMMIT." >&2
+	exit 1
+fi
 
 cmake --build "$BUILD_DIR" --parallel $(nproc)
+# Dawn loads the driver at run time, so nothing in the default build depends on it
+cmake --build "$BUILD_DIR" --parallel $(nproc) --target vk_swiftshader
 
 cmake --install "$BUILD_DIR"
 
@@ -68,6 +104,15 @@ if [ ! -f "$DAWN_BUILD_DIR/cmake_install.cmake" ]; then
 fi
 
 cmake --install "$DAWN_BUILD_DIR" --prefix "$INSTALL_DIR"
+
+# Dawn looks for the SwiftShader driver in the directory of libwebgpu_dawn.so
+# (Dawn's runtime search paths), and Dawn's install rules don't install it
+SWIFTSHADER_LIB="$BUILD_DIR/Linux/libvk_swiftshader.so"
+if [ ! -f "$SWIFTSHADER_LIB" ]; then
+	echo "No SwiftShader driver found at $SWIFTSHADER_LIB" >&2
+	exit 1
+fi
+install -m 755 "$SWIFTSHADER_LIB" "$INSTALL_DIR/lib/"
 
 echo "======================================================"
 echo "ONNX Runtime and Dawn build and install successful"
