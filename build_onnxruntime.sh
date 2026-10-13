@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-BUILD_TYPE=Release
+# Build type as the first argument (Release, RelWithDebInfo, Debug). Each one
+# gets its own build and install directory; the project picks one with
+# -DWSLAM_ORT_BUILD_TYPE.
+BUILD_TYPE="${1:-RelWithDebInfo}"
 
 ORT_DIR="$PWD/vendor/onnxruntime"
 BUILD_DIR="$ORT_DIR/build/$BUILD_TYPE"

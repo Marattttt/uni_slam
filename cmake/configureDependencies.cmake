@@ -133,8 +133,10 @@ function (configureDependencies)
     # That is not a convenience: the provider links Dawn PUBLIC into
     # libonnxruntime.so, so a second, separately built Dawn would put two
     # independent WebGPU implementations in one process.
+    set(WSLAM_ORT_BUILD_TYPE "RelWithDebInfo" CACHE STRING
+        "ONNX Runtime install under vendor/onnxruntime/install/ to link")
     set(WSLAM_ORT_PREFIX
-        "${PROJECT_SOURCE_DIR}/vendor/onnxruntime/install/Release")
+        "${PROJECT_SOURCE_DIR}/vendor/onnxruntime/install/${WSLAM_ORT_BUILD_TYPE}")
 
     set(Dawn_DIR "${WSLAM_ORT_PREFIX}/lib/cmake/Dawn")
     find_package(Dawn REQUIRED)
