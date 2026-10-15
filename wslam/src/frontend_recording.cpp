@@ -387,8 +387,15 @@ std::optional<std::string> v2::FrontendRecorder::captureDecision() {
 }
 
 std::optional<std::string> v2::FrontendRecorder::save() {
-    if (const auto snapshot
-        = storage_.getPtr<MapSnapshot>(ResourceIdentifier::MapSnapshotName)) {
+    // The smoother's map: with loop closure, MapSnapshotName holds the
+    // loop-corrected copy, which the replay (no loop closure) can't reproduce
+    auto snapshot
+        = storage_.getPtr<MapSnapshot>(ResourceIdentifier::MapSnapshotVioName);
+    if (!snapshot) {
+        snapshot
+            = storage_.getPtr<MapSnapshot>(ResourceIdentifier::MapSnapshotName);
+    }
+    if (snapshot) {
         recording_.golden_keyframes = snapshot.value()->keyframes;
         recording_.golden_landmark_count = snapshot.value()->landmarks.size();
     }

@@ -371,6 +371,8 @@ struct MapSnapshot {
     std::vector<KeyframePose> keyframes;
     std::vector<LandmarkEstimate> landmarks;
     MapStats stats;
+    // Gravity the IMU factors use, world frame; zero when unknown
+    Eigen::Vector3d gravity_world = Eigen::Vector3d::Zero();
 };
 
 // A loop the v2 loop closure accepted, for the map export

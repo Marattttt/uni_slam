@@ -167,6 +167,14 @@ std::optional<std::string> writeJson(const std::filesystem::path& path,
         {"factors", snap.stats.factors},
     };
 
+    // Optional: the gravity the IMU factors used (world frame), so an
+    // evaluation can score the estimate's gravity direction
+    if (!snap.gravity_world.isZero()) {
+        doc["gravity_world"] = json::array({snap.gravity_world.x(),
+                                            snap.gravity_world.y(),
+                                            snap.gravity_world.z()});
+    }
+
     // Optional: which estimate this file holds, and the loop closure outcome
     // (v2 with loop closure)
     doc["trajectory"] = trajectory;

@@ -270,6 +270,7 @@ void SubmitSmootherPass::publishSnapshot() {
     snapshot.stats.keyframes = snapshot.keyframes.size();
     snapshot.stats.landmarks = snapshot.landmarks.size();
     snapshot.stats.factors = last_factor_count_;
+    snapshot.gravity_world = shared_.gravity_world;
 
     WSLAM_ASSERT(snapshot.stats.keyframes <= shared_.keyframes_processed,
                  "snapshot has {} keyframes but only {} were accepted",
