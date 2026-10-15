@@ -25,28 +25,23 @@ std::optional<std::string> SharedBindings::initialize() {
 }
 
 std::optional<std::string> SharedBindings::initTextures() {
-    spdlog::info(LOG_ID " allocating 2 pyramids of {} textures",
+    spdlog::info(LOG_ID " allocating a pyramid of {} textures",
                  GPUConst::levels_of_detail);
 
     auto awaiter = gpu_->getAwaiter();
 
-    for (const auto slot : {PyramidSlot::Current, PyramidSlot::Previous}) {
-        for (uint32_t lod = 0; lod < GPUConst::levels_of_detail; ++lod) {
-            initTexture(awaiter, slot, lod);
-        }
+    for (uint32_t lod = 0; lod < GPUConst::levels_of_detail; ++lod) {
+        initTexture(awaiter, lod);
     }
 
     return awaiter.executeAll();
 }
 
-void SharedBindings::initTexture(compute::Awaiter& awaiter, PyramidSlot slot,
-                                 uint32_t lod) {
+void SharedBindings::initTexture(compute::Awaiter& awaiter, uint32_t lod) {
     const auto [width, height] = GPUBindingSize::getPyramidLayerDimensions(
         {static_cast<uint8_t>(lod)});
 
-    const std::string label = std::format(
-        "{} frame texture for lod {}",
-        slot == PyramidSlot::Current ? "Current" : "Previous", lod);
+    const std::string label = std::format("Frame texture for lod {}", lod);
     const wgpu::TextureDescriptor texture_desc{
         .label = label.c_str(),
         .usage = wgpu::TextureUsage::TextureBinding
@@ -60,8 +55,7 @@ void SharedBindings::initTexture(compute::Awaiter& awaiter, PyramidSlot slot,
     };
 
     auto create_texture = [&] {
-        pyramids_.at(static_cast<size_t>(slot)).at(lod)
-            = gpu_->getDevice().CreateTexture(&texture_desc);
+        pyramid_.at(lod) = gpu_->getDevice().CreateTexture(&texture_desc);
     };
 
     awaiter.runChecked(create_texture, LOG_ID " create texture");
@@ -77,13 +71,6 @@ std::optional<std::string> SharedBindings::initBuffers() {
         return "images: " + images.error();
     }
     images_buffer_ = std::move(images).value();
-
-    auto keypoints = gpu_->createDedicatedBuffer(
-        raco_lightglue::KeypointsBytes(keypoint_count_), kUsage, "Model keypoints");
-    if (!keypoints) {
-        return "keypoints: " + keypoints.error();
-    }
-    keypoints_buffer_ = std::move(keypoints).value();
 
     return std::nullopt;
 }

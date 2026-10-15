@@ -2,7 +2,6 @@
 
 #include <onnxruntime/onnxruntime_cxx_api.h>
 
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -11,26 +10,25 @@
 #include "anybag.hpp"
 #include "compute/gpu.hpp"
 #include "compute/onnx_interop.hpp"
-#include "raco_lightglue.hpp"
+#include "compute/pass.hpp"
 #include "shared_bindings.hpp"
+#include "split_model.hpp"
 
 namespace wslam::v2 {
 
-// Runs the RaCo-ALIKED-LightGlue model on ONNX Runtime's CPU execution
-// provider, on the previous (left) and current (right) frame packed into the
-// images buffer, which it reads back. Publishes the keypoints, matches and
-// their scores to storage. Skips the first frame, which has no previous frame
-// to match against
-class OrtCpuFeatureDetectPass : public compute::OrtCpuPass {
+// Runs the split RaCo-ALIKED-LightGlue models (SplitModelRunner) on ONNX
+// Runtime's CPU execution provider, on the current frame packed into the
+// images buffer, which it reads back
+class OrtCpuFeatureDetectPass : public compute::Pass {
    public:
     OrtCpuFeatureDetectPass(std::shared_ptr<compute::OrtProvider> ort,
-                            std::filesystem::path model_path,
+                            SplitModelPaths paths, ReferenceAdvance advance,
                             std::shared_ptr<SharedBindings> bindings,
                             AnyBag& storage)
-        : OrtCpuPass(std::move(ort), std::move(model_path)),
-          gpu_(ort_->getGPU()),
+        : gpu_(ort->getGPU()),
           bindings_(std::move(bindings)),
-          storage_(storage) {}
+          runner_(std::move(ort), std::move(paths), /*use_webgpu_ep=*/false,
+                  bindings_->getKeypointCount(), advance, storage) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
@@ -39,18 +37,11 @@ class OrtCpuFeatureDetectPass : public compute::OrtCpuPass {
    private:
     std::shared_ptr<compute::GPU> gpu_;
     std::shared_ptr<SharedBindings> bindings_;
-    AnyBag& storage_;
+    SplitModelRunner runner_;
 
-    // Host memory the bound images and keypoints tensors view
+    // Host copy of the images buffer, viewed by images_tensor_
     std::vector<float> images_;
-    std::vector<raco_lightglue::KeypointPosition> keypoints_;
-
     std::optional<Ort::Value> images_tensor_;
-    std::optional<Ort::Value> keypoints_tensor_;
-    std::optional<Ort::IoBinding> io_binding_;
-    Ort::MemoryInfo cpu_memory_info_{nullptr};
-
-    [[nodiscard]] std::optional<std::string> initBinding();
 };
 
 }  // namespace wslam::v2

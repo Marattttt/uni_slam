@@ -7,6 +7,8 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
+#include <iterator>
 #include <utility>
 #include <vector>
 
@@ -91,6 +93,7 @@ std::optional<std::string> SubmitSmootherPass::drainPending() {
         "the newest keyframe's velocity and bias are inside the window");
     shared_.last_drained_pose = pending_pose_id_;
     shared_.last_velocity = latest_values_.at<gtsam::Vector3>(velocity_key);
+    trackVelocityError();
     shared_.last_bias
         = latest_values_.at<gtsam::imuBias::ConstantBias>(bias_key);
 
@@ -104,6 +107,35 @@ std::optional<std::string> SubmitSmootherPass::drainPending() {
     }
 
     return std::nullopt;
+}
+
+void SubmitSmootherPass::trackVelocityError() {
+    // Weight of the newest error in the running variance
+    constexpr double kSmoothing = 0.2;
+
+    const auto predicted = shared_.predicted_velocities.find(pending_pose_id_);
+    if (predicted == shared_.predicted_velocities.end()) {
+        // The first keyframe has no IMU-predicted velocity
+        return;
+    }
+    const Eigen::Vector3d error = shared_.last_velocity - predicted->second;
+    shared_.predicted_velocities.erase(shared_.predicted_velocities.begin(),
+                                       std::next(predicted));
+
+    // Per-axis variance of this drain's error
+    const double variance = error.squaredNorm() / 3.0;
+    shared_.velocity_error_variance
+        = shared_.velocity_error_samples == 0
+              ? variance
+              : (1.0 - kSmoothing) * shared_.velocity_error_variance
+                    + kSmoothing * variance;
+    ++shared_.velocity_error_samples;
+
+    spdlog::debug(LOG_ID
+                  " x{}: velocity prediction off by {:.3f} m/s; "
+                  "running sigma {:.3f} m/s",
+                  pending_pose_id_.v, error.norm(),
+                  std::sqrt(shared_.velocity_error_variance));
 }
 
 void SubmitSmootherPass::archiveMarginalisedPoses(

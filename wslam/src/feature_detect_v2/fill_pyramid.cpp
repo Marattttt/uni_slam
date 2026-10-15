@@ -119,11 +119,9 @@ std::optional<std::string> v2::FillPyramidPass::initTextureViews() {
             .usage = wgpu::TextureUsage::StorageBinding};
 
         auto callback = [&]() {
-            texture_views_[i]
-                = std::make_pair(bindings_->getTexture(PyramidSlot::Current, 0)
-                                     .CreateView(&src_desc),
-                                 bindings_->getTexture(PyramidSlot::Current, i)
-                                     .CreateView(&dest_desc));
+            texture_views_[i] = std::make_pair(
+                bindings_->getTexture(0).CreateView(&src_desc),
+                bindings_->getTexture(i).CreateView(&dest_desc));
         };
 
         awaiter.runChecked(callback,
@@ -226,7 +224,7 @@ std::optional<std::string> v2::FillPyramidPass::writeBaseLayer() {
     wgpu::Queue queue = gpu_->getDevice().GetQueue();
 
     wgpu::TexelCopyTextureInfo copy_info{
-        .texture = bindings_->getTexture(PyramidSlot::Current, 0),
+        .texture = bindings_->getTexture(0),
         .mipLevel = 0,
         .origin = {.x = 0, .y = 0},
         .aspect = wgpu::TextureAspect::All,

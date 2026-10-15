@@ -19,8 +19,8 @@ std::unique_ptr<compute::Stage> v2::CreatePoseEstimateStage(
     auto stage = std::make_unique<compute::Stage>("Pose Estimate v2",
                                                   &compute.getPerf());
 
-    stage->add_pass(std::make_unique<LoadMatchesPass>(
-        compute.getGPUPtr(), std::move(bindings), compute.getStorage()));
+    stage->add_pass(std::make_unique<LoadMatchesPass>(std::move(bindings),
+                                                      compute.getStorage()));
 
     stage->add_pass(std::make_unique<RansacPass>(compute.getStorage()));
 

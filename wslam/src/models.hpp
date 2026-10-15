@@ -326,6 +326,42 @@ struct KeypointTriangulationResult {
     std::vector<KeypointLandmark> landmarks;
     TriangulationStats stats;
 };
+
+// State of the last keyframe the v2 mapping stage accepted, from which the
+// front end's frame prefilter predicts how far the camera moved since. All
+// world-frame quantities are in the VIO world frame
+struct KeyframeMotionPrior {
+    uint64_t keyframe_ts = 0;
+    // Camera (the navigation body) orientation and velocity at the keyframe
+    Eigen::Matrix3d R_world_cam = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d velocity_world = Eigen::Vector3d::Zero();
+    Eigen::Vector3d gravity_world = Eigen::Vector3d::Zero();
+    // IMU biases, IMU frame
+    Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
+    Eigen::Vector3d gyro_bias = Eigen::Vector3d::Zero();
+    // Median depth of the keyframe's triangulated landmarks
+    double median_depth_m = 0.0;
+    // Per-axis 1-sigma error of velocity_world measured online, 0 while
+    // unknown
+    double velocity_sigma = 0.0;
+    // The keyframe gate rejects a frame as too small a motion when both are
+    // below these
+    double min_rotation_rad = 0.0;
+    double min_parallax_px = 0.0;
+};
+
+// The frame prefilter's prediction of the motion between the last keyframe
+// and the current frame, with its confidence upper bounds
+struct KeyframeMotionPrediction {
+    double dt_s = 0.0;
+    double rotation_rad = 0.0;
+    double rotation_upper_rad = 0.0;
+    // Median pixel displacement between the two images
+    double parallax_px = 0.0;
+    double parallax_upper_px = 0.0;
+    // Predicted motion small enough for the keyframe gate to reject the frame
+    bool small_motion = false;
+};
 }  // namespace v2
 
 // Lightweight snapshot of the current factor-graph estimate. Published every

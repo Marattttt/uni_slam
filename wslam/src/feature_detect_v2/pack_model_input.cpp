@@ -68,12 +68,7 @@ std::optional<std::string> v2::PackModelInputPass::initTextureViews() {
     };
 
     auto create_views = [&] {
-        left_view_
-            = bindings_->getTexture(PyramidSlot::Previous, model::kInputLod)
-                  .CreateView(&desc);
-        right_view_
-            = bindings_->getTexture(PyramidSlot::Current, model::kInputLod)
-                  .CreateView(&desc);
+        view_ = bindings_->getTexture(model::kInputLod.v).CreateView(&desc);
     };
 
     return gpu_->getAwaiter()
@@ -84,7 +79,7 @@ std::optional<std::string> v2::PackModelInputPass::initTextureViews() {
 std::optional<std::string> v2::PackModelInputPass::initBindGroupLayout() {
     // R32Float is only filterable with a device feature, and the shader reads
     // texels with textureLoad, so bind the views as unfilterable
-    const std::array<wgpu::BindGroupLayoutEntry, 3> layout_entries{
+    const std::array<wgpu::BindGroupLayoutEntry, 2> layout_entries{
         wgpu::BindGroupLayoutEntry{
             .binding = 0,
             .visibility = wgpu::ShaderStage::Compute,
@@ -95,14 +90,6 @@ std::optional<std::string> v2::PackModelInputPass::initBindGroupLayout() {
         },
         wgpu::BindGroupLayoutEntry{
             .binding = 1,
-            .visibility = wgpu::ShaderStage::Compute,
-            .texture = {
-                .sampleType = wgpu::TextureSampleType::UnfilterableFloat,
-                .viewDimension = wgpu::TextureViewDimension::e2D,
-            },
-        },
-        wgpu::BindGroupLayoutEntry{
-            .binding = 2,
             .visibility = wgpu::ShaderStage::Compute,
             .buffer = {
                 .type = wgpu::BufferBindingType::Storage,
@@ -128,11 +115,10 @@ std::optional<std::string> v2::PackModelInputPass::initBindGroupLayout() {
 }
 
 std::optional<std::string> v2::PackModelInputPass::initBindGroup() {
-    const std::array<wgpu::BindGroupEntry, 3> entries{
-        wgpu::BindGroupEntry{.binding = 0, .textureView = left_view_},
-        wgpu::BindGroupEntry{.binding = 1, .textureView = right_view_},
+    const std::array<wgpu::BindGroupEntry, 2> entries{
+        wgpu::BindGroupEntry{.binding = 0, .textureView = view_},
         wgpu::BindGroupEntry{
-            .binding = 2,
+            .binding = 1,
             .buffer = bindings_->getImagesBuffer(),
             .offset = 0,
             .size = model::kImagesBytes,
@@ -196,11 +182,6 @@ std::optional<std::string> v2::PackModelInputPass::initComputePipeline() {
 }
 
 std::optional<std::string> v2::PackModelInputPass::submitWork() {
-    if (!bindings_->hasPrevious()) {
-        spdlog::info(LOG_ID " No previous pyramid yet; nothing to pack");
-        return std::nullopt;
-    }
-
     spdlog::info(LOG_ID " Executing");
 
     const uint32_t groups_x = CeilDiv(model::kInputWidth, kWorkgroupSize);

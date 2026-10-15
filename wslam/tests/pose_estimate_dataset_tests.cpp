@@ -216,12 +216,15 @@ std::expected<PipelineRun, std::string> RunV2(
 
     data::EurocProvider euroc(data::CreateEurocProviderOpts());
     compute::Compute compute;
-    if (auto err = compute.prepare(compute::createDefaultConfig())) {
+    // The v2 front end only has CPU exports of its models so far
+    if (auto err = compute.prepare(
+            compute::createDefaultConfig(compute::ComputeDevice::Cpu))) {
         return std::unexpected("preparing compute: " + std::move(err).value());
     }
 
     WslamConfig config{};
     config.use_pipeline_v2 = true;
+    config.compute_device = compute::ComputeDevice::Cpu;
     config.keyframes_path = kSchedulePath;
     // Pose estimation alone: the model pairs consecutive scheduled keyframes,
     // and the recorder below takes the geometry the mapping stage would

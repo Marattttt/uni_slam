@@ -22,6 +22,25 @@ namespace utils = wslam::map::utils;
 
 #define LOG_ID "[Filter Keyframe v2 pass]"
 
+namespace {
+// Median depth of the triangulated landmarks in the current camera, in the
+// units of the unit translation; 0 without landmarks
+double MedianDepth(const v2::KeypointTriangulationResult& triangulation) {
+    std::vector<double> depths;
+    depths.reserve(triangulation.landmarks.size());
+    for (const v2::KeypointLandmark& landmark : triangulation.landmarks) {
+        depths.push_back(landmark.position_cam_curr.z());
+    }
+    if (depths.empty()) {
+        return 0.0;
+    }
+    const auto middle
+        = depths.begin() + static_cast<std::ptrdiff_t>(depths.size() / 2);
+    std::nth_element(depths.begin(), middle, depths.end());
+    return *middle;
+}
+}  // namespace
+
 std::string FilterKeyframePass::getId() const { return LOG_ID; }
 
 std::optional<std::string> FilterKeyframePass::initialize() {
@@ -49,10 +68,21 @@ std::optional<std::string> FilterKeyframePass::execute() {
         storage_.set(ResourceIdentifier::FeatureReferenceAdvanceName, true);
     }
 
+    // Taken whatever happens, so neither outlives its frame
+    const bool skipped
+        = storage_.take<bool>(ResourceIdentifier::FrameSkippedName)
+              .value_or(false);
+    const auto prediction = storage_.take<KeyframeMotionPrediction>(
+        ResourceIdentifier::KeyframeMotionPredictionName);
+
     auto triangulation = storage_.take<KeypointTriangulationResult>(
         ResourceIdentifier::KeypointTriangulationName);
     auto ransac = storage_.take<KeypointRansacResult>(
         ResourceIdentifier::KeypointRansacName);
+    if (skipped) {
+        spdlog::debug(LOG_ID " The prefilter skipped this frame");
+        return compute::kStageStopExecution;
+    }
     if (!triangulation || !ransac) {
         spdlog::warn(LOG_ID " No pose estimate for this frame");
         return compute::kStageStopExecution;
@@ -74,11 +104,27 @@ std::optional<std::string> FilterKeyframePass::execute() {
 
     MatchInfo info = collectMatches(*ransac);
 
+    if (prediction) {
+        // Grep-friendly: how the frame prefilter's IMU prediction compares
+        // with what the gate measures
+        spdlog::info(
+            LOG_ID
+            " [prefilter] dt {:.3f} s: predicted rotation {:.4f} (<= {:.4f}) "
+            "rad, parallax {:.2f} (<= {:.2f}) px; measured {:.4f} rad, "
+            "{:.2f} px",
+            prediction->dt_s, prediction->rotation_rad,
+            prediction->rotation_upper_rad, prediction->parallax_px,
+            prediction->parallax_upper_px,
+            wslam::map::util::ComputeRotationAngle(triangulation->rotation),
+            info.median_parallax);
+    }
+
     if (!shouldAccept(*triangulation, info)) {
         return compute::kStageStopExecution;
     }
 
     KeyframeCandidate candidate = initializeCandidate(*triangulation);
+    candidate.median_depth_unit = MedianDepth(*triangulation);
 
     const auto curr_kf_ts
         = storage_.get<uint64_t>(ResourceIdentifier::FrameTimestampNsName);
@@ -109,6 +155,10 @@ std::optional<std::string> FilterKeyframePass::execute() {
         Pose(candidate.pose_id),
         gtsam::Pose3{gtsam::Rot3{candidate.R_world_cam},
                      gtsam::Point3{candidate.t_world_cam}});
+
+    // The prior describes the previous keyframe; the build pass publishes
+    // this one's
+    storage_.erase(ResourceIdentifier::KeyframeMotionPriorName);
 
     // Accepted keyframe: it becomes the model's reference next frame
     storage_.set(ResourceIdentifier::FeatureReferenceAdvanceName, true);

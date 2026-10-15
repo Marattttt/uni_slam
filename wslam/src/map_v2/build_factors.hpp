@@ -1,5 +1,6 @@
 #pragma once
 
+#include <gtsam/navigation/NavState.h>
 #include <gtsam/navigation/PreintegrationCombinedParams.h>
 
 #include <memory>
@@ -24,7 +25,10 @@ namespace wslam::v2::mapping {
 //
 // Input  (from AnyBag): MapChanges under MapDeltaName (taken), sensor
 //                       parameters
-// Output (to   AnyBag): FactorBundle under FactorBundleName
+// Output (to   AnyBag): FactorBundle under FactorBundleName, and the new
+//                       keyframe's KeyframeMotionPrior under
+//                       KeyframeMotionPriorName when it has an IMU edge and a
+//                       scene depth
 class BuildFactorsPass : public compute::Pass {
    public:
     struct Opts {
@@ -53,6 +57,11 @@ class BuildFactorsPass : public compute::Pass {
         // Integration noise on top of the per-sample covariance
         double integration_sigma = 1e-4;
 
+        // The keyframe gate's small-motion thresholds, handed to the frame
+        // prefilter with the motion prior
+        double gate_min_rotation_rad = 0.0;
+        double gate_min_parallax_px = 0.0;
+
         uint32_t camera_index = 0;
     };
 
@@ -76,6 +85,9 @@ class BuildFactorsPass : public compute::Pass {
 
     void addGaugePriors(FactorBundle& bundle, const MapChanges& changes) const;
     void integrateImu(FactorBundle& bundle, const MapChanges& changes) const;
+    void publishMotionPrior(const MapChanges& changes,
+                            const gtsam::NavState& state,
+                            double metric_step) const;
     void addSmartFactors(FactorBundle& bundle, const MapChanges& changes) const;
 };
 

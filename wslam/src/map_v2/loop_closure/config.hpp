@@ -44,9 +44,6 @@ struct MatchAcceptance {
     float matcher_min_score = 0.5F;
     uint32_t min_matches = 40;
 
-    // A candidate keypoint observes a landmark when it lies this close to a
-    // keypoint the keyframe tracked one with
-    double landmark_pixel_tolerance_px = 1.0;
     // 2D (query) - 3D (candidate landmark) pairs PnP needs
     uint32_t min_correspondences = 20;
 

@@ -99,6 +99,14 @@ struct SharedBindings {
     std::vector<PoseId> poses_archived_since_feed;
     std::vector<LandmarkId> landmarks_archived_since_feed;
 
+    // IMU-predicted velocity of each keyframe whose smoother update has not
+    // been drained yet, and the running per-axis variance of the prediction's
+    // error against the drained estimate (the frame prefilter's velocity
+    // sigma)
+    std::flat_map<PoseId, Eigen::Vector3d> predicted_velocities;
+    double velocity_error_variance = 0.0;
+    size_t velocity_error_samples = 0;
+
     // Newest loop-closure drift correction (T_corrected = T_drift * T_vio),
     // identity until a loop is accepted; 0 = none
     gtsam::Pose3 drift_correction;
@@ -166,6 +174,10 @@ struct KeyframeCandidate {
     Eigen::Matrix3d R_rel = Eigen::Matrix3d::Identity();
     Eigen::Vector3d t_rel = Eigen::Vector3d::Zero();
 
+    // Median depth of the triangulated landmarks in the current camera, in
+    // units of t_rel; 0 without landmarks
+    double median_depth_unit = 0.0;
+
     // Inliers with enough parallax to observe a landmark
     std::vector<CandidateMatch> matches;
 
@@ -195,6 +207,7 @@ struct MapChanges {
 
     Eigen::Matrix3d R_rel = Eigen::Matrix3d::Identity();
     Eigen::Vector3d t_rel = Eigen::Vector3d::Zero();
+    double median_depth_unit = 0.0;
 
     std::vector<Observation> observations;
 

@@ -5,7 +5,6 @@
 #include <chrono>
 #include <exception>
 #include <format>
-#include <limits>
 #include <set>
 #include <utility>
 
@@ -22,8 +21,8 @@ namespace loop_closure = wslam::v2::mapping::loop_closure;
 namespace {
 // WebGPU EP context of the loop closure's auxiliary device; the pipeline's
 // own device is OrtProvider::kWebGpuContextId
-constexpr int kLoopClosureContextId = compute::OrtProvider::kWebGpuContextId
-                                      + 1;
+constexpr int kLoopClosureContextId
+    = compute::OrtProvider::kWebGpuContextId + 1;
 
 constexpr uint32_t kUndistortIterations = 20;
 constexpr double kUndistortTolerance = 1e-9;
@@ -43,8 +42,7 @@ enum class Rejection : uint8_t { Matches, Correspondences, Pnp, Consistency };
 
 LoopClosureWorker::LoopClosureWorker(LoopClosureConfig config,
                                      data::CamSensorParams camera,
-                                     Models models,
-                                     compute::PerfRecorder& perf)
+                                     Models models, compute::PerfRecorder& perf)
     : config_(std::move(config)),
       camera_(std::move(camera)),
       models_(std::move(models)),
@@ -59,8 +57,8 @@ LoopClosureWorker::LoopClosureWorker(LoopClosureConfig config,
 LoopClosureWorker::LoopClosureWorker(LoopClosureConfig config,
                                      data::CamSensorParams camera,
                                      Models models)
-    : LoopClosureWorker(std::move(config), std::move(camera),
-                        std::move(models), own_perf_) {}
+    : LoopClosureWorker(std::move(config), std::move(camera), std::move(models),
+                        own_perf_) {}
 
 LoopClosureWorker::~LoopClosureWorker() {
     {
@@ -163,6 +161,7 @@ void LoopClosureWorker::fail(std::string error) {
 
 void LoopClosureWorker::process(std::deque<Event>& batch) {
     std::optional<uint64_t> newest_node;
+    std::vector<uint64_t> settled;
 
     for (Event& event : batch) {
         if (failed_) {
@@ -177,7 +176,7 @@ void LoopClosureWorker::process(std::deque<Event>& batch) {
 
         auto& update = std::get<MapUpdateEvent>(event);
         const auto perfscope = perf_.beginRecord("map update");
-        if (const auto node = handle(update)) {
+        if (const auto node = handle(update, settled)) {
             if (newest_node) {
                 ++stats_.queries_skipped;
             }
@@ -186,6 +185,7 @@ void LoopClosureWorker::process(std::deque<Event>& batch) {
     }
 
     if (failed_ || !newest_node) {
+        dropImages(settled);
         return;
     }
 
@@ -195,6 +195,9 @@ void LoopClosureWorker::process(std::deque<Event>& batch) {
         const auto perfscope = perf_.beginRecord("query");
         query(*newest_node);
     }
+    // Candidates are matched by their features; a settled keyframe is never
+    // a query again
+    dropImages(settled);
 
     // A new node moves the newest correction even without a new loop
     if (graph_.loopCount() > 0) {
@@ -209,7 +212,11 @@ void LoopClosureWorker::handle(KeyframeImageEvent& event) {
     KeyframeRecord& record = keyframes_[event.keyframe];
     record.timestamp_ns = event.timestamp_ns;
     record.image = std::move(event.image);
-    record.landmarks = std::move(event.landmarks);
+    record.features = std::move(event.features);
+    for (const KeyframeLandmark& tracked : event.landmarks) {
+        record.landmarks.insert_or_assign(tracked.keypoint_index,
+                                          tracked.landmark);
+    }
 
     const auto start = Clock::now();
     auto descriptor = models_.place_recognition->describe(record.image);
@@ -228,7 +235,16 @@ void LoopClosureWorker::handle(KeyframeImageEvent& event) {
                   event.keyframe, elapsed, record.landmarks.size());
 }
 
-std::optional<uint64_t> LoopClosureWorker::handle(MapUpdateEvent& event) {
+void LoopClosureWorker::dropImages(std::span<const uint64_t> keyframes) {
+    for (const uint64_t id : keyframes) {
+        if (const auto it = keyframes_.find(id); it != keyframes_.end()) {
+            it->second.image = {};
+        }
+    }
+}
+
+std::optional<uint64_t> LoopClosureWorker::handle(
+    MapUpdateEvent& event, std::vector<uint64_t>& settled) {
     if (event.gravity_world) {
         graph_.setGravity(event.gravity_world.value());
     }
@@ -250,6 +266,7 @@ std::optional<uint64_t> LoopClosureWorker::handle(MapUpdateEvent& event) {
 
         const bool is_node = graph_.addKeyframe(id, pose);
         auto record = keyframes_.find(id);
+        settled.push_back(id);
 
         if (!is_node) {
             spdlog::debug(LOG_ID " keyframe {} attached to node {}", id,
@@ -257,6 +274,8 @@ std::optional<uint64_t> LoopClosureWorker::handle(MapUpdateEvent& event) {
             if (record != keyframes_.end()) {
                 // Only nodes are ever matched against
                 record->second.image = {};
+                record->second.features.reset();
+                record->second.landmarks.clear();
                 record->second.descriptor.reset();
             }
             continue;
@@ -329,7 +348,8 @@ void LoopClosureWorker::query(uint64_t keyframe) {
             continue;
         }
 
-        AcceptedLoop& loop = accepted_.emplace_back(std::move(verified).value());
+        AcceptedLoop& loop
+            = accepted_.emplace_back(std::move(verified).value());
         {
             const auto perfscope = perf_.beginRecord("add loop");
             graph_.addLoop(loop.edge);
@@ -360,8 +380,9 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
     const KeyframeRecord& candidate_record = keyframes_.at(candidate);
     const KeyframeRecord& query_record = keyframes_.at(query);
 
-    const auto reject = [&](Rejection stage, std::string message)
-        -> std::unexpected<std::string> {
+    const auto reject
+        = [&](Rejection stage,
+              std::string message) -> std::unexpected<std::string> {
         switch (stage) {
             case Rejection::Matches:
                 ++stats_.rejected_matches;
@@ -381,7 +402,7 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
 
     auto pair = [&] {
         const auto perfscope = perf_.beginRecord("match");
-        return models_.matcher->match(candidate_record.image,
+        return models_.matcher->match(*candidate_record.features,
                                       query_record.image);
     }();
     if (!pair) {
@@ -396,11 +417,10 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
         }
     }
     if (confident.size() < acceptance.min_matches) {
-        return reject(Rejection::Matches,
-                      std::format("{} matches above score {:.2f} < {}",
-                                  confident.size(),
-                                  acceptance.matcher_min_score,
-                                  acceptance.min_matches));
+        return reject(
+            Rejection::Matches,
+            std::format("{} matches above score {:.2f} < {}", confident.size(),
+                        acceptance.matcher_min_score, acceptance.min_matches));
     }
 
     // The candidate's landmarks in its own camera frame. Its archived pose is
@@ -409,28 +429,20 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
     const gtsam::Pose3 T_world_candidate
         = candidate_record.archived_pose.value_or(graph_.vioPose(candidate));
 
-    const double tolerance_sq = acceptance.landmark_pixel_tolerance_px
-                                * acceptance.landmark_pixel_tolerance_px;
     std::vector<PnpCorrespondence> correspondences;
     std::set<uint64_t> used_landmarks;
 
     for (const PairMatch* match : confident) {
-        const KeyframeLandmark* nearest = nullptr;
-        double nearest_sq = std::numeric_limits<double>::infinity();
-        for (const KeyframeLandmark& tracked : candidate_record.landmarks) {
-            const double distance_sq
-                = (tracked.pixel - match->left_px).squaredNorm();
-            if (distance_sq < nearest_sq) {
-                nearest_sq = distance_sq;
-                nearest = &tracked;
-            }
-        }
-        if (nearest == nullptr || nearest_sq > tolerance_sq
-            || used_landmarks.contains(nearest->landmark)) {
+        // The candidate's keypoints are the ones the front end tracked its
+        // landmarks with, under the same indices
+        const auto tracked = candidate_record.landmarks.find(match->left_index);
+        if (tracked == candidate_record.landmarks.end()
+            || used_landmarks.contains(tracked->second)) {
             continue;
         }
+        const uint64_t landmark = tracked->second;
 
-        const auto position = landmarks_.find(nearest->landmark);
+        const auto position = landmarks_.find(landmark);
         if (position == landmarks_.end()) {
             continue;
         }
@@ -441,7 +453,7 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
             continue;
         }
 
-        used_landmarks.insert(nearest->landmark);
+        used_landmarks.insert(landmark);
         correspondences.push_back(PnpCorrespondence{
             .point_candidate = point_candidate,
             .query_ray = map::util::PixelToNormalised(
@@ -469,8 +481,8 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
 
     // The graph's current estimate of the same relative pose: the loop may
     // correct it by the drift since the candidate, not by more
-    const gtsam::Pose3 estimated = graph_.correctedPose(candidate).between(
-        graph_.correctedPose(query));
+    const gtsam::Pose3 estimated
+        = graph_.correctedPose(candidate).between(graph_.correctedPose(query));
     const gtsam::Pose3 discrepancy = estimated.between(pnp->T_candidate_query);
     const double translation = discrepancy.translation().norm();
     const double rotation = discrepancy.rotation().axisAngle().second;
@@ -521,7 +533,8 @@ loop_closure::CreateLoopClosureWorker(compute::OrtProvider& ort,
             kind == VprModelKind::MegaLoc ? "WSLAM_VPR_MEGALOC_MODEL"
                                           : "WSLAM_VPR_MIXVPR_MODEL"));
     }
-    if (config.matcher_model_path.empty() || config.matcher_keypoint_count <= 0) {
+    if (config.matcher_model_path.empty()
+        || config.matcher_keypoint_count <= 0) {
         return std::unexpected("matcher model is not set");
     }
 
@@ -530,8 +543,8 @@ loop_closure::CreateLoopClosureWorker(compute::OrtProvider& ort,
 
     LoopClosureWorker::Models models;
     if (on_gpu) {
-        auto auxiliary = ort.getGPU()->createAuxiliaryDevice(
-            "Loop closure device");
+        auto auxiliary
+            = ort.getGPU()->createAuxiliaryDevice("Loop closure device");
         if (!auxiliary) {
             return std::unexpected("auxiliary device: " + auxiliary.error());
         }
@@ -550,7 +563,8 @@ loop_closure::CreateLoopClosureWorker(compute::OrtProvider& ort,
         };
     };
 
-    spdlog::info(LOG_ID " place recognition: {} on the {} ({}), matcher on "
+    spdlog::info(LOG_ID
+                 " place recognition: {} on the {} ({}), matcher on "
                  "the {}",
                  ToString(kind), on_gpu ? "GPU" : "CPU", vpr_path.string(),
                  matcher_on_gpu ? "GPU" : "CPU");
@@ -571,8 +585,8 @@ loop_closure::CreateLoopClosureWorker(compute::OrtProvider& ort,
     if (!matcher_session) {
         return std::unexpected(std::move(matcher_session).error());
     }
-    auto matcher = PairMatcher::Create(std::move(matcher_session).value(),
-                                       config.matcher_keypoint_count);
+    auto matcher = CachedMatcher::Create(std::move(matcher_session).value(),
+                                         config.matcher_keypoint_count);
     if (!matcher) {
         return std::unexpected(std::move(matcher).error());
     }

@@ -53,14 +53,19 @@ Flags:
 - `-v2` — run the v2 pipeline (ONNX feature detect + pose estimate + fixed-lag mapping) instead of the default one.
 - `--device=gpu|cpu` — where compute runs (`compute::ComputeDevice`, `WslamConfig::compute_device`;
   default `gpu`). `cpu` forces Dawn onto its SwiftShader CPU adapter (`forceFallbackAdapter`,
-  which discards every other adapter) and, with `-v2`, runs the model on ONNX Runtime's CPU EP
-  (`OrtCpuFeatureDetectPass`). `gpu` requests a `HighPerformance` adapter: Dawn searches
+  which discards every other adapter) and, with `-v2`, runs the models on ONNX Runtime's CPU EP
+  (`OrtCpuFeatureDetectPass`). `-v2` with `gpu` currently fails at startup: only CPU exports of
+  the split models exist (`v2::ValidateModelFiles`, a `TEMPORARY` block in `feature_detect.cpp`;
+  the WebGPU path, `OrtFeatureDetectPass`, is ready for the WebGPU exports). `gpu` requests a `HighPerformance` adapter: Dawn searches
   SwiftShader before the system drivers and, without a power preference, ranks all adapter
   types equally, so the default request lands on SwiftShader. `GPU::initAdapter` rejects an
   adapter whose type doesn't match the requested device either way.
 - `-no-mapping` — v2 only: drop the mapping stage; the model then pairs consecutive frames.
 - `-no-loop-closure` — v2 with mapping: run without the loop closure thread
   (`WslamConfig::enable_loop_closure`, default on).
+- `-no-frame-prefilter` — v2 with mapping: run the model on every frame instead of skipping
+  the frames the IMU predicts the keyframe gate would reject
+  (`WslamConfig::enable_frame_prefilter`, default on; off with `--keyframes`).
 - `--record-frontend=PATH.msgpack` — v2 with mapping only: record the front-end output
   for replaying the mapping stage without the GPU (see `MappingReplayTest` below).
 - `--max-iters=N` — stop after N pipeline iterations (0 = unlimited).
@@ -86,14 +91,19 @@ only when executing `pc_wslam` (or the helper run scripts, which do it for you).
 It sets:
 - `WSLAM_SHADER_SRC_DIR` — directory where `.wgsl` shaders are loaded from at runtime.
 - `EUROC_DIR` — path to EuRoC MAV dataset (`mav0/` root).
-- `WSLAM_ONNX_MODEL` — model file the v2 pipeline runs (required with `-v2`; no default).
-  Point it at the `*_webgpu.onnx` output of `patch_onnx_for_webgpu.py`, not the published
-  model: the published v3.0 models target TensorRT, and under the WebGPU EP their Selu,
-  GridSample (opset 20) and LogSoftmax nodes fall back to the CPU. The patch rewrites them
-  exactly (same matches) and is ~11% faster per pair.
-- `WSLAM_ONNX_KEYPOINTS` — optional keypoints per image the model returns; defaults to
-  1024 (`raco_lightglue::kDefaultKeypointCount`). Set it when testing another model
-  variant; the model's keypoints output shape is checked against it at startup.
+- `WSLAM_ONNX_EXTRACTOR_MODEL`, `WSLAM_ONNX_MODEL` — the split RaCo-ALIKED-LightGlue models
+  the v2 pipeline runs (both required with `-v2`; no default): the extractor
+  (`resources/raco_aliked_lightglue_extractor_k512_boundary_cpu.onnx`, run once) and the
+  cached model (`..._cached_k512_boundary_cpu.onnx`, every later frame; also the loop
+  closure matcher). Exports of `LightGlue-ONNX/experiments/cpu_split_ranker/export.sh`
+  (`--graph extractor` / `--graph cached --pad-matches`). CPU exports must have `cpu` in
+  their file names.
+- `WSLAM_ONNX_KEYPOINTS` — optional keypoints per image the models return; defaults to
+  512 (`raco_lightglue::kDefaultKeypointCount`). Set it when testing another model
+  variant; both models' shapes are checked against it when they load.
+- `WSLAM_PREFILTER_SIGMAS`, `_GYRO_BIAS_SIGMA`, `_ACCEL_BIAS_SIGMA`, `_ATTITUDE_SIGMA`,
+  `_VELOCITY_SIGMA`, `_DEPTH_SIGMA`, `_MAX_SKIPS` (all `WSLAM_PREFILTER_*`) — override the
+  frame prefilter's `FramePrefilterOptions` (`feature_detect_v2/frame_prefilter.hpp`).
 - `WSLAM_VPR_MIXVPR_MODEL`, `WSLAM_VPR_MEGALOC_MODEL` — place recognition models of the
   v2 loop closure (required with loop closure on: MixVPR for `--device=cpu`, MegaLoc for
   `--device=gpu`). Exports of `~/dev/test/ort-export`: `mixvpr_320x320.onnx`,
@@ -140,6 +150,8 @@ re-scores the v2 geometry under every score-floor / weighting / refinement confi
 (`WSLAM_ABLATION_REPORT_OUT=path.md`). Results and analysis:
 `benchmarks/POSE_ESTIMATE_V2_NOTE.md`.
 `LocalSmootherTest`/`JobWorkerTest` cover the v2 mapping back-end machinery (no data).
+`MotionPredictionTest`/`FramePrefilterPassTest` cover the frame prefilter on synthetic IMU
+data (no data).
 `LoopClosureModelIoTest`, `PlaceDatabaseTest`, `PnpVerifyTest` and `PoseGraphTest` cover
 the loop closure pieces (no data); `Models/LoopClosureDatasetTest` checks each place
 recognition model whose path is set on a ground-truth V1_01_easy revisit (MegaLoc on
@@ -152,6 +164,10 @@ keyframe decision that differs from the recording (re-record after changing the 
 and checks the final map against the recording run's; `WSLAM_REPLAY_MAP_OUT=map.ply`
 exports the replayed map for `benchmarks/compare.py`. Most of its time is
 `TriangulatePass`'s refinement, so it is much faster in an optimised build.
+`MappingReplayTest.PrefilterPredictsTheGate` runs the prefilter's prediction on every
+replayed frame (skipping nothing) and fails if it predicts small motion on a frame the gate
+accepted; its `[Prefilter replay]` line reports the share of frames it would skip, and the
+`WSLAM_PREFILTER_*` knobs apply.
 `wslam/src/feature_detect/brief_tests.inc` is static BRIEF descriptor data, not a
 test file.
 
@@ -303,41 +319,64 @@ modifying it, remember the changes are tracked in this repo's history.
 
 `CreateWslamPipelineV2()` (selected with `-v2`) builds a standalone pipeline of three
 stages: feature detect, pose estimate and mapping (below; `WslamConfig::enable_mapping`,
-`-no-mapping` drops it). The `GpuStage`
-`v2::CreateFeatureDetectStage` runs the
-RaCo-ALIKED-LightGlue+ model (`resources/*.onnx`, gitignored; LightGlue-ONNX v3.0)
-through ONNX Runtime's WebGPU EP on the project's own `wgpu::Device`. All v2 code
-lives in `namespace wslam::v2` (the v2 `FillPyramidPass`/`SensorLoaderPass` share
-names with v1 and are compiled into the same library). Per frame:
-`SensorLoaderPass` → `PreservePyramidPass` (Current → Previous texture copy of the
-*previous* frame, when it became the reference) → `FillPyramidPass` (Current pyramid) →
-`PackModelInputPass` (Previous + Current LoD0, centre-cropped to 736×480, gray → RGB,
-NCHW into the images buffer) → `OrtFeatureDetectPass` (GPU pass in the same wait batch,
-`session.Run` with an IoBinding; skipped on the first frame). With `--device=cpu` the
-last pass is `OrtCpuFeatureDetectPass` instead (`onnx_cpu_feature_detect.*`): it reads
-the images buffer back, runs the model on ORT's CPU EP, and publishes the keypoints
-under `OrtKeypointsName` (on the GPU they stay in the keypoints buffer). Model
-validation, dynamic-output binding and match publishing shared by both passes live in
-`onnx_utils.*`. Previous is the model's
-**reference** image, chosen by `v2::ReferenceAdvance`: `EveryFrame` (no mapping:
-consecutive frames) or `OnKeyframeMarker` (with mapping: it advances only when the
-mapping stage set `FeatureReferenceAdvanceName` — every frame before the first
-keyframe, then on accepted keyframes — so the model always pairs the last keyframe
-with the current frame, exactly the factor-graph edge). The preserve pass runs at the
-start of the next frame because acceptance is decided after the detect stage. The model's tensor names,
-shapes and row layouts are in `raco_lightglue.hpp`; outputs land in AnyBag under
-the `ResourceIdentifier::Ort*` keys. The model is chosen through `.env`
-(`WSLAM_ONNX_MODEL`, `WSLAM_ONNX_KEYPOINTS`), so the keypoint count is a runtime
-value carried by `v2::SharedBindings::getKeypointCount()`, and the
+`-no-mapping` drops it). The `GpuStage` `v2::CreateFeatureDetectStage` runs the **split**
+RaCo-ALIKED-LightGlue models (`resources/*.onnx`, gitignored; LightGlue-ONNX v3.0, 512
+keypoints): an **extractor** (image → keypoints + 128-d descriptors) run once on the first
+frame, then released (`SplitModelRunner`, `split_model.*`) and replaced by the **cached**
+model (current image + the reference frame's cached keypoints/descriptors → the current
+keypoints/descriptors and zero-padded `[K, 3]` matches/`[K]` scores, `mscores > 0` marks
+real rows, `ParseMatches`). Features are never re-detected: each run's output is kept as
+*pending* and becomes the reference when its frame does, so the reference keypoints are
+exactly those the keyframe reported, under the same indices. All v2 code lives in
+`namespace wslam::v2` (the v2 `FillPyramidPass`/`SensorLoaderPass` share names with v1 and
+are compiled into the same library). Per frame: `SensorLoaderPass` → `FramePrefilterPass`
+(below; with mapping) → `FillPyramidPass` (the frame's pyramid) → `PackModelInputPass`
+(LoD0, centre-cropped to 736×480, gray → RGB, NCHW `[1, 3, H, W]` into the images buffer) →
+`OrtCpuFeatureDetectPass` (`--device=cpu`: reads the images buffer back, CPU EP) or
+`OrtFeatureDetectPass` (GPU pass in the same wait batch, WebGPU EP reading the images buffer
+in place; blocked at startup until WebGPU exports exist). Both delegate to
+`SplitModelRunner`, which publishes the matches, `OrtKeypointsName` (reference keypoints then
+current, the `[left K | right K]` layout `LoadMatchesPass` reads) and the current frame's
+`FrameFeatures` under `OrtFrameFeaturesName` (`shared_ptr<const>`, what loop closure stores).
+Model validation and match parsing live in `onnx_utils.*`. Which frame is the reference is
+chosen by `v2::ReferenceAdvance`: `EveryFrame` (no mapping: consecutive frames) or
+`OnKeyframeMarker` (with mapping: it advances only when the mapping stage set
+`FeatureReferenceAdvanceName` — every frame before the first keyframe, then on accepted
+keyframes — so the model always pairs the last keyframe with the current frame, exactly the
+factor-graph edge). The runner consumes the marker at the start of the next model run,
+because acceptance is decided after the detect stage. The tensor names, shapes and row
+layouts are in `raco_lightglue.hpp`; outputs land in AnyBag under the
+`ResourceIdentifier::Ort*` keys. The keypoint count is a runtime value
+(`WSLAM_ONNX_KEYPOINTS`) carried by `v2::SharedBindings::getKeypointCount()`, and the
 keypoint-dependent parts of the contract are functions of it (`KeypointsShape`,
-`KeypointsBytes`, ...).
+`DescriptorsShape`, ...).
+
+**Frame prefilter** (`frame_prefilter.*`, `motion_prediction.*`): with mapping, a CPU pass
+before any GPU work skips the model (`kStageStopExecution` + the `FrameSkippedName`
+marker) on frames whose motion since the last keyframe the IMU predicts, with confidence,
+to fail the gate's small-motion test (rotation < `min_rotation_rad` AND median parallax <
+`min_parallax_px`). The mapping stage's `BuildFactorsPass` publishes a
+`KeyframeMotionPrior` per accepted keyframe with an IMU edge (IMU-predicted orientation and
+velocity, biases, gravity, median landmark depth = triangulated unit depth × the IMU
+`metric_step`, the gate thresholds, and a velocity sigma measured online: the drain
+compares each keyframe's predicted velocity with the smoother's, an EMA in
+`SharedBindings::velocity_error_variance`); the gate erases it on acceptance, so there is
+no skipping before the second keyframe. `MotionPredictor::predict` preintegrates the buffered
+samples after the keyframe with the mapping stage's own calibration, predicts the median
+parallax over an image grid at the median depth, and bounds both quantities by
+`confidence_sigmas` of the gyro/accel noise and random walk (`IMUSensorParams`), bias,
+attitude, velocity and depth errors. `max_consecutive_skips` (10) forces a model run.
+Skipped frames leave the marker and the pending features for the next run, so promotion
+stays correct. The gate logs predicted vs measured motion on frames that ran
+(`grep '\[prefilter\]'`).
 
 `v2::CreatePoseEstimateStage` (`wslam/src/pose_estimate_v2/`, CPU `Stage`) is the
 port of v1's pose estimate stage; the model already matched, so there is no matcher:
-- `LoadMatchesPass` — takes the published keypoints (CPU run) or reads the keypoints buffer back, and joins them with the model's
+- `LoadMatchesPass` — takes the published keypoints and joins them with the model's
   matches (taken, consume-once) into `v2::KeypointCorrespondence`s: LOD-0 source pixels
   (`raco_lightglue::ToSourcePixel` adds the crop offset and removes the model's
-  pixel-centre 0.5) plus undistorted rays. Stops the stage on the first frame.
+  pixel-centre 0.5) plus undistorted rays. Stops the stage on frames the model did not
+  run on (the first, and prefilter skips).
 - `RansacPass` — drops matches below a LightGlue score floor (`MatchFilterOptions`,
   0.5 with a top-100 fallback; the model itself already cuts at 0.1), then runs
   eight-point **essential**-matrix RANSAC on the undistorted rays (the camera is
@@ -378,8 +417,8 @@ shared IMU helpers and env knobs live in `map/utils.{hpp,cpp}`. Stage order
   and is the input meant for later re-observation handling on another thread.
 - `AssociateLandmarksPass` — after the drain, so it sees retirements. Tracks are keyed
   by the model's keypoint index in the last keyframe image (`active_landmarks`) and
-  confirmed by pixel (`LookupTrack`, 0.5 px): the model re-detects the keyframe image
-  when it becomes the reference. A match continues a landmark only if its factor is
+  confirmed by pixel (`LookupTrack`, 0.5 px; with cached features the reference keypoints
+  are the keyframe's own, so a mismatch is a bug). A match continues a landmark only if its factor is
   still in the window; otherwise it starts a new one (prev + curr observations).
 - `BuildFactorsPass` — factors + values, every new key stamped with its keyframe index
   (`SmootherTime`); re-observed smart factors are cloned, old slot in `remove_slots`.
@@ -407,8 +446,10 @@ keyframe, gates it into the pose graph (`NodeGate`: a keyframe that did not move
 enough from the last node is attached to it, not added), adds nodes to a FAISS
 `IndexIDMap2(IndexFlatIP)` and queries only the **newest** node of each batch:
 top-N candidates at least `min_keyframe_gap` keyframes / `min_time_gap_s` older, then
-RaCo-LightGlue on the (candidate, query) pair (its own CPU session; the front-end model),
-candidate keypoints → landmarks by nearest tracked pixel → archived 3D points in the
+the cached RaCo-LightGlue model on the query image against the candidate's stored features
+(`CachedMatcher`, its own CPU session: each `KeyframeImageEvent` carries the front end's
+`FrameFeatures` and its tracks by keypoint index), candidate keypoint index → landmark
+(exact) → archived 3D points in the
 candidate camera frame, then PnP (`pnp_verify.*`: own 6-point DLT RANSAC + Huber
 Gauss-Newton, no OpenCV) and a consistency bound against the graph's estimate.
 The pose graph (`pose_graph.*`) is pose-only iSAM2: odometry `BetweenFactor`s from the
@@ -441,9 +482,10 @@ ORT interop (`compute/onnx_interop.hpp`) facts that are easy to get wrong:
   device memory use `Ort::MemoryInfo("WebGPU_Buf", ..., 0, ...)`.
 - ORT binds a tensor's buffer whole from offset 0, so model tensors can't live
   in `GPU` slab sub-regions: they use `GPU::createDedicatedBuffer` (GPU-owned).
-- Data-dependent outputs (`matches`, `mscores`) are bound by memory info and
-  must be rebound before every run, or ORT reuses the previous run's output as
-  a pre-allocated value and rejects the new shape.
+- The split models' outputs all have fixed shapes (matches are zero-padded to K
+  rows), so they are bound to host tensors; a data-dependent output would have to
+  be rebound by memory info before every run, or ORT reuses the previous run's
+  output as a pre-allocated value and rejects the new shape.
 - When ORT is handed our device it only gets the limits/features `GPU::initDevice`
   requested, which therefore mirrors what ORT would request for its own device.
 

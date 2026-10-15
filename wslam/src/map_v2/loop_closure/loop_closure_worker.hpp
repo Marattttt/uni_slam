@@ -9,39 +9,45 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <flat_map>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "cached_matcher.hpp"
 #include "compute/onnx_interop.hpp"
 #include "compute/performance.hpp"
 #include "config.hpp"
 #include "data/provider_base.hpp"
+#include "feature_detect_v2/raco_lightglue.hpp"
 #include "model_io.hpp"
-#include "pair_matcher.hpp"
 #include "place_database.hpp"
 #include "place_recognition.hpp"
 #include "pose_graph.hpp"
 
 namespace wslam::v2::mapping::loop_closure {
 
-// A keyframe tracked a landmark at this keypoint (observed LOD-0 pixel)
+// A keyframe tracked a landmark at its keypoint keypoint_index (an index
+// into the keyframe's FrameFeatures)
 struct KeyframeLandmark {
     uint64_t landmark = 0;
-    Eigen::Vector2d pixel;
+    uint32_t keypoint_index = 0;
 };
 
-// Sent when a keyframe is accepted: its image and the landmarks it tracks
+// Sent when a keyframe is accepted: its image, the features the front end
+// cached for it and the landmarks it tracks
 struct KeyframeImageEvent {
     uint64_t keyframe = 0;
     uint64_t timestamp_ns = 0;
     PlaceImage image;
+    std::shared_ptr<const raco_lightglue::FrameFeatures> features;
     std::vector<KeyframeLandmark> landmarks;
 };
 
@@ -120,7 +126,7 @@ class LoopClosureWorker {
         // them
         std::optional<wgpu::Device> device;
         std::unique_ptr<PlaceRecognitionModel> place_recognition;
-        std::unique_ptr<PairMatcher> matcher;
+        std::unique_ptr<CachedMatcher> matcher;
     };
 
     LoopClosureWorker(LoopClosureConfig config, data::CamSensorParams camera,
@@ -159,10 +165,14 @@ class LoopClosureWorker {
 
     struct KeyframeRecord {
         uint64_t timestamp_ns = 0;
-        // Dropped once the keyframe is attached to a node: only nodes are
-        // matched against
+        // Needed until the keyframe's map update was processed: to describe
+        // it, and to match it if it is the query of its batch
         PlaceImage image;
-        std::vector<KeyframeLandmark> landmarks;
+        // What a candidate is matched with. Dropped once the keyframe is
+        // attached to a node: only nodes are matched against
+        std::shared_ptr<const raco_lightglue::FrameFeatures> features;
+        // Landmark tracked by each keypoint
+        std::flat_map<uint32_t, uint64_t> landmarks;
         std::optional<PlaceDescriptor> descriptor;
         // The smoother's last estimate, once the keyframe left the window
         std::optional<gtsam::Pose3> archived_pose;
@@ -198,9 +208,13 @@ class LoopClosureWorker {
     void run();
     void process(std::deque<Event>& batch);
     void handle(KeyframeImageEvent& event);
-    // Returns the newest keyframe of the update that became a node
-    std::optional<uint64_t> handle(MapUpdateEvent& event);
+    // Returns the newest keyframe of the update that became a node. Every
+    // keyframe the update settled is appended to settled
+    std::optional<uint64_t> handle(MapUpdateEvent& event,
+                                   std::vector<uint64_t>& settled);
     void query(uint64_t keyframe);
+    // Frees the images of keyframes that can no longer be a query
+    void dropImages(std::span<const uint64_t> keyframes);
     [[nodiscard]] std::expected<AcceptedLoop, std::string> verify(
         uint64_t candidate, uint64_t query, float similarity);
     void publishCorrection();

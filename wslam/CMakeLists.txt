@@ -14,11 +14,13 @@ add_library(wslam_app
 
     src/feature_detect_v2/feature_detect.cpp
     src/feature_detect_v2/fill_pyramid.cpp
+    src/feature_detect_v2/frame_prefilter.cpp
+    src/feature_detect_v2/motion_prediction.cpp
     src/feature_detect_v2/onnx_cpu_feature_detect.cpp
     src/feature_detect_v2/onnx_feature_detect.cpp
     src/feature_detect_v2/onnx_utils.cpp
     src/feature_detect_v2/pack_model_input.cpp
-    src/feature_detect_v2/preserve_pyramid.cpp
+    src/feature_detect_v2/split_model.cpp
     src/feature_detect_v2/sensor_loader.cpp
     src/feature_detect_v2/shared_bindings.cpp
 
@@ -58,7 +60,7 @@ add_library(wslam_app
     src/map_v2/loop_closure/loop_closure_worker.cpp
     src/map_v2/loop_closure/merge.cpp
     src/map_v2/loop_closure/model_io.cpp
-    src/map_v2/loop_closure/pair_matcher.cpp
+    src/map_v2/loop_closure/cached_matcher.cpp
     src/map_v2/loop_closure/place_database.cpp
     src/map_v2/loop_closure/place_recognition.cpp
     src/map_v2/loop_closure/pnp_verify.cpp

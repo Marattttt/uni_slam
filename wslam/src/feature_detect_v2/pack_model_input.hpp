@@ -12,9 +12,8 @@
 
 namespace wslam::v2 {
 
-// Packs the Previous and Current pyramids' model level into the model's
-// images buffer (raco_lightglue::kImagesShape). Records nothing until a
-// Previous pyramid exists
+// Packs the current frame pyramid's model level into the model's images
+// buffer (raco_lightglue::kImagesShape)
 class PackModelInputPass : public compute::GPUPass {
    public:
     PackModelInputPass(std::shared_ptr<compute::GPU> gpu,
@@ -28,8 +27,7 @@ class PackModelInputPass : public compute::GPUPass {
    private:
     std::shared_ptr<SharedBindings> bindings_;
 
-    wgpu::TextureView left_view_;
-    wgpu::TextureView right_view_;
+    wgpu::TextureView view_;
     wgpu::BindGroupLayout bind_group_layout_;
     wgpu::BindGroup bind_group_;
     wgpu::ComputePipeline compute_pipeline_;

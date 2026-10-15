@@ -2,31 +2,33 @@
 
 #include <onnxruntime/onnxruntime_cxx_api.h>
 
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
 
 #include "anybag.hpp"
 #include "compute/onnx_interop.hpp"
+#include "compute/pass.hpp"
 #include "shared_bindings.hpp"
+#include "split_model.hpp"
 
 namespace wslam::v2 {
 
-// Runs the RaCo-ALIKED-LightGlue model on the previous (left) and current
-// (right) frame packed into the images buffer. Keypoints stay on the GPU in
-// the keypoints buffer. Matches and their scores are data-dependent in size,
-// so ORT returns them in CPU memory, and they are published to storage.
-// Skips the first frame, which has no previous frame to match against
-class OrtFeatureDetectPass : public compute::OrtPass {
+// Runs the split RaCo-ALIKED-LightGlue models (SplitModelRunner) on ONNX
+// Runtime's WebGPU execution provider, on the current frame packed into the
+// images buffer, which the model reads in place. A GPU pass: ORT submits to
+// the device queue, so the run is ordered after the packing. The cached
+// features, keypoints and matches are small and live in host memory
+class OrtFeatureDetectPass : public compute::GPUPass {
    public:
     OrtFeatureDetectPass(std::shared_ptr<compute::OrtProvider> ort,
-                         std::filesystem::path model_path,
+                         SplitModelPaths paths, ReferenceAdvance advance,
                          std::shared_ptr<SharedBindings> bindings,
                          AnyBag& storage)
-        : OrtPass(std::move(ort), std::move(model_path)),
+        : GPUPass(ort->getGPU()),
           bindings_(std::move(bindings)),
-          storage_(storage) {}
+          runner_(std::move(ort), std::move(paths), /*use_webgpu_ep=*/true,
+                  bindings_->getKeypointCount(), advance, storage) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> submitWork() override;
@@ -34,15 +36,10 @@ class OrtFeatureDetectPass : public compute::OrtPass {
 
    private:
     std::shared_ptr<SharedBindings> bindings_;
-    AnyBag& storage_;
+    SplitModelRunner runner_;
 
-    // Tensor views of the GPU-owned buffers. They don't own the buffers
+    // Tensor view of the GPU-owned images buffer. It doesn't own the buffer
     std::optional<Ort::Value> images_tensor_;
-    std::optional<Ort::Value> keypoints_tensor_;
-    std::optional<Ort::IoBinding> io_binding_;
-    Ort::MemoryInfo cpu_memory_info_{nullptr};
-
-    [[nodiscard]] std::optional<std::string> initBinding();
 };
 
 }  // namespace wslam::v2

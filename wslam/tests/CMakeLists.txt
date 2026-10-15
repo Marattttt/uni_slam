@@ -7,6 +7,7 @@ add_executable(wslam_tests
     loop_closure_tests.cpp
     loop_closure_dataset_tests.cpp
     mapping_replay_tests.cpp
+    motion_prediction_tests.cpp
     pose_estimate_dataset_tests.cpp
 )
 

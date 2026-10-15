@@ -60,11 +60,10 @@ struct PlaceDescriptor {
     [[nodiscard]] float similarity(const PlaceDescriptor& other) const;
 };
 
-// RaCo-LightGlue pipeline input for one pair, left (the earlier keyframe)
-// then right (the query): float32 raco_lightglue::kImagesShape, RGB in
-// [0, 1], centre-cropped like the front end's PackModelInputPass
-[[nodiscard]] std::vector<float> ToMatcherInput(const PlaceImage& left,
-                                                const PlaceImage& right);
+// Cached RaCo-LightGlue model input for the query image: float32
+// raco_lightglue::kImagesShape, RGB in [0, 1], centre-cropped like the front
+// end's PackModelInputPass
+[[nodiscard]] std::vector<float> ToMatcherInput(const PlaceImage& image);
 
 // A match of the two images, in LOD-0 source pixels (observed, distorted),
 // in the convention of the camera intrinsics
@@ -79,13 +78,15 @@ struct PairMatch {
 struct PairMatches {
     std::vector<PairMatch> matches;
 
-    // From the pipeline's outputs: keypoints [2, keypoint_count, 2], one
-    // KeypointMatch and one score per match
+    // From the cached model's outputs: the left (candidate) and right (query)
+    // keypoints, keypoint_count each, and the zero-padded matches and scores
+    // (keypoint_count rows; rows with a positive score are matches)
     [[nodiscard]] static std::expected<PairMatches, std::string>
     FromMatcherOutput(
-        std::span<const raco_lightglue::KeypointPosition> keypoints,
-        std::span<const raco_lightglue::KeypointMatch> matches,
-        std::span<const float> scores, int64_t keypoint_count);
+        std::span<const raco_lightglue::KeypointPosition> left_keypoints,
+        std::span<const raco_lightglue::KeypointPosition> right_keypoints,
+        std::span<const raco_lightglue::KeypointMatch> padded_matches,
+        std::span<const float> padded_scores, int64_t keypoint_count);
 };
 
 }  // namespace wslam::v2::mapping::loop_closure

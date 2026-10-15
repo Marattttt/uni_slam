@@ -38,6 +38,7 @@ std::optional<std::string> AssociateLandmarksPass::execute() {
         .t_world_cam = candidate->t_world_cam,
         .R_rel = candidate->R_rel,
         .t_rel = candidate->t_rel,
+        .median_depth_unit = candidate->median_depth_unit,
         .observations = {},
         .imu = std::move(candidate->imu),
     };

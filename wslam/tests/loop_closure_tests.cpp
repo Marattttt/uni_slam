@@ -12,6 +12,7 @@
 #include <random>
 #include <vector>
 
+#include "feature_detect_v2/onnx_utils.hpp"
 #include "feature_detect_v2/raco_lightglue.hpp"
 #include "map_v2/loop_closure/config.hpp"
 #include "map_v2/loop_closure/model_io.hpp"
@@ -65,8 +66,7 @@ TEST(LoopClosureModelIoTest, FrameRoundTripsToEightBits) {
 }
 
 TEST(LoopClosureModelIoTest, VprInputIsNormalisedNchw) {
-    const auto image
-        = MakeImage(kWidth, kHeight, [](int, int) { return 128; });
+    const auto image = MakeImage(kWidth, kHeight, [](int, int) { return 128; });
     const lc::VprInputSpec spec{.width = 320, .height = 320};
     const std::vector<float> input = lc::ToVprInput(image, spec);
 
@@ -82,9 +82,8 @@ TEST(LoopClosureModelIoTest, VprInputIsNormalisedNchw) {
 
 TEST(LoopClosureModelIoTest, SquashAveragesTheCoveredArea) {
     // Left half black, right half white
-    const auto image = MakeImage(kWidth, kHeight, [](int x, int) {
-        return x < kWidth / 2 ? 0 : 255;
-    });
+    const auto image = MakeImage(
+        kWidth, kHeight, [](int x, int) { return x < kWidth / 2 ? 0 : 255; });
 
     // Two columns: each covers exactly one half
     const auto halves = lc::ToVprInput(image, {.width = 2, .height = 4});
@@ -98,29 +97,24 @@ TEST(LoopClosureModelIoTest, SquashAveragesTheCoveredArea) {
     EXPECT_NEAR(Denormalise(thirds[2], 0), 255.0F, 1e-3F);
 }
 
-TEST(LoopClosureModelIoTest, MatcherInputIsCentreCroppedPair) {
-    const auto left = MakeImage(kWidth, kHeight,
-                                [](int x, int y) { return (x + y) % 256; });
-    const auto right = MakeImage(kWidth, kHeight,
-                                 [](int x, int) { return 255 - x % 256; });
-    const std::vector<float> input = lc::ToMatcherInput(left, right);
+TEST(LoopClosureModelIoTest, MatcherInputIsCentreCroppedImage) {
+    const auto image = MakeImage(kWidth, kHeight,
+                                 [](int x, int y) { return (x + y) % 256; });
+    const std::vector<float> input = lc::ToMatcherInput(image);
     ASSERT_EQ(input.size(), model::kImagesBytes / sizeof(float));
 
     const size_t plane = size_t{model::kInputWidth} * model::kInputHeight;
-    const auto at = [&](size_t batch, size_t channel, uint32_t x, uint32_t y) {
-        return input[(batch * 3 + channel) * plane
-                     + size_t{y} * model::kInputWidth + x];
+    const auto at = [&](size_t channel, uint32_t x, uint32_t y) {
+        return input[channel * plane + size_t{y} * model::kInputWidth + x];
     };
-    for (const auto [x, y] : {std::pair{0U, 0U}, std::pair{100U, 200U},
-                              std::pair{model::kInputWidth - 1,
-                                        model::kInputHeight - 1}}) {
+    for (const auto [x, y] :
+         {std::pair{0U, 0U}, std::pair{100U, 200U},
+          std::pair{model::kInputWidth - 1, model::kInputHeight - 1}}) {
         const uint32_t sx = x + model::kCropX;
         const uint32_t sy = y + model::kCropY;
         for (size_t channel = 0; channel < 3; ++channel) {
-            EXPECT_FLOAT_EQ(at(0, channel, x, y),
+            EXPECT_FLOAT_EQ(at(channel, x, y),
                             static_cast<float>((sx + sy) % 256) / 255.0F);
-            EXPECT_FLOAT_EQ(at(1, channel, x, y),
-                            static_cast<float>(255 - sx % 256) / 255.0F);
         }
     }
 }
@@ -141,18 +135,22 @@ TEST(LoopClosureModelIoTest, DescriptorIsRenormalised) {
 
 TEST(LoopClosureModelIoTest, MatcherOutputToSourcePixels) {
     constexpr int64_t kKeypoints = 2;
-    const std::vector<model::KeypointPosition> keypoints{
-        {.x = 10.5F, .y = 20.5F},  // left 0
-        {.x = 1.5F, .y = 2.5F},    // left 1
-        {.x = 30.5F, .y = 40.5F},  // right 0
-        {.x = 3.5F, .y = 4.5F},    // right 1
+    const std::vector<model::KeypointPosition> left{
+        {.x = 10.5F, .y = 20.5F},
+        {.x = 1.5F, .y = 2.5F},
     };
+    const std::vector<model::KeypointPosition> right{
+        {.x = 30.5F, .y = 40.5F},
+        {.x = 3.5F, .y = 4.5F},
+    };
+    // Zero-padded to kKeypoints rows: the second row is padding
     const std::vector<model::KeypointMatch> matches{
         {.pair_index = 0, .left_index = 1, .right_index = 0},
+        {.pair_index = 0, .left_index = 0, .right_index = 0},
     };
-    const std::vector<float> scores{0.9F};
+    const std::vector<float> scores{0.9F, 0.0F};
 
-    const auto pairs = lc::PairMatches::FromMatcherOutput(keypoints, matches,
+    const auto pairs = lc::PairMatches::FromMatcherOutput(left, right, matches,
                                                           scores, kKeypoints);
     ASSERT_TRUE(pairs.has_value());
     ASSERT_EQ(pairs->matches.size(), 1U);
@@ -166,10 +164,44 @@ TEST(LoopClosureModelIoTest, MatcherOutputToSourcePixels) {
 
     const std::vector<model::KeypointMatch> malformed{
         {.pair_index = 0, .left_index = 2, .right_index = 0},
+        {.pair_index = 0, .left_index = 0, .right_index = 0},
     };
-    EXPECT_FALSE(lc::PairMatches::FromMatcherOutput(keypoints, malformed,
+    EXPECT_FALSE(lc::PairMatches::FromMatcherOutput(left, right, malformed,
                                                     scores, kKeypoints)
                      .has_value());
+}
+
+TEST(LoopClosureModelIoTest, ParseMatchesDropsPadding) {
+    constexpr int64_t kKeypoints = 4;
+    const std::vector<model::KeypointMatch> padded{
+        {.pair_index = 0, .left_index = 3, .right_index = 1},
+        {.pair_index = 0, .left_index = 0, .right_index = 2},
+        {.pair_index = 0, .left_index = 0, .right_index = 0},
+        {.pair_index = 0, .left_index = 0, .right_index = 0},
+    };
+    const std::vector<float> scores{0.7F, 0.2F, 0.0F, 0.0F};
+
+    const auto parsed = wslam::v2::ParseMatches(padded, scores, kKeypoints);
+    ASSERT_TRUE(parsed.has_value());
+    ASSERT_EQ(parsed->matches.size(), 2U);
+    EXPECT_EQ(parsed->matches[0].left_index, 3);
+    EXPECT_EQ(parsed->matches[1].right_index, 2);
+    EXPECT_FLOAT_EQ(parsed->scores[1], 0.2F);
+
+    // A padded row with a score is a malformed match, not padding
+    const std::vector<float> scored_padding{0.7F, 0.2F, 0.1F, 0.0F};
+    const std::vector<model::KeypointMatch> out_of_range{
+        {.pair_index = 0, .left_index = 4, .right_index = 1},
+        {.pair_index = 0, .left_index = 0, .right_index = 2},
+        {.pair_index = 0, .left_index = 0, .right_index = 0},
+        {.pair_index = 0, .left_index = 0, .right_index = 0},
+    };
+    EXPECT_FALSE(
+        wslam::v2::ParseMatches(out_of_range, scored_padding, kKeypoints)
+            .has_value());
+    EXPECT_FALSE(
+        wslam::v2::ParseMatches(padded, std::vector<float>{0.5F}, kKeypoints)
+            .has_value());
 }
 
 // ---------------------------------------------------------------- database
@@ -247,8 +279,7 @@ TEST(PnpVerifyTest, RecoversPoseWithOutliers) {
     const PnpScene scene = MakePnpScene(120, 0.4, 0.5, kFocal);
 
     const lc::MatchAcceptance acceptance{};
-    const auto result
-        = lc::SolvePnp(scene.correspondences, kFocal, acceptance);
+    const auto result = lc::SolvePnp(scene.correspondences, kFocal, acceptance);
     ASSERT_TRUE(result.has_value()) << result.error();
 
     const gtsam::Pose3 error
@@ -265,13 +296,13 @@ TEST(PnpVerifyTest, RejectsTooFewCorrespondencesOrInliers) {
     const lc::MatchAcceptance acceptance{};
 
     const PnpScene few = MakePnpScene(10, 0.0, 0.5, kFocal);
-    EXPECT_FALSE(lc::SolvePnp(few.correspondences, kFocal, acceptance)
-                     .has_value());
+    EXPECT_FALSE(
+        lc::SolvePnp(few.correspondences, kFocal, acceptance).has_value());
 
     // Mostly noise: whatever RANSAC finds misses the inlier gates
     const PnpScene noise = MakePnpScene(100, 0.95, 0.5, kFocal);
-    EXPECT_FALSE(lc::SolvePnp(noise.correspondences, kFocal, acceptance)
-                     .has_value());
+    EXPECT_FALSE(
+        lc::SolvePnp(noise.correspondences, kFocal, acceptance).has_value());
 }
 
 // -------------------------------------------------------------- pose graph
@@ -311,7 +342,8 @@ TEST(PoseGraphTest, NodeGateAttachesNearDuplicates) {
     EXPECT_TRUE(graph.addKeyframe(1, first));
     // 1 cm and no rotation away: attached to node 1
     EXPECT_FALSE(graph.addKeyframe(
-        2, first.compose(gtsam::Pose3{gtsam::Rot3{}, gtsam::Point3{0.01, 0, 0}})));
+        2,
+        first.compose(gtsam::Pose3{gtsam::Rot3{}, gtsam::Point3{0.01, 0, 0}})));
     EXPECT_TRUE(graph.addKeyframe(3, CirclePose(0.2)));
 
     EXPECT_TRUE(graph.isNode(1));

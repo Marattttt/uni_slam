@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "common.hpp"
+#include "feature_detect_v2/raco_lightglue.hpp"
 
 using namespace wslam;
 using namespace wslam::v2::mapping;
@@ -25,8 +26,8 @@ std::optional<std::string> FeedLoopClosurePass::execute() {
     // was submitted
     pushMapUpdate();
 
-    const auto frame = storage_.getPtr<data::FrameBW>(
-        ResourceIdentifier::GetFrameName(0));
+    const auto frame
+        = storage_.getPtr<data::FrameBW>(ResourceIdentifier::GetFrameName(0));
     if (!frame) {
         return "no frame for the keyframe image";
     }
@@ -36,17 +37,28 @@ std::optional<std::string> FeedLoopClosurePass::execute() {
         return "no frame timestamp";
     }
 
+    auto features
+        = storage_
+              .get<std::shared_ptr<const v2::raco_lightglue::FrameFeatures>>(
+                  ResourceIdentifier::OrtFrameFeaturesName);
+    if (!features || features.value() == nullptr) {
+        return "no model features for the keyframe";
+    }
+
     loop_closure::KeyframeImageEvent event{
         .keyframe = shared_.last_pose.v,
         .timestamp_ns = timestamp.value(),
         .image = loop_closure::PlaceImage::FromFrame(*frame.value()),
+        .features = std::move(features).value(),
         .landmarks = {},
     };
+    // Tracks are keyed by the keyframe's keypoint index, which indexes the
+    // features
     event.landmarks.reserve(shared_.active_landmarks.size());
     for (const auto& [index, tracked] : shared_.active_landmarks) {
         event.landmarks.push_back(loop_closure::KeyframeLandmark{
             .landmark = tracked.landmark.v,
-            .pixel = tracked.pixel,
+            .keypoint_index = index,
         });
     }
     worker_->push(std::move(event));

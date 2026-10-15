@@ -59,6 +59,11 @@ struct WslamConfig {
     // on a thread of its own, and export the loop-corrected map next to the
     // uncorrected one. v2 with mapping only
     bool enable_loop_closure = true;
+
+    // Skip the model on frames whose motion since the last keyframe the IMU
+    // predicts to be too small for the keyframe gate. v2 with mapping only,
+    // and off with a keyframe schedule
+    bool enable_frame_prefilter = true;
 };
 
 struct LOD {
@@ -201,10 +206,20 @@ constexpr std::string FrameTimestampNsName = "res:frame:ts_ns";
 // detect pass on frames the model ran on, so readers of its outputs skip the
 // first frame
 constexpr std::string OrtKeypointsReadyName = "gen:ort:kp:rdy";
-// std::vector<raco_lightglue::KeypointPosition>, raco_lightglue::KeypointsShape
-// rows. Published only when the model runs on the CPU; on the GPU the
-// keypoints stay in SharedBindings' keypoints buffer
+// std::vector<raco_lightglue::KeypointPosition>: the reference image's
+// keypoints, then the current image's (raco_lightglue::PairKeypointsCount)
 constexpr std::string OrtKeypointsName = "gen:ort:kp";
+// std::shared_ptr<const raco_lightglue::FrameFeatures>, the keypoints and
+// descriptors of the last frame the model ran on
+constexpr std::string OrtFrameFeaturesName = "gen:ort:feat";
+// v2::KeyframeMotionPrior of the last accepted keyframe, published by the v2
+// mapping stage, erased when the next keyframe is accepted
+constexpr std::string KeyframeMotionPriorName = "gen:kf:prior";
+// v2::KeyframeMotionPrediction of a frame the prefilter let through
+// (consume-once)
+constexpr std::string KeyframeMotionPredictionName = "gen:kf:pred";
+// Consume-once marker (bool) of a frame the prefilter skipped
+constexpr std::string FrameSkippedName = "gen:frm:skip";
 // std::vector<raco_lightglue::KeypointMatch>
 constexpr std::string OrtMatchesName = "gen:ort:match";
 // std::vector<float>, one score per OrtMatchesName row

@@ -2,17 +2,17 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <set>
-#include <thread>
-#include <utility>
 #include <expected>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <print>
+#include <set>
 #include <string>
+#include <thread>
+#include <utility>
 
 #include "compute/onnx_interop.hpp"
 #include "compute/pass.hpp"
@@ -74,15 +74,15 @@ int PhysicalCoreCount() {
     std::set<std::pair<std::string, std::string>> cores;
     const std::filesystem::path cpus{"/sys/devices/system/cpu"};
     std::error_code error;
-    for (const auto& entry :
-         std::filesystem::directory_iterator(cpus, error)) {
+    for (const auto& entry : std::filesystem::directory_iterator(cpus, error)) {
         const std::string name = entry.path().filename().string();
         if (!name.starts_with("cpu")
             || name.find_first_not_of("0123456789", 3) != std::string::npos
             || name.size() == 3) {
             continue;
         }
-        std::ifstream package(entry.path() / "topology" / "physical_package_id");
+        std::ifstream package(entry.path() / "topology"
+                              / "physical_package_id");
         std::ifstream core(entry.path() / "topology" / "core_id");
         std::string package_id;
         std::string core_id;
@@ -118,7 +118,7 @@ std::expected<v2::FrontendRecording, std::string> MakeRecordingHeader(
     const char* source = std::getenv("EUROC_DIR");
     return v2::FrontendRecording{
         .source = source != nullptr ? source : "",
-        .model_path = model.model_path.string(),
+        .model_path = model.paths.cached.string(),
         .keypoint_count = model.keypoint_count,
         .camera = std::move(camera).value(),
         .imu_params = std::move(imu).value(),
@@ -170,6 +170,10 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
     if (!model_options) {
         return "model selection: " + std::move(model_options).error();
     }
+    if (auto err = v2::ValidateModelFiles(model_options.value(),
+                                          config.compute_device)) {
+        return "model selection: " + std::move(err).value();
+    }
 
     std::shared_ptr<Ort::Env> env;
     try {
@@ -205,8 +209,7 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
 
     // WSLAM_ORT_THREADS overrides the front end's CPU session pool size
     // (applied after the loop closure budget below)
-    const int frontend_threads
-        = map::utils::EnvInt("WSLAM_ORT_THREADS", 0);
+    const int frontend_threads = map::utils::EnvInt("WSLAM_ORT_THREADS", 0);
 
     // Loop closure loads its models next to the front end's, on the same
     // provider; created before the stages so a missing model fails fast
@@ -215,7 +218,7 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
         namespace lc = v2::mapping::loop_closure;
 
         lc::LoopClosureConfig lc_defaults;
-        lc_defaults.matcher_model_path = model_options->model_path;
+        lc_defaults.matcher_model_path = model_options->paths.cached;
         lc_defaults.matcher_keypoint_count = model_options->keypoint_count;
         auto lc_config = lc::ReadLoopClosureConfigFromEnv(lc_defaults);
         if (!lc_config) {
@@ -250,7 +253,7 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
 
     compute.addStage(v2::CreateFeatureDetectStage(
         compute, bindings, std::move(ort), std::move(provider),
-        model_options->model_path, reference_advance, config,
+        model_options.value(), reference_advance, config,
         std::move(reading_filter)));
 
     compute.addStage(
@@ -273,11 +276,11 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
     }
 
     if (config.enable_mapping) {
-        AddMappingStage(compute,
-                        v2::mapping::CreateMappingStage(
-                            compute, compute.getStorage(), config,
-                            std::move(loop_closure)),
-                        config);
+        AddMappingStage(
+            compute,
+            v2::mapping::CreateMappingStage(compute, compute.getStorage(),
+                                            config, std::move(loop_closure)),
+            config);
     }
 
     if (recorder) {

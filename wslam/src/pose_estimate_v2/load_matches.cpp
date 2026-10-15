@@ -20,24 +20,15 @@ namespace model = wslam::v2::raco_lightglue;
 
 #define LOG_ID "[Load Matches pass]"
 
-// Matches of other pairs would need the pair's slots in the keypoints buffer
-static_assert(model::kPairCount == 1, "only one image pair per run is handled");
-
-v2::LoadMatchesPass::LoadMatchesPass(std::shared_ptr<compute::GPU> gpu,
-                                     std::shared_ptr<SharedBindings> bindings,
+v2::LoadMatchesPass::LoadMatchesPass(std::shared_ptr<SharedBindings> bindings,
                                      AnyBag& storage, Opts opts)
-    : gpu_(std::move(gpu)),
-      bindings_(std::move(bindings)),
-      storage_(storage),
-      opts_(opts) {
-    WSLAM_ASSERT(gpu_ != nullptr && bindings_ != nullptr,
-                 "missing GPU or shared bindings");
+    : bindings_(std::move(bindings)), storage_(storage), opts_(opts) {
+    WSLAM_ASSERT(bindings_ != nullptr, "missing shared bindings");
 }
 
-v2::LoadMatchesPass::LoadMatchesPass(std::shared_ptr<compute::GPU> gpu,
-                                     std::shared_ptr<SharedBindings> bindings,
+v2::LoadMatchesPass::LoadMatchesPass(std::shared_ptr<SharedBindings> bindings,
                                      AnyBag& storage)
-    : LoadMatchesPass(std::move(gpu), std::move(bindings), storage, Opts{}) {}
+    : LoadMatchesPass(std::move(bindings), storage, Opts{}) {}
 
 std::string v2::LoadMatchesPass::getId() const { return LOG_ID; }
 
@@ -68,7 +59,9 @@ std::optional<std::string> v2::LoadMatchesPass::execute() {
     // Set by the detect pass only on frames the model ran on
     if (!storage_.take<bool>(ResourceIdentifier::OrtKeypointsReadyName)
              .value_or(false)) {
-        spdlog::info(LOG_ID " No model output (first frame); skipping stage");
+        spdlog::info(LOG_ID
+                     " No model output (first or skipped frame); skipping "
+                     "stage");
         return compute::kStageStopExecution;
     }
 
@@ -87,28 +80,15 @@ std::optional<std::string> v2::LoadMatchesPass::execute() {
     WSLAM_ASSERT(matches->size() == scores->size(), "{} matches but {} scores",
                  matches->size(), scores->size());
 
-    // A model run on the CPU publishes its keypoints; on the GPU they stay in
-    // the keypoints buffer
-    std::vector<model::KeypointPosition> keypoints;
-    if (auto published = storage_.take<std::vector<model::KeypointPosition>>(
-            ResourceIdentifier::OrtKeypointsName)) {
-        keypoints = std::move(published).value();
-    } else {
-        auto read = gpu_->readBuffer<model::KeypointPosition>(
-            bindings_->getKeypointsBuffer(),
-            model::KeypointsCount(bindings_->getKeypointCount()));
-        if (!read) {
-            return "reading keypoints: " + read.error();
-        }
-        keypoints = std::move(read).value();
-    }
-    WSLAM_ASSERT(keypoints.size()
-                     == model::KeypointsCount(bindings_->getKeypointCount()),
-                 "got {} keypoints", keypoints.size());
+    auto keypoints = storage_.take<std::vector<model::KeypointPosition>>(
+        ResourceIdentifier::OrtKeypointsName);
+    WSLAM_ASSERT(keypoints.has_value(),
+                 "the detect pass marked its output ready without publishing "
+                 "keypoints");
 
     size_t dropped = 0;
     KeypointMatches correspondences
-        = buildCorrespondences(*matches, *scores, keypoints, camera, dropped);
+        = buildCorrespondences(*matches, *scores, *keypoints, camera, dropped);
 
     if (dropped > 0) {
         spdlog::warn(LOG_ID
@@ -131,9 +111,9 @@ v2::KeypointMatches v2::LoadMatchesPass::buildCorrespondences(
     std::span<const model::KeypointPosition> keypoints,
     const data::CamSensorParams& camera, size_t& dropped) const {
     const int64_t keypoint_count = bindings_->getKeypointCount();
-    WSLAM_ASSERT(keypoints.size() == model::KeypointsCount(keypoint_count),
-                 "{} keypoints read back, expected {}", keypoints.size(),
-                 model::KeypointsCount(keypoint_count));
+    WSLAM_ASSERT(keypoints.size() == model::PairKeypointsCount(keypoint_count),
+                 "{} keypoints published, expected {}", keypoints.size(),
+                 model::PairKeypointsCount(keypoint_count));
 
     // Keypoints are stored image by image, keypoint_count each
     const auto per_image = static_cast<size_t>(keypoint_count);

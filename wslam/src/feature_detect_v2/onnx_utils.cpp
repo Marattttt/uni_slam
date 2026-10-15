@@ -5,13 +5,10 @@
 #include <algorithm>
 #include <array>
 #include <format>
-#include <ranges>
-#include <span>
 #include <string_view>
 #include <utility>
 
 #include "common.hpp"
-#include "raco_lightglue.hpp"
 
 using namespace wslam;
 namespace model = wslam::v2::raco_lightglue;
@@ -25,6 +22,9 @@ struct TensorSpec {
     // Dimensions the model fixes, -1 where it is dynamic
     std::vector<int64_t> shape;
 };
+
+constexpr auto kFloat = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+constexpr auto kInt64 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
 
 [[nodiscard]] std::optional<std::string> CheckTensor(
     const TensorSpec& expected, std::string_view name,
@@ -56,35 +56,10 @@ struct TensorSpec {
 
     return std::nullopt;
 }
-}  // namespace
 
-std::optional<std::string> v2::ValidateModel(const Ort::Session& session,
-                                             int64_t keypoint_count) {
-    const std::array<TensorSpec, 1> inputs{
-        TensorSpec{
-            .name = model::kImagesName,
-            .element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-            .shape = {-1, model::kChannels, -1, -1},
-        },
-    };
-    const std::array<TensorSpec, 3> outputs{
-        TensorSpec{
-            .name = model::kKeypointsName,
-            .element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-            .shape = {-1, keypoint_count, 2},
-        },
-        TensorSpec{
-            .name = model::kMatchesName,
-            .element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
-            .shape = {-1, model::kMatchesColumns},
-        },
-        TensorSpec{
-            .name = model::kMatchScoresName,
-            .element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-            .shape = {-1},
-        },
-    };
-
+[[nodiscard]] std::optional<std::string> CheckSignature(
+    const Ort::Session& session, std::span<const TensorSpec> inputs,
+    std::span<const TensorSpec> outputs) {
     try {
         if (session.GetInputCount() != inputs.size()
             || session.GetOutputCount() != outputs.size()) {
@@ -98,7 +73,7 @@ std::optional<std::string> v2::ValidateModel(const Ort::Session& session,
 
         for (size_t i = 0; i < inputs.size(); ++i) {
             const auto name = session.GetInputNameAllocated(i, allocator);
-            if (auto err = CheckTensor(inputs.at(i), name.get(),
+            if (auto err = CheckTensor(inputs[i], name.get(),
                                        session.GetInputTypeInfo(i))) {
                 return "input: " + err.value();
             }
@@ -106,7 +81,7 @@ std::optional<std::string> v2::ValidateModel(const Ort::Session& session,
 
         for (size_t i = 0; i < outputs.size(); ++i) {
             const auto name = session.GetOutputNameAllocated(i, allocator);
-            if (auto err = CheckTensor(outputs.at(i), name.get(),
+            if (auto err = CheckTensor(outputs[i], name.get(),
                                        session.GetOutputTypeInfo(i))) {
                 return "output: " + err.value();
             }
@@ -118,89 +93,113 @@ std::optional<std::string> v2::ValidateModel(const Ort::Session& session,
     return std::nullopt;
 }
 
-void v2::BindDynamicOutputs(Ort::IoBinding& io_binding,
-                            const Ort::MemoryInfo& memory_info) {
-    io_binding.BindOutput(model::kMatchesName, memory_info);
-    io_binding.BindOutput(model::kMatchScoresName, memory_info);
+// The image dimensions are dynamic in the exports (multiples of 32)
+TensorSpec ImagesSpec() {
+    return {
+        .name = model::kImagesName,
+        .element_type = kFloat,
+        .shape = {model::kBatchSize, model::kChannels, -1, -1},
+    };
 }
 
-std::optional<std::string> v2::PublishMatches(std::vector<Ort::Value>& outputs,
-                                              int64_t keypoint_count,
-                                              AnyBag& storage) {
-    // Bound outputs: keypoints, matches, match scores
-    constexpr size_t kMatchesIndex = 1;
-    constexpr size_t kScoresIndex = 2;
+TensorSpec KeypointsSpec(std::string_view name, int64_t keypoint_count) {
+    return {
+        .name = name,
+        .element_type = kFloat,
+        .shape = {model::kBatchSize, keypoint_count, 2},
+    };
+}
 
-    if (outputs.size() != 3) {
-        return std::format("expected 3 outputs, got {}", outputs.size());
+TensorSpec DescriptorsSpec(std::string_view name, int64_t keypoint_count) {
+    return {
+        .name = name,
+        .element_type = kFloat,
+        .shape = {model::kBatchSize, keypoint_count, model::kDescriptorDim},
+    };
+}
+}  // namespace
+
+std::optional<std::string> v2::ValidateExtractor(const Ort::Session& session,
+                                                 int64_t keypoint_count) {
+    const std::array inputs{ImagesSpec()};
+    const std::array outputs{
+        KeypointsSpec(model::kKeypointsName, keypoint_count),
+        DescriptorsSpec(model::kDescriptorsName, keypoint_count),
+    };
+    return CheckSignature(session, inputs, outputs);
+}
+
+std::optional<std::string> v2::ValidateCachedModel(const Ort::Session& session,
+                                                   int64_t keypoint_count) {
+    const std::array inputs{
+        ImagesSpec(),
+        KeypointsSpec(model::kCachedKeypointsName, keypoint_count),
+        DescriptorsSpec(model::kCachedDescriptorsName, keypoint_count),
+    };
+    const std::array outputs{
+        KeypointsSpec(model::kKeypointsName, keypoint_count),
+        DescriptorsSpec(model::kDescriptorsName, keypoint_count),
+        TensorSpec{
+            .name = model::kMatchesName,
+            .element_type = kInt64,
+            .shape = {keypoint_count, model::kMatchesColumns},
+        },
+        TensorSpec{
+            .name = model::kMatchScoresName,
+            .element_type = kFloat,
+            .shape = {keypoint_count},
+        },
+    };
+    return CheckSignature(session, inputs, outputs);
+}
+
+std::expected<v2::ParsedMatches, std::string> v2::ParseMatches(
+    std::span<const model::KeypointMatch> padded_matches,
+    std::span<const float> padded_scores, int64_t keypoint_count) {
+    if (padded_matches.size() != padded_scores.size()) {
+        return std::unexpected(std::format("{} match rows but {} scores",
+                                           padded_matches.size(),
+                                           padded_scores.size()));
     }
 
-    const Ort::Value& matches = outputs.at(kMatchesIndex);
-    const Ort::Value& scores = outputs.at(kScoresIndex);
+    const auto is_keypoint_index = [keypoint_count](int64_t index) {
+        return index >= 0 && index < keypoint_count;
+    };
 
-    const std::vector<int64_t> matches_shape
-        = matches.GetTensorTypeAndShapeInfo().GetShape();
-    const std::vector<int64_t> scores_shape
-        = scores.GetTensorTypeAndShapeInfo().GetShape();
-
-    if (matches_shape.size() != 2
-        || matches_shape[1] != model::kMatchesColumns) {
-        return std::format("matches have shape {}, expected [M, {}]",
-                           matches_shape, model::kMatchesColumns);
-    }
-
-    const auto match_count = static_cast<size_t>(matches_shape[0]);
-
-    if (scores_shape.size() != 1
-        || std::cmp_not_equal(scores_shape[0], match_count)) {
-        return std::format("match scores have shape {}, expected [{}]",
-                           scores_shape, match_count);
-    }
-
-    // Views over the tensors sized by their checked shapes, so the copies
-    // below cannot read past them
-    const std::span match_values{
-        matches.GetTensorData<int64_t>(),
-        match_count * static_cast<size_t>(model::kMatchesColumns)};
-    const std::span score_values{scores.GetTensorData<float>(), match_count};
-
-    auto match_rows = match_values | std::views::chunk(model::kMatchesColumns)
-                      | std::views::transform([](const auto& row) {
-                            return model::KeypointMatch{
-                                .pair_index = row[0],
-                                .left_index = row[1],
-                                .right_index = row[2],
-                            };
-                        })
-                      | std::ranges::to<std::vector>();
-    auto match_scores = score_values | std::ranges::to<std::vector>();
-
-    // Rejects rows that don't index the model's pairs and keypoints
-    for (const model::KeypointMatch& match : match_rows) {
-        const auto is_keypoint_index = [keypoint_count](int64_t index) {
-            return index >= 0 && index < keypoint_count;
-        };
-        if (match.pair_index < 0 || match.pair_index >= model::kPairCount
-            || !is_keypoint_index(match.left_index)
-            || !is_keypoint_index(match.right_index)) {
-            return std::format("malformed match row [{}, {}, {}]",
-                               match.pair_index, match.left_index,
-                               match.right_index);
+    ParsedMatches parsed;
+    for (size_t row = 0; row < padded_matches.size(); ++row) {
+        // Padding rows are (0, 0, 0) with score 0, which would pass the
+        // index check below
+        if (!(padded_scores[row] > 0.0F)) {
+            continue;
         }
+
+        const model::KeypointMatch& match = padded_matches[row];
+        if (match.pair_index != 0 || !is_keypoint_index(match.left_index)
+            || !is_keypoint_index(match.right_index)) {
+            return std::unexpected(std::format(
+                "malformed match row {}: [{}, {}, {}]", row, match.pair_index,
+                match.left_index, match.right_index));
+        }
+
+        parsed.matches.push_back(match);
+        parsed.scores.push_back(padded_scores[row]);
     }
 
-    if (match_count > 0) {
+    return parsed;
+}
+
+void v2::PublishMatches(ParsedMatches parsed, AnyBag& storage) {
+    if (!parsed.matches.empty()) {
         const auto [min_score, max_score]
-            = std::ranges::minmax_element(match_scores);
-        spdlog::info(LOG_ID " Got {} matches, scores in [{}, {}]", match_count,
-                     *min_score, *max_score);
+            = std::ranges::minmax_element(parsed.scores);
+        spdlog::info(LOG_ID " Got {} matches, scores in [{}, {}]",
+                     parsed.matches.size(), *min_score, *max_score);
     } else {
         spdlog::info(LOG_ID " Got no matches");
     }
 
-    storage.set(ResourceIdentifier::OrtMatchesName, std::move(match_rows));
+    storage.set(ResourceIdentifier::OrtMatchesName, std::move(parsed.matches));
     storage.set(ResourceIdentifier::OrtMatchScoresName,
-                std::move(match_scores));
-
-    return std::nullopt;
+                std::move(parsed.scores));
 }

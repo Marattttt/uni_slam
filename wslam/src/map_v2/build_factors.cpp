@@ -11,6 +11,7 @@
 #include <gtsam/slam/SmartFactorParams.h>
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <flat_map>
 #include <utility>
 #include <vector>
@@ -18,6 +19,7 @@
 #include "assert.hpp"
 #include "common.hpp"
 #include "map/utils.hpp"
+#include "models.hpp"
 #include "pose_estimate_v2/util/camera.hpp"
 
 using namespace wslam;
@@ -152,12 +154,54 @@ void BuildFactorsPass::integrateImu(FactorBundle& bundle,
     bundle.new_values.insert(velocity_key, curr_nav.v());
 
     shared_.predicted_values.update(pose_key, pose_init);
+    shared_.predicted_velocities.insert_or_assign(changes.pose_id,
+                                                  curr_nav.v());
+    publishMotionPrior(changes, curr_nav, metric_step);
 
     spdlog::debug(LOG_ID
                   " CombinedImuFactor x{}-x{}: {} samples, dt={:.4f}s, "
                   "|v|={:.3f} m/s, metric_step={:.4f} m",
                   changes.prev_pose_id.v, changes.pose_id.v, integrated,
                   combined.deltaTij(), curr_nav.v().norm(), metric_step);
+}
+
+void BuildFactorsPass::publishMotionPrior(const MapChanges& changes,
+                                          const gtsam::NavState& state,
+                                          double metric_step) const {
+    // Below this step the unit-scale depths can't be made metric
+    constexpr double kMinMetricStep = 1e-3;
+
+    if (changes.median_depth_unit <= 0.0 || metric_step < kMinMetricStep) {
+        spdlog::debug(LOG_ID
+                      " x{}: no motion prior (depth {:.3f}, step "
+                      "{:.4f} m)",
+                      changes.pose_id.v, changes.median_depth_unit,
+                      metric_step);
+        return;
+    }
+
+    const KeyframeMotionPrior prior{
+        .keyframe_ts = changes.curr_kf_ts,
+        .R_world_cam = state.pose().rotation().matrix(),
+        .velocity_world = state.v(),
+        .gravity_world = shared_.gravity_world,
+        .accel_bias = shared_.last_bias.accelerometer(),
+        .gyro_bias = shared_.last_bias.gyroscope(),
+        .median_depth_m = changes.median_depth_unit * metric_step,
+        .velocity_sigma = shared_.velocity_error_samples > 0
+                              ? std::sqrt(shared_.velocity_error_variance)
+                              : 0.0,
+        .min_rotation_rad = opts_.gate_min_rotation_rad,
+        .min_parallax_px = opts_.gate_min_parallax_px,
+    };
+
+    spdlog::debug(LOG_ID
+                  " x{}: motion prior |v| {:.3f} m/s (sigma {:.3f}), "
+                  "median depth {:.2f} m",
+                  changes.pose_id.v, prior.velocity_world.norm(),
+                  prior.velocity_sigma, prior.median_depth_m);
+
+    storage_.set(ResourceIdentifier::KeyframeMotionPriorName, prior);
 }
 
 void BuildFactorsPass::addSmartFactors(FactorBundle& bundle,

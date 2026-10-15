@@ -6,6 +6,8 @@
 //                            made by `pc_wslam -v2 --record-frontend=PATH`
 // WSLAM_REPLAY_MAP_OUT       optional .ply path to export the replayed map to,
 //                            for benchmarks/compare.py
+// WSLAM_PREFILTER_*          frame prefilter knobs PrefilterPredictsTheGate
+//                            scores (see frame_prefilter.hpp)
 
 #include <gtest/gtest.h>
 #include <spdlog/spdlog.h>
@@ -20,12 +22,16 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "common.hpp"
 #include "compute/compute.hpp"
 #include "compute/pass.hpp"
 #include "compute/stage.hpp"
+#include "data/provider_base.hpp"
 #include "export.hpp"
+#include "feature_detect_v2/frame_prefilter.hpp"
+#include "feature_detect_v2/motion_prediction.hpp"
 #include "frontend_recording.hpp"
 #include "map/map_helpers_lods.hpp"
 #include "map_v2/map_stage.hpp"
@@ -158,6 +164,181 @@ TEST(MappingReplayTest, ReplaysTheGoldenRun) {
         EXPECT_EQ(ExportMap(storage, ExportOpts{.map_path = *map_out}),
                   std::nullopt);
     }
+}
+
+// Runs the frame prefilter's prediction on every replayed frame after the
+// second keyframe and scores it against the keyframe gate's decision on the
+// same frame: a frame predicted small that the gate accepted would have been
+// skipped wrongly (the replay itself skips nothing, so the run follows the
+// golden keyframes). Tune the WSLAM_PREFILTER_* knobs with it; the summary
+// line reports the share of frames the prefilter would skip
+TEST(MappingReplayTest, PrefilterPredictsTheGate) {
+    const auto recording_path = EnvPath("WSLAM_FRONTEND_RECORDING");
+    if (!recording_path) {
+        GTEST_SKIP() << "WSLAM_FRONTEND_RECORDING is not set";
+    }
+
+    auto recording = v2::LoadFrontendRecording(*recording_path);
+    ASSERT_TRUE(recording.has_value()) << recording.error();
+    const size_t frame_count = recording->frames.size();
+    const data::CamSensorParams camera = recording->camera;
+    const data::IMUSensorParams imu_params = recording->imu_params;
+
+    compute::Compute compute;
+    AnyBag& storage = compute.getStorage();
+
+    auto replay
+        = std::make_shared<v2::FrontendReplay>(storage, *std::move(recording));
+    replay->publishSensorParams();
+
+    auto pose_stage = std::make_unique<compute::Stage>("Replayed pose estimate",
+                                                       &compute.getPerf());
+    pose_stage->add_pass(std::make_unique<compute::CustomPass>(
+        "[Replay front end]",
+        [replay](compute::CustomPass*) { return replay->publishFrame(); }));
+    pose_stage->add_pass(std::make_unique<v2::RansacPass>(storage));
+    pose_stage->add_pass(std::make_unique<v2::TriangulatePass>(storage));
+    compute.addStage(std::move(pose_stage));
+
+    v2::MotionPredictor predictor{
+        camera, imu_params, v2::ReadFramePrefilterOptionsFromEnv().prediction};
+
+    struct Scores {
+        size_t predicted = 0;
+        size_t small = 0;
+        size_t accepted = 0;
+        size_t false_skips = 0;
+        // Largest measured / upper bound over the frames the gate measured:
+        // above 1 the bound was too tight for that frame
+        double worst_parallax_ratio = 0.0;
+        double worst_rotation_ratio = 0.0;
+        double parallax_error_sum = 0.0;
+        size_t measured = 0;
+    };
+    Scores scores;
+    std::optional<v2::KeyframeMotionPrediction> current;
+
+    // Between the pose estimate and the mapping stage, like the prefilter's
+    // prediction reaching the gate
+    compute.addStage(MakeStage(
+        compute, "Predict motion",
+        [&](compute::CustomPass*) -> std::optional<std::string> {
+            current.reset();
+            const auto prior = storage.getPtr<v2::KeyframeMotionPrior>(
+                ResourceIdentifier::KeyframeMotionPriorName);
+            const auto frame_ts = storage.get<uint64_t>(
+                ResourceIdentifier::FrameTimestampNsName);
+            const auto imu = storage.getPtr<std::vector<data::IMUReading>>(
+                ResourceIdentifier::GetImuVecName());
+            if (!prior || !frame_ts || !imu) {
+                return std::nullopt;
+            }
+
+            auto prediction = predictor.predict(*prior.value(), *imu.value(),
+                                                frame_ts.value());
+            if (!prediction) {
+                return "predicting: " + prediction.error();
+            }
+            ++scores.predicted;
+            scores.small += prediction->small_motion ? 1 : 0;
+            current = prediction.value();
+
+            // The gate's measurements of the same frame
+            const auto triangulation
+                = storage.getPtr<v2::KeypointTriangulationResult>(
+                    ResourceIdentifier::KeypointTriangulationName);
+            const auto ransac = storage.getPtr<v2::KeypointRansacResult>(
+                ResourceIdentifier::KeypointRansacName);
+            if (triangulation && ransac && !ransac.value()->inliers.empty()) {
+                std::vector<double> parallaxes;
+                for (const auto& inlier : ransac.value()->inliers) {
+                    parallaxes.push_back(
+                        (inlier.curr_px - inlier.prev_px).norm());
+                }
+                const auto middle
+                    = parallaxes.begin()
+                      + static_cast<std::ptrdiff_t>(parallaxes.size() / 2);
+                std::nth_element(parallaxes.begin(), middle, parallaxes.end());
+                const double rotation = map::util::ComputeRotationAngle(
+                    triangulation.value()->rotation);
+
+                ++scores.measured;
+                scores.parallax_error_sum
+                    += std::abs(*middle - prediction->parallax_px);
+                scores.worst_parallax_ratio
+                    = std::max(scores.worst_parallax_ratio,
+                               *middle / prediction->parallax_upper_px);
+                scores.worst_rotation_ratio
+                    = std::max(scores.worst_rotation_ratio,
+                               rotation / prediction->rotation_upper_rad);
+            }
+
+            storage.set(ResourceIdentifier::KeyframeMotionPredictionName,
+                        prediction.value());
+            return std::nullopt;
+        }));
+
+    WslamConfig config{};
+    config.use_pipeline_v2 = true;
+    auto mapping = v2::mapping::CreateMappingStage(compute, storage, config);
+    compute.addStage(std::move(mapping.stage));
+
+    // Before the decision check consumes the reference marker
+    compute.addStage(MakeStage(
+        compute, "Score prediction",
+        [&](compute::CustomPass*) -> std::optional<std::string> {
+            const bool accepted
+                = storage
+                      .get<bool>(
+                          ResourceIdentifier::FeatureReferenceAdvanceName)
+                      .value_or(false);
+            if (!current || !accepted) {
+                return std::nullopt;
+            }
+            ++scores.accepted;
+            if (current->small_motion) {
+                ++scores.false_skips;
+                spdlog::warn(
+                    "[Prefilter replay] accepted keyframe predicted small: dt "
+                    "{:.3f} s, rotation <= {:.4f} rad, parallax <= {:.2f} px",
+                    current->dt_s, current->rotation_upper_rad,
+                    current->parallax_upper_px);
+            }
+            return std::nullopt;
+        }));
+
+    compute.addStage(MakeStage(
+        compute, "Check keyframe decision",
+        [replay](compute::CustomPass*) { return replay->checkDecision(); }));
+
+    ASSERT_EQ(compute.initizalize(), std::nullopt);
+
+    for (size_t frame = 0; frame < frame_count; ++frame) {
+        const auto err = compute.execute();
+        ASSERT_FALSE(err.has_value()) << "frame " << frame << ": " << *err;
+        ASSERT_FALSE(replay->divergence().has_value())
+            << "the replay diverged at frame " << frame;
+    }
+    ASSERT_EQ(mapping.flush_async(), std::nullopt);
+
+    spdlog::info(
+        "[Prefilter replay] {} frames, {} predicted: {} predicted small "
+        "({:.1f}% "
+        "of the predicted frames), {} keyframes accepted, {} of them predicted "
+        "small; mean |parallax error| {:.2f} px, worst measured/upper parallax "
+        "{:.2f}, rotation {:.2f}",
+        frame_count, scores.predicted, scores.small,
+        scores.predicted > 0 ? 100.0 * static_cast<double>(scores.small)
+                                   / static_cast<double>(scores.predicted)
+                             : 0.0,
+        scores.accepted, scores.false_skips,
+        scores.measured > 0
+            ? scores.parallax_error_sum / static_cast<double>(scores.measured)
+            : 0.0,
+        scores.worst_parallax_ratio, scores.worst_rotation_ratio);
+
+    EXPECT_GT(scores.predicted, 0U);
+    EXPECT_EQ(scores.false_skips, 0U);
 }
 
 }  // namespace

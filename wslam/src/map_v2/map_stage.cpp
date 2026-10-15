@@ -36,7 +36,8 @@ std::optional<std::string> MergeLoopClosure(
 
     const auto anchor_of
         = [&shared](uint64_t landmark) -> std::optional<uint64_t> {
-        const auto it = shared.landmark_anchor.find(wslam::map::LandmarkId{landmark});
+        const auto it
+            = shared.landmark_anchor.find(wslam::map::LandmarkId{landmark});
         if (it == shared.landmark_anchor.end()) {
             return std::nullopt;
         }
@@ -56,8 +57,7 @@ std::optional<std::string> MergeLoopClosure(
                  report.loops.size(), stats.keyframes_corrected,
                  stats.landmarks_corrected, stats.landmarks_unanchored);
 
-    storage.set(ResourceIdentifier::MapSnapshotVioName,
-                std::move(vio).value());
+    storage.set(ResourceIdentifier::MapSnapshotVioName, std::move(vio).value());
     storage.set(ResourceIdentifier::MapSnapshotName, std::move(corrected));
     storage.set(ResourceIdentifier::LoopClosureReportName, std::move(report));
 
@@ -111,21 +111,25 @@ MappingStage v2::mapping::CreateMappingStage(
             .association_tolerance_px = filter_config.association_tolerance_px,
         }));
     stage->add_pass(std::make_unique<BuildFactorsPass>(
-        storage, *shared, BuildFactorsPass::Opts{}));
+        storage, *shared,
+        BuildFactorsPass::Opts{
+            .gate_min_rotation_rad = filter_config.min_rotation_rad,
+            .gate_min_parallax_px = filter_config.min_parallax_px,
+        }));
     stage->add_pass(std::move(submit));
 
     if (!loop_closure) {
         return MappingStage{
             .stage = std::move(stage),
-            .flush_async = [shared,
-                            submit_ptr]() -> std::optional<std::string> {
+            .flush_async
+            = [shared, submit_ptr]() -> std::optional<std::string> {
                 return submit_ptr->flush();
             },
         };
     }
 
-    auto feed = std::make_unique<FeedLoopClosurePass>(storage, *shared,
-                                                      loop_closure);
+    auto feed
+        = std::make_unique<FeedLoopClosurePass>(storage, *shared, loop_closure);
     FeedLoopClosurePass* feed_ptr = feed.get();
     stage->add_pass(std::move(feed));
 

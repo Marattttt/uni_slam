@@ -1,9 +1,11 @@
 #include "feature_detect.hpp"
 
+#include <array>
 #include <charconv>
 #include <cstdlib>
 #include <format>
 #include <memory>
+#include <string>
 #include <string_view>
 
 #include "anybag.hpp"
@@ -11,10 +13,10 @@
 #include "compute/gpu_stage.hpp"
 #include "data/provider_base.hpp"
 #include "fill_pyramid.hpp"
+#include "frame_prefilter.hpp"
 #include "onnx_cpu_feature_detect.hpp"
 #include "onnx_feature_detect.hpp"
 #include "pack_model_input.hpp"
-#include "preserve_pyramid.hpp"
 #include "raco_lightglue.hpp"
 #include "sensor_loader.hpp"
 
@@ -48,15 +50,40 @@ class StorageImageProvider {
 };
 }  // namespace
 
+namespace {
+// Value of a required env variable naming a file
+std::expected<std::filesystem::path, std::string> RequiredPath(
+    const char* name, std::string_view what) {
+    const char* value = std::getenv(name);
+    if (value == nullptr || value[0] == '\0') {
+        return std::unexpected(std::format(
+            "env variable {} is not set; point it at the {}", name, what));
+    }
+    return std::filesystem::path{value};
+}
+
+// Name marking the CPU exports of the models
+constexpr std::string_view kCpuExportMarker = "cpu";
+
+bool IsCpuExport(const std::filesystem::path& path) {
+    return path.filename().string().contains(kCpuExportMarker);
+}
+}  // namespace
+
 std::expected<v2::ModelOptions, std::string> v2::ReadModelOptionsFromEnv() {
-    const char* model_path = std::getenv(WSLAM_ONNX_MODEL_ENV);
-    if (model_path == nullptr || model_path[0] == '\0') {
-        return std::unexpected("env variable " WSLAM_ONNX_MODEL_ENV
-                               " is not set; point it at the model file");
+    auto extractor
+        = RequiredPath(WSLAM_ONNX_EXTRACTOR_MODEL_ENV, "extractor model file");
+    if (!extractor) {
+        return std::unexpected(std::move(extractor).error());
+    }
+    auto cached = RequiredPath(WSLAM_ONNX_MODEL_ENV, "cached model file");
+    if (!cached) {
+        return std::unexpected(std::move(cached).error());
     }
 
     ModelOptions options{
-        .model_path = model_path,
+        .paths = {.extractor = std::move(extractor).value(),
+                  .cached = std::move(cached).value()},
         .keypoint_count = raco_lightglue::kDefaultKeypointCount,
     };
 
@@ -75,17 +102,63 @@ std::expected<v2::ModelOptions, std::string> v2::ReadModelOptionsFromEnv() {
         options.keypoint_count = keypoint_count;
     }
 
-    spdlog::info(LOG_ID " model {}, {} keypoints per image",
-                 options.model_path.string(), options.keypoint_count);
+    spdlog::info(LOG_ID
+                 " extractor {}, cached model {}, {} keypoints per image",
+                 options.paths.extractor.string(),
+                 options.paths.cached.string(), options.keypoint_count);
 
     return options;
+}
+
+std::optional<std::string> v2::ValidateModelFiles(
+    const ModelOptions& options, compute::ComputeDevice device) {
+    const std::array models{options.paths.extractor, options.paths.cached};
+
+    switch (device) {
+        case compute::ComputeDevice::Gpu: {
+            // TEMPORARY: the WebGPU exports of the split models are not made
+            // yet. Remove this block once they are: the checks below and the
+            // OrtFeatureDetectPass path are ready for them
+            constexpr bool kWebGpuExportsProvided = false;
+            if (!kWebGpuExportsProvided) {
+                return std::format(
+                    "--device=gpu needs WebGPU exports of the extractor and "
+                    "cached models; the expected models are not provided (got "
+                    "{} and {})",
+                    options.paths.extractor.string(),
+                    options.paths.cached.string());
+            }
+
+            for (const auto& path : models) {
+                if (IsCpuExport(path)) {
+                    return std::format(
+                        "{} is a CPU export ('{}' in its name); --device=gpu "
+                        "needs the WebGPU export",
+                        path.string(), kCpuExportMarker);
+                }
+            }
+            return std::nullopt;
+        }
+        case compute::ComputeDevice::Cpu:
+            for (const auto& path : models) {
+                if (!IsCpuExport(path)) {
+                    return std::format(
+                        "expected CPU exports (file name containing '{}') for "
+                        "--device=cpu, got {}",
+                        kCpuExportMarker, path.string());
+                }
+            }
+            return std::nullopt;
+    }
+
+    return "unknown compute device";
 }
 
 std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
     compute::Compute& compute, std::shared_ptr<SharedBindings> bindings,
     std::shared_ptr<compute::OrtProvider> ort,
     std::generator<std::expected<data::Reading<1>, std::string>> provider,
-    const std::filesystem::path& model_path, ReferenceAdvance reference_advance,
+    const ModelOptions& models, ReferenceAdvance reference_advance,
     const WslamConfig& config, data::ReadingFilter reading_filter) {
     const auto gpu = compute.getGPUPtr();
     auto stage = std::make_unique<compute::GpuStage>("Feature detect v2", gpu,
@@ -94,11 +167,16 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
     stage->add_pass(std::make_unique<SensorLoaderPass>(
         std::move(provider), compute.getStorage(), std::move(reading_filter)));
 
-    // Before the fill pass: it moves the previous frame, still in Current, to
-    // Previous when that frame became the reference. Queue order keeps the
-    // copy ahead of the fill overwriting Current
-    stage->add_pass(std::make_unique<PreservePyramidPass>(
-        gpu, bindings, compute.getStorage(), reference_advance));
+    // First after the loader, so a skipped frame costs no GPU work and no
+    // model run. It needs the mapping stage's keyframe prior, and a keyframe
+    // schedule already picks the frames
+    const bool use_prefilter = config.enable_mapping
+                               && config.enable_frame_prefilter
+                               && config.keyframes_path.empty();
+    if (use_prefilter) {
+        stage->add_pass(std::make_unique<FramePrefilterPass>(
+            compute.getStorage(), ReadFramePrefilterOptionsFromEnv()));
+    }
 
     StorageImageProvider img_provider{compute.getStorage()};
     stage->add_pass(std::make_unique<FillPyramidPass>(
@@ -115,14 +193,14 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
             // GPU pass: ORT submits to the same queue, so it runs after the
             // packing
             stage->add_pass(std::make_unique<OrtFeatureDetectPass>(
-                std::move(ort), model_path, std::move(bindings),
-                compute.getStorage()));
+                std::move(ort), models.paths, reference_advance,
+                std::move(bindings), compute.getStorage()));
             break;
         case compute::ComputeDevice::Cpu:
             // CPU pass: the stage waits for the packing before running it
             stage->add_pass(std::make_unique<OrtCpuFeatureDetectPass>(
-                std::move(ort), model_path, std::move(bindings),
-                compute.getStorage()));
+                std::move(ort), models.paths, reference_advance,
+                std::move(bindings), compute.getStorage()));
             break;
     }
 

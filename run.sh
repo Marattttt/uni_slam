@@ -25,6 +25,10 @@ Options:
   -no-mapping       v2 only: run without the mapping stage; the model then
                     pairs consecutive frames.
   -no-loop-closure  v2 only: run the mapping stage without loop closure.
+  -no-frame-prefilter
+                    v2 with mapping only: run the model on every frame
+                    instead of skipping those the IMU predicts the
+                    keyframe gate would reject.
   --record-frontend=PATH
                     v2 only: record the front-end output (model matches,
                     IMU, keyframe decisions) to PATH (.msgpack) for
@@ -50,6 +54,7 @@ for arg in "$@"; do
         --keyframes=*)  RUN_ARGS+=("$arg") ;;
         -no-mapping)    RUN_ARGS+=("$arg") ;;
         -no-loop-closure) RUN_ARGS+=("$arg") ;;
+        -no-frame-prefilter) RUN_ARGS+=("$arg") ;;
         --record-frontend=*) RUN_ARGS+=("$arg") ;;
         Debug)          BUILD_TYPE="Debug" ;;
         Release)        BUILD_TYPE="RelWithDebInfo" ;;

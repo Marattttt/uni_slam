@@ -70,6 +70,9 @@ class SubmitSmootherPass : public compute::Pass {
     // In flight: submitted by execute(), consumed by drainPending()
     std::future<SmootherWorker::Result> pending_;
     PoseId pending_pose_id_{0};
+    // Folds the drained keyframe's velocity error against its IMU prediction
+    // into SharedBindings::velocity_error_variance
+    void trackVelocityError();
 
     void archiveMarginalisedPoses(const gtsam::Values& updated);
     void reconcileSmartFactors(const SmootherWorker::Result& result);

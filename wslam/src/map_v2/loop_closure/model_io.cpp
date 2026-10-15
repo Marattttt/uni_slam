@@ -8,6 +8,7 @@
 #include <numeric>
 
 #include "assert.hpp"
+#include "feature_detect_v2/onnx_utils.hpp"
 
 using namespace wslam;
 using namespace wslam::v2::mapping::loop_closure;
@@ -81,8 +82,7 @@ struct Coverage {
             float area = 0.0F;
             for (size_t sy = row.begin; sy < row.end; ++sy) {
                 const float wy = Weight(row, sy);
-                const uint8_t* source
-                    = image.pixels.data() + sy * image.width;
+                const uint8_t* source = image.pixels.data() + sy * image.width;
                 for (size_t sx = column.begin; sx < column.end; ++sx) {
                     const float w = wy * Weight(column, sx);
                     sum += w * static_cast<float>(source[sx]);
@@ -103,7 +103,8 @@ PlaceImage PlaceImage::FromFrame(const data::FrameBW& frame) {
         .pixels = std::vector<uint8_t>(frame.pixels.size()),
     };
     std::ranges::transform(frame.pixels, image.pixels.begin(), [](float v) {
-        const float scaled = std::round(v * std::numeric_limits<uint8_t>::max());
+        const float scaled
+            = std::round(v * std::numeric_limits<uint8_t>::max());
         return static_cast<uint8_t>(std::clamp(scaled, 0.0F, 255.0F));
     });
     return image;
@@ -141,9 +142,9 @@ std::vector<float> loop_closure::ToVprInput(const PlaceImage& image,
 std::expected<PlaceDescriptor, std::string> PlaceDescriptor::FromVprOutput(
     std::span<const float> output, size_t expected_dim) {
     if (output.size() != expected_dim) {
-        return std::unexpected(std::format(
-            "descriptor has {} values, expected {}", output.size(),
-            expected_dim));
+        return std::unexpected(
+            std::format("descriptor has {} values, expected {}", output.size(),
+                        expected_dim));
     }
 
     PlaceDescriptor descriptor{
@@ -173,86 +174,62 @@ float PlaceDescriptor::similarity(const PlaceDescriptor& other) const {
                               other.values.begin(), 0.0F);
 }
 
-std::vector<float> loop_closure::ToMatcherInput(const PlaceImage& left,
-                                                const PlaceImage& right) {
-    const auto check = [](const PlaceImage& image) {
-        WSLAM_ASSERT(image.width == model::kSourceWidth
-                         && image.height == model::kSourceHeight,
-                     "matcher input must be {}x{}, got {}x{}",
-                     model::kSourceWidth, model::kSourceHeight, image.width,
-                     image.height);
-    };
-    check(left);
-    check(right);
+std::vector<float> loop_closure::ToMatcherInput(const PlaceImage& image) {
+    WSLAM_ASSERT(image.width == model::kSourceWidth
+                     && image.height == model::kSourceHeight,
+                 "matcher input must be {}x{}, got {}x{}", model::kSourceWidth,
+                 model::kSourceHeight, image.width, image.height);
 
     constexpr size_t kPlane = size_t{model::kInputWidth} * model::kInputHeight;
     std::vector<float> input(model::kImagesBytes / sizeof(float));
 
-    const auto pack = [&](const PlaceImage& image, model::BatchSlot slot) {
-        float* base = input.data()
-                      + static_cast<size_t>(slot) * model::kChannels * kPlane;
-        for (uint32_t y = 0; y < model::kInputHeight; ++y) {
-            const uint8_t* row
-                = image.pixels.data()
-                  + size_t{y + model::kCropY} * image.width + model::kCropX;
-            for (uint32_t x = 0; x < model::kInputWidth; ++x) {
-                const float value = static_cast<float>(row[x]) * kPixelScale;
-                const size_t pixel = size_t{y} * model::kInputWidth + x;
-                for (size_t channel = 0;
-                     channel < static_cast<size_t>(model::kChannels);
-                     ++channel) {
-                    base[channel * kPlane + pixel] = value;
-                }
+    for (uint32_t y = 0; y < model::kInputHeight; ++y) {
+        const uint8_t* row = image.pixels.data()
+                             + size_t{y + model::kCropY} * image.width
+                             + model::kCropX;
+        for (uint32_t x = 0; x < model::kInputWidth; ++x) {
+            const float value = static_cast<float>(row[x]) * kPixelScale;
+            const size_t pixel = size_t{y} * model::kInputWidth + x;
+            for (size_t channel = 0;
+                 channel < static_cast<size_t>(model::kChannels); ++channel) {
+                input[channel * kPlane + pixel] = value;
             }
         }
-    };
-    pack(left, model::kLeft);
-    pack(right, model::kRight);
+    }
 
     return input;
 }
 
 std::expected<PairMatches, std::string> PairMatches::FromMatcherOutput(
-    std::span<const model::KeypointPosition> keypoints,
-    std::span<const model::KeypointMatch> matches,
-    std::span<const float> scores, int64_t keypoint_count) {
+    std::span<const model::KeypointPosition> left_keypoints,
+    std::span<const model::KeypointPosition> right_keypoints,
+    std::span<const model::KeypointMatch> padded_matches,
+    std::span<const float> padded_scores, int64_t keypoint_count) {
     const auto per_image = static_cast<size_t>(keypoint_count);
-    if (keypoints.size() != model::KeypointsCount(keypoint_count)) {
-        return std::unexpected(std::format("got {} keypoints, expected {}",
-                                           keypoints.size(),
-                                           model::KeypointsCount(keypoint_count)));
-    }
-    if (matches.size() != scores.size()) {
-        return std::unexpected(std::format("{} matches but {} scores",
-                                           matches.size(), scores.size()));
+    if (left_keypoints.size() != per_image
+        || right_keypoints.size() != per_image) {
+        return std::unexpected(std::format(
+            "got {} and {} keypoints, expected {} each", left_keypoints.size(),
+            right_keypoints.size(), per_image));
     }
 
-    const auto left_keypoints = keypoints.subspan(
-        static_cast<size_t>(model::kLeft) * per_image, per_image);
-    const auto right_keypoints = keypoints.subspan(
-        static_cast<size_t>(model::kRight) * per_image, per_image);
+    auto parsed
+        = v2::ParseMatches(padded_matches, padded_scores, keypoint_count);
+    if (!parsed) {
+        return std::unexpected(std::move(parsed).error());
+    }
 
     PairMatches result;
-    result.matches.reserve(matches.size());
+    result.matches.reserve(parsed->matches.size());
 
-    for (size_t i = 0; i < matches.size(); ++i) {
-        const model::KeypointMatch& match = matches[i];
-        const auto is_keypoint_index = [&](int64_t index) {
-            return index >= 0 && index < keypoint_count;
-        };
-        if (match.pair_index != 0 || !is_keypoint_index(match.left_index)
-            || !is_keypoint_index(match.right_index)) {
-            return std::unexpected(std::format(
-                "malformed match row [{}, {}, {}]", match.pair_index,
-                match.left_index, match.right_index));
-        }
-
+    for (size_t i = 0; i < parsed->matches.size(); ++i) {
+        const model::KeypointMatch& match = parsed->matches[i];
         const auto left_index = static_cast<size_t>(match.left_index);
         const auto right_index = static_cast<size_t>(match.right_index);
         result.matches.push_back(PairMatch{
             .left_index = static_cast<uint32_t>(left_index),
             .right_index = static_cast<uint32_t>(right_index),
-            .score = scores[i],
+            .score = parsed->scores[i],
             .left_px = model::ToSourcePixel(left_keypoints[left_index]),
             .right_px = model::ToSourcePixel(right_keypoints[right_index]),
         });
