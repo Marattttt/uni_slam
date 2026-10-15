@@ -186,6 +186,47 @@ gtsam::Pose3 PoseGraph::correctionFor(uint64_t keyframe) const {
         .compose(vio_poses_.at(node).inverse());
 }
 
+gtsam::Pose3 PoseGraph::smoothCorrectionFor(uint64_t keyframe) const {
+    const auto own = node_of_.find(keyframe);
+    if (own == node_of_.end() || own->second == keyframe) {
+        return correctionFor(keyframe);
+    }
+    const uint64_t node = own->second;
+
+    // The next node after the keyframe: keyframes attach to the last node
+    // before them, so it closes the keyframe's segment
+    auto next = std::next(own);
+    while (next != node_of_.end() && next->second != next->first) {
+        ++next;
+    }
+    if (next == node_of_.end()) {
+        return correctionFor(keyframe);
+    }
+
+    // VIO path length from the node to the keyframe and to the next node
+    double to_keyframe = 0.0;
+    double to_next = 0.0;
+    auto previous = vio_poses_.find(node);
+    for (auto it = std::next(previous);
+         it != vio_poses_.end() && it->first <= next->first; ++it) {
+        to_next
+            += (it->second.translation() - previous->second.translation())
+                   .norm();
+        if (it->first <= keyframe) {
+            to_keyframe = to_next;
+        }
+        previous = it;
+    }
+    const double fraction
+        = to_next > 0.0
+              ? to_keyframe / to_next
+              : static_cast<double>(keyframe - node)
+                    / static_cast<double>(next->first - node);
+
+    return correctionFor(node).interpolateRt(correctionFor(next->first),
+                                             fraction);
+}
+
 gtsam::Pose3 PoseGraph::correctedPose(uint64_t keyframe) const {
     return correctionFor(keyframe).compose(vio_poses_.at(keyframe));
 }

@@ -71,6 +71,12 @@ class PoseGraph {
     // before the first node
     [[nodiscard]] gtsam::Pose3 correctionFor(uint64_t keyframe) const;
 
+    // Correction of a keyframe attached between two nodes, interpolated
+    // between theirs by the VIO path length (rotation and translation
+    // separately), so the corrected trajectory has no step where the node
+    // changes. Nodes, and keyframes after the last node, take correctionFor
+    [[nodiscard]] gtsam::Pose3 smoothCorrectionFor(uint64_t keyframe) const;
+
     // The last node's correction, reduced to yaw about gravity and
     // translation: what the main loop applies to its newest poses
     [[nodiscard]] gtsam::Pose3 driftCorrection() const;

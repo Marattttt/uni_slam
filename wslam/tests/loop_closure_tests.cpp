@@ -357,6 +357,58 @@ TEST(PoseGraphTest, NodeGateAttachesNearDuplicates) {
     EXPECT_TRUE(graph.correctedPose(3).equals(CirclePose(0.2), 1e-6));
 }
 
+TEST(PoseGraphTest, AttachedKeyframesBlendTheirNodesCorrections) {
+    lc::PoseGraph graph(lc::PoseGraphNoise{}, lc::NodeGate{});
+    graph.setGravity(kGravity);
+
+    // Nodes every 0.3 m along x, each followed by two attached keyframes
+    // 4 and 8 cm on (under the gate's 10 cm); the VIO drifts 2 cm per node in
+    // y
+    const gtsam::Rot3 level{};
+    uint64_t keyframe = 1;
+    std::vector<uint64_t> nodes;
+    for (int n = 0; n < 6; ++n) {
+        const double x = 0.3 * n;
+        const double drift = 0.02 * n;
+        ASSERT_TRUE(graph.addKeyframe(
+            keyframe, gtsam::Pose3{level, gtsam::Point3{x, drift, 0.0}}));
+        nodes.push_back(keyframe++);
+        for (const double offset : {0.04, 0.08}) {
+            ASSERT_FALSE(graph.addKeyframe(
+                keyframe++,
+                gtsam::Pose3{level, gtsam::Point3{x + offset, drift, 0.0}}));
+        }
+    }
+
+    // The truth is drift-free: a loop from the first node to the last
+    graph.addLoop(lc::LoopEdge{
+        .candidate = nodes.front(),
+        .query = nodes.back(),
+        .T_candidate_query = gtsam::Pose3{level, gtsam::Point3{1.5, 0, 0}},
+    });
+
+    // Second node's attached keyframes, by VIO path length: 4 and 8 cm of
+    // 8 cm plus the last leg to the third node (0.22 m on, 0.02 m across)
+    const uint64_t node = nodes[1];
+    const gtsam::Pose3 from = graph.correctionFor(node);
+    const gtsam::Pose3 to = graph.correctionFor(nodes[2]);
+    ASSERT_GT((from.translation() - to.translation()).norm(), 1e-3);
+
+    EXPECT_TRUE(graph.smoothCorrectionFor(node).equals(from, 1e-9));
+    const double segment = 0.08 + std::hypot(0.22, 0.02);
+    EXPECT_TRUE(graph.smoothCorrectionFor(node + 1)
+                    .equals(from.interpolateRt(to, 0.04 / segment), 1e-6));
+    EXPECT_TRUE(graph.smoothCorrectionFor(node + 2)
+                    .equals(from.interpolateRt(to, 0.08 / segment), 1e-6));
+    // The step correction holds the node's for both
+    EXPECT_TRUE(graph.correctionFor(node + 2).equals(from, 1e-9));
+
+    // After the last node: the last node's correction
+    const uint64_t last = keyframe - 1;
+    EXPECT_TRUE(graph.smoothCorrectionFor(last).equals(
+        graph.correctionFor(nodes.back()), 1e-9));
+}
+
 TEST(PoseGraphTest, LoopRemovesYawAndPositionDrift) {
     lc::PoseGraph graph(lc::PoseGraphNoise{}, lc::NodeGate{});
     graph.setGravity(kGravity);

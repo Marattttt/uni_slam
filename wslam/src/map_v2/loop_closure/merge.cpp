@@ -21,7 +21,8 @@ MapSnapshot loop_closure::ApplyCorrections(const MapSnapshot& vio,
     for (KeyframePose& keyframe : corrected.keyframes) {
         const gtsam::Pose3 pose{gtsam::Rot3{keyframe.R_world_cam},
                                 gtsam::Point3{keyframe.t_world_cam}};
-        const gtsam::Pose3 moved = graph.correctionFor(keyframe.id.v) * pose;
+        const gtsam::Pose3 moved
+            = graph.smoothCorrectionFor(keyframe.id.v) * pose;
         keyframe.R_world_cam = moved.rotation().matrix();
         keyframe.t_world_cam = moved.translation();
         ++local.keyframes_corrected;
@@ -37,7 +38,7 @@ MapSnapshot loop_closure::ApplyCorrections(const MapSnapshot& vio,
             ++local.landmarks_unanchored;
         }
         const gtsam::Pose3 correction
-            = graph.correctionFor(anchor.value_or(kNewest));
+            = graph.smoothCorrectionFor(anchor.value_or(kNewest));
         landmark.position_world
             = correction.transformFrom(gtsam::Point3{landmark.position_world});
     }
