@@ -434,19 +434,36 @@ std::optional<std::string> GPU::initAdapter() {
 }
 
 std::optional<std::string> GPU::initDevice() {
-    static const uint64_t gigabyte = 1 << 30;
-
     spdlog::info("[GPU] Creating device");
+
+    auto device = requestDevice("First device");
+    if (!device) {
+        return std::move(device).error();
+    }
+    device_ = std::move(device).value();
+
+    return std::nullopt;
+}
+
+std::expected<wgpu::Device, std::string> GPU::createAuxiliaryDevice(
+    std::string_view label) {
+    spdlog::info("[GPU] Creating auxiliary device '{}'", label);
+    return requestDevice(label);
+}
+
+std::expected<wgpu::Device, std::string> GPU::requestDevice(
+    std::string_view label) {
+    static const uint64_t gigabyte = 1 << 30;
 
     wgpu::Limits adapter_limits{};
     if (!adapter_.GetLimits(&adapter_limits)) {
-        return "could not query adapter limits";
+        return std::unexpected("could not query adapter limits");
     }
 
     if (adapter_limits.maxBufferSize < gigabyte) {
-        return std::format(
+        return std::unexpected(std::format(
             "adapter max buffer size {} is below the required {}",
-            adapter_limits.maxBufferSize, gigabyte);
+            adapter_limits.maxBufferSize, gigabyte));
     }
 
     // The ONNX Runtime WebGPU execution provider runs on this device too, and
@@ -489,7 +506,7 @@ std::optional<std::string> GPU::initDevice() {
 
     wgpu::DeviceDescriptor descriptor{};
     descriptor.nextInChain = nullptr;
-    descriptor.label = "First device";
+    descriptor.label = label;
     descriptor.requiredFeatureCount = features.size();
     descriptor.requiredFeatures = features.data();
     descriptor.requiredLimits = &limits;
@@ -515,7 +532,7 @@ std::optional<std::string> GPU::initDevice() {
         std::string errormsg;
         bool requestEnded = false;
     };
-    UserData userData{.device = device_, .errormsg = ""};
+    UserData userData{.device = {}, .errormsg = ""};
 
     const auto device_callback
         = [](wgpu::RequestDeviceStatus status, wgpu::Device device,
@@ -539,12 +556,13 @@ std::optional<std::string> GPU::initDevice() {
     instance_.WaitAny(request, timeout_ns);
 
     if (userData.errormsg.length() > 0) {
-        return userData.errormsg;
+        return std::unexpected(userData.errormsg);
+    }
+    if (!userData.device) {
+        return std::unexpected("device request timed out");
     }
 
-    device_ = std::move(userData.device);
-
-    return std::nullopt;
+    return std::move(userData.device);
 }
 
 std::optional<std::string> GPU::initLimits() {

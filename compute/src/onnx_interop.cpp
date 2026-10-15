@@ -51,26 +51,62 @@ std::expected<Ort::Session, std::string> OrtProvider::LoadModel(
     std::optional<Ort::SessionOptions> extra_opts) {
     WSLAM_ASSERT(!extra_opts, "custom session options are not implemented");
 
-    spdlog::info(LOG_ID " loading model {} on the {} execution provider",
-                 model_name.string(), use_webgpu_ep ? "WebGPU" : "CPU");
+    SessionPlacement placement;
+    placement.use_webgpu_ep = use_webgpu_ep;
+    if (!use_webgpu_ep) {
+        placement.intra_op_threads = default_cpu_threads_;
+    }
+    return LoadModel(model_name, placement);
+}
 
-    // WebGPU EP reads the instance and device as the integer values of the raw
-    // WGPUInstance / WGPUDevice handles
-    const auto instance_handle
-        = reinterpret_cast<size_t>(gpu_->getInstance().Get());
-    const auto device_handle
-        = reinterpret_cast<size_t>(gpu_->getDevice().Get());
+std::expected<Ort::Session, std::string> OrtProvider::LoadModel(
+    const std::filesystem::path& model_name,
+    const SessionPlacement& placement) {
+    WSLAM_ASSERT(placement.context_id > 0,
+                 "WebGPU EP context 0 is ONNX Runtime's own device");
+
+    spdlog::info(LOG_ID " loading model {} on the {} execution provider{}",
+                 model_name.string(),
+                 placement.use_webgpu_ep ? "WebGPU" : "CPU",
+                 placement.use_webgpu_ep
+                     ? std::format(" (context {})", placement.context_id)
+                     : std::format(" ({} intra-op threads{})",
+                                   placement.intra_op_threads > 0
+                                       ? std::to_string(
+                                             placement.intra_op_threads)
+                                       : std::string{"default"},
+                                   placement.allow_spinning
+                                       ? ""
+                                       : ", no spinning"));
 
     try {
         Ort::SessionOptions opts;
-        if (!use_webgpu_ep) {
+        if (placement.intra_op_threads > 0) {
+            opts.SetIntraOpNumThreads(placement.intra_op_threads);
+        }
+        if (!placement.allow_spinning) {
+            opts.AddConfigEntry("session.intra_op.allow_spinning", "0");
+        }
+
+        if (!placement.use_webgpu_ep) {
             // The CPU execution provider is the one a session always has
             return Ort::Session{*env_, model_name.c_str(), opts};
         }
 
+        WSLAM_ASSERT(gpu_ != nullptr, "WebGPU session without a GPU");
+        const wgpu::Device& device = placement.device.has_value()
+                                         ? placement.device.value()
+                                         : gpu_->getDevice();
+
+        // WebGPU EP reads the instance and device as the integer values of
+        // the raw WGPUInstance / WGPUDevice handles
+        const auto instance_handle
+            = reinterpret_cast<size_t>(gpu_->getInstance().Get());
+        const auto device_handle = reinterpret_cast<size_t>(device.Get());
+
         opts.AppendExecutionProvider(
             "WebGPU", {
-                          {"deviceId", std::to_string(kWebGpuContextId)},
+                          {"deviceId", std::to_string(placement.context_id)},
                           {"webgpuInstance", std::to_string(instance_handle)},
                           {"webgpuDevice", std::to_string(device_handle)},
                           // Preserve device after session is destroyed

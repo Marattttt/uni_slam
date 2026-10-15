@@ -160,6 +160,13 @@ class GPU {
         return compute_device_;
     }
 
+    // A second device on the same adapter, with the features and limits of
+    // the main one. For work another thread runs alongside the pipeline (e.g.
+    // a second ONNX Runtime WebGPU context): a device is not shared between
+    // threads that submit to it independently
+    [[nodiscard]] std::expected<wgpu::Device, std::string>
+    createAuxiliaryDevice(std::string_view label);
+
     struct BgBinding {
         BufferType buf_type;
         wgpu::BindGroupEntry& bg_entry;
@@ -251,6 +258,8 @@ class GPU {
    private:
     [[nodiscard]] std::optional<std::string> initInstance();
     [[nodiscard]] std::optional<std::string> initDevice();
+    [[nodiscard]] std::expected<wgpu::Device, std::string> requestDevice(
+        std::string_view label);
     [[nodiscard]] std::optional<std::string> initAdapter();
     std::optional<std::string> initLimits();
     [[nodiscard]] std::optional<std::string> initBuffers();

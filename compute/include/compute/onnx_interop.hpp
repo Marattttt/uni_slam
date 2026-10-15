@@ -32,10 +32,36 @@ class OrtProvider {
         return env_;
     }
 
+    // Where a session runs, for LoadModel
+    struct SessionPlacement {
+        // false leaves the session on the CPU execution provider
+        bool use_webgpu_ep = true;
+        // WebGPU only: the device the EP adopts, and the EP context it gets.
+        // Unset means the GPU's own device under kWebGpuContextId. Each
+        // device needs a context id of its own (> 0)
+        std::optional<wgpu::Device> device;
+        int context_id = kWebGpuContextId;
+        // Threads of the session's intra-op pool; 0 lets ONNX Runtime pick
+        // (one per physical core)
+        int intra_op_threads = 0;
+        // Whether idle intra-op threads spin-wait for work (ONNX Runtime's
+        // default). Lower latency between ops, but a session that runs only
+        // now and then burns its cores between runs
+        bool allow_spinning = true;
+    };
+
+    // Intra-op threads of the CPU sessions LoadModel(path, false) creates
+    // (the front end's); 0 = ONNX Runtime's default
+    void setDefaultCpuThreads(int threads) { default_cpu_threads_ = threads; }
+
     // use_webgpu_ep false leaves the session on the CPU execution provider
     [[nodiscard]] std::expected<Ort::Session, std::string> LoadModel(
         const std::filesystem::path& model_name, bool use_webgpu_ep = true,
         std::optional<Ort::SessionOptions> extra_opts = {});
+
+    [[nodiscard]] std::expected<Ort::Session, std::string> LoadModel(
+        const std::filesystem::path& model_name,
+        const SessionPlacement& placement);
 
     // Memory info of tensors that live in the WebGPU EP's device memory
     [[nodiscard]] static Ort::MemoryInfo getDeviceMemoryInfo();
@@ -51,6 +77,7 @@ class OrtProvider {
    private:
     const std::shared_ptr<GPU> gpu_;
     const std::shared_ptr<Ort::Env> env_;
+    int default_cpu_threads_ = 0;
 };
 
 // A GPU pass: ONNX Runtime submits its own commands to the device queue and
