@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "compute/onnx_interop.hpp"
+#include "compute/performance.hpp"
 #include "config.hpp"
 #include "data/provider_base.hpp"
 #include "model_io.hpp"
@@ -109,7 +110,9 @@ struct LoopClosureStats {
 //
 // push() and latestCorrection() are the only calls the main loop makes while
 // the thread runs; finish() stops it, after which the graph and the results
-// can be read
+// can be read. The thread records its performance under the thread id
+// "loop_closure", into the given recorder (which must outlive the worker) or
+// into one of its own
 class LoopClosureWorker {
    public:
     struct Models {
@@ -120,6 +123,8 @@ class LoopClosureWorker {
         std::unique_ptr<PairMatcher> matcher;
     };
 
+    LoopClosureWorker(LoopClosureConfig config, data::CamSensorParams camera,
+                      Models models, compute::PerfRecorder& perf);
     LoopClosureWorker(LoopClosureConfig config, data::CamSensorParams camera,
                       Models models);
     // Drops the backlog and joins
@@ -166,6 +171,10 @@ class LoopClosureWorker {
     const LoopClosureConfig config_;
     const data::CamSensorParams camera_;
     Models models_;
+    // Recorded into when the worker is not given a recorder. Before perf_,
+    // which may refer to it
+    compute::PerfRecorder own_perf_;
+    compute::PerfRecorder& perf_;
 
     // Thread-owned state
     PlaceDatabase database_;
@@ -203,6 +212,7 @@ class LoopClosureWorker {
 [[nodiscard]] std::expected<std::shared_ptr<LoopClosureWorker>, std::string>
 CreateLoopClosureWorker(compute::OrtProvider& ort,
                         const LoopClosureConfig& config,
-                        const data::CamSensorParams& camera);
+                        const data::CamSensorParams& camera,
+                        compute::PerfRecorder& perf);
 
 }  // namespace wslam::v2::mapping::loop_closure

@@ -43,16 +43,24 @@ enum class Rejection : uint8_t { Matches, Correspondences, Pnp, Consistency };
 
 LoopClosureWorker::LoopClosureWorker(LoopClosureConfig config,
                                      data::CamSensorParams camera,
-                                     Models models)
+                                     Models models,
+                                     compute::PerfRecorder& perf)
     : config_(std::move(config)),
       camera_(std::move(camera)),
       models_(std::move(models)),
+      perf_(perf),
       database_(models_.place_recognition->spec().descriptor_dim),
       graph_(config_.noise, config_.node_gate) {
     WSLAM_ASSERT(models_.place_recognition && models_.matcher,
                  "loop closure needs both models");
     thread_ = std::thread([this] { run(); });
 }
+
+LoopClosureWorker::LoopClosureWorker(LoopClosureConfig config,
+                                     data::CamSensorParams camera,
+                                     Models models)
+    : LoopClosureWorker(std::move(config), std::move(camera),
+                        std::move(models), own_perf_) {}
 
 LoopClosureWorker::~LoopClosureWorker() {
     {
@@ -118,6 +126,8 @@ std::optional<std::string> LoopClosureWorker::finish() {
 }
 
 void LoopClosureWorker::run() {
+    compute::PerfRecorder::setThreadId("loop_closure");
+
     while (true) {
         std::deque<Event> batch;
         {
@@ -134,6 +144,7 @@ void LoopClosureWorker::run() {
         }
 
         try {
+            const auto perfscope = perf_.beginRecord("batch");
             process(batch);
         } catch (const std::exception& e) {
             fail(std::format("processing: {}", e.what()));
@@ -159,11 +170,13 @@ void LoopClosureWorker::process(std::deque<Event>& batch) {
         }
 
         if (auto* image = std::get_if<KeyframeImageEvent>(&event)) {
+            const auto perfscope = perf_.beginRecord("embed");
             handle(*image);
             continue;
         }
 
         auto& update = std::get<MapUpdateEvent>(event);
+        const auto perfscope = perf_.beginRecord("map update");
         if (const auto node = handle(update)) {
             if (newest_node) {
                 ++stats_.queries_skipped;
@@ -178,10 +191,14 @@ void LoopClosureWorker::process(std::deque<Event>& batch) {
 
     // Only the newest node is queried: the thread is behind otherwise, and
     // the older ones still entered the database
-    query(*newest_node);
+    {
+        const auto perfscope = perf_.beginRecord("query");
+        query(*newest_node);
+    }
 
     // A new node moves the newest correction even without a new loop
     if (graph_.loopCount() > 0) {
+        const auto perfscope = perf_.beginRecord("publish correction");
         publishCorrection();
     }
 }
@@ -269,9 +286,12 @@ void LoopClosureWorker::query(uint64_t keyframe) {
     }
 
     ++stats_.queries;
-    const auto candidates = database_.search(
-        record->second.descriptor.value(), acceptance.top_n,
-        keyframe - acceptance.min_keyframe_gap);
+    const auto candidates = [&] {
+        const auto perfscope = perf_.beginRecord("search");
+        return database_.search(record->second.descriptor.value(),
+                                acceptance.top_n,
+                                keyframe - acceptance.min_keyframe_gap);
+    }();
     stats_.candidates += candidates.size();
 
     for (const PlaceCandidate& candidate : candidates) {
@@ -295,8 +315,10 @@ void LoopClosureWorker::query(uint64_t keyframe) {
         }
 
         const auto start = Clock::now();
-        auto verified = verify(candidate.keyframe, keyframe,
-                               candidate.similarity);
+        auto verified = [&] {
+            const auto perfscope = perf_.beginRecord("verify");
+            return verify(candidate.keyframe, keyframe, candidate.similarity);
+        }();
         stats_.verify_ms_total += MillisecondsSince(start);
         ++stats_.verifications;
 
@@ -308,7 +330,10 @@ void LoopClosureWorker::query(uint64_t keyframe) {
         }
 
         AcceptedLoop& loop = accepted_.emplace_back(std::move(verified).value());
-        graph_.addLoop(loop.edge);
+        {
+            const auto perfscope = perf_.beginRecord("add loop");
+            graph_.addLoop(loop.edge);
+        }
         ++stats_.accepted;
 
         spdlog::info(LOG_ID
@@ -320,7 +345,10 @@ void LoopClosureWorker::query(uint64_t keyframe) {
                      loop.correction_translation_m,
                      loop.correction_rotation_rad * 180.0 / M_PI);
 
-        publishCorrection();
+        {
+            const auto perfscope = perf_.beginRecord("publish correction");
+            publishCorrection();
+        }
         // One loop per query
         return;
     }
@@ -351,8 +379,11 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
         return std::unexpected(std::move(message));
     };
 
-    auto pair = models_.matcher->match(candidate_record.image,
-                                       query_record.image);
+    auto pair = [&] {
+        const auto perfscope = perf_.beginRecord("match");
+        return models_.matcher->match(candidate_record.image,
+                                      query_record.image);
+    }();
     if (!pair) {
         // A model failure, not a rejection
         throw std::runtime_error("matching: " + pair.error());
@@ -428,7 +459,10 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
                         acceptance.min_correspondences));
     }
 
-    auto pnp = SolvePnp(correspondences, camera_.intrinsics[0], acceptance);
+    auto pnp = [&] {
+        const auto perfscope = perf_.beginRecord("pnp");
+        return SolvePnp(correspondences, camera_.intrinsics[0], acceptance);
+    }();
     if (!pnp) {
         return reject(Rejection::Pnp, std::move(pnp).error());
     }
@@ -474,7 +508,8 @@ void LoopClosureWorker::publishCorrection() {
 std::expected<std::shared_ptr<LoopClosureWorker>, std::string>
 loop_closure::CreateLoopClosureWorker(compute::OrtProvider& ort,
                                       const LoopClosureConfig& config,
-                                      const data::CamSensorParams& camera) {
+                                      const data::CamSensorParams& camera,
+                                      compute::PerfRecorder& perf) {
     const compute::ComputeDevice device = ort.getGPU()->getComputeDevice();
     const VprModelKind kind = SelectModelKind(device, config);
     const std::filesystem::path& vpr_path = kind == VprModelKind::MegaLoc
@@ -544,5 +579,5 @@ loop_closure::CreateLoopClosureWorker(compute::OrtProvider& ort,
     models.matcher = std::move(matcher).value();
 
     return std::make_shared<LoopClosureWorker>(config, camera,
-                                               std::move(models));
+                                               std::move(models), perf);
 }

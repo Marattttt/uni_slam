@@ -236,8 +236,8 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
             ort->setDefaultCpuThreads(budget);
         }
 
-        auto worker = lc::CreateLoopClosureWorker(*ort, lc_config.value(),
-                                                  camera.value());
+        auto worker = lc::CreateLoopClosureWorker(
+            *ort, lc_config.value(), camera.value(), compute.getPerf());
         if (!worker) {
             return "loop closure: " + std::move(worker).error();
         }
