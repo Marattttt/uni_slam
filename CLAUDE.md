@@ -11,9 +11,10 @@ picks the integrated GPU, which is slow.
 ONNX Runtime, Pangolin and GTSAM must all be pre-built and installed into
 `vendor/onnxruntime/install/`, `vendor/pangolin/install/` and
 `vendor/gtsam/install/` before CMake will succeed — they are not fetched by
-CMake. The repo ships helper scripts `build_onnxruntime.sh`,
-`build_pangolin.sh` and `build_gtsam.sh` for this. **There is no separate Dawn
-build**: `build_onnxruntime.sh` configures ORT with
+CMake. The repo ships helper scripts `scripts/build_onnxruntime.sh`,
+`scripts/build_pangolin.sh` and `scripts/build_gtsam.sh` for this (run them from the
+repo root: they resolve `vendor/` from `$PWD`). **There is no separate Dawn
+build**: `scripts/build_onnxruntime.sh` configures ORT with
 `onnxruntime_BUILD_DAWN_SHARED_LIBRARY=ON`, so the WebGPU execution provider
 build emits an installable `libwebgpu_dawn.so`, and both
 `onnxruntime::onnxruntime` and `dawn::webgpu_dawn` come out of that one install
@@ -101,8 +102,9 @@ It sets:
 - `WSLAM_ONNX_KEYPOINTS` — optional keypoints per image the models return; defaults to
   512 (`raco_lightglue::kDefaultKeypointCount`). Set it when testing another model
   variant; both models' shapes are checked against it when they load.
-- `WSLAM_PREFILTER_SIGMAS`, `_GYRO_BIAS_SIGMA`, `_ACCEL_BIAS_SIGMA`, `_ATTITUDE_SIGMA`,
-  `_VELOCITY_SIGMA`, `_DEPTH_SIGMA`, `_MAX_SKIPS` (all `WSLAM_PREFILTER_*`) — override the
+- `WSLAM_PREFILTER_SIGMAS` (default 2), `_GYRO_BIAS_SIGMA`, `_ACCEL_BIAS_SIGMA`,
+  `_ATTITUDE_SIGMA`, `_VELOCITY_SIGMA`, `_DEPTH_SIGMA`, `_MAX_SKIPS`, `_STATIONARY_WINDOW`,
+  `_STATIONARY_SCORE`, `_MAX_STATIONARY_SKIPS` (all `WSLAM_PREFILTER_*`) — override the
   frame prefilter's `FramePrefilterOptions` (`feature_detect_v2/frame_prefilter.hpp`).
 - `WSLAM_VPR_MIXVPR_MODEL`, `WSLAM_VPR_MEGALOC_MODEL` — place recognition models of the
   v2 loop closure (required with loop closure on: MixVPR for `--device=cpu`, MegaLoc for
@@ -304,7 +306,15 @@ modifying it, remember the changes are tracked in this repo's history.
   timestamps), and EuRoC GT csv to TUM format and runs `evo_ape`/`evo_rpe`.
   `--cam-to-body mav0/cam0/sensor.yaml` converts wslam's camera poses to the body
   frame (needed for a meaningful RPE); `--wslam` is repeatable (`map.json` and
-  `map_vio.json` of a loop closure run).
+  `map_vio.json` of a loop closure run). `--report` adds `accuracy_report.py`
+  (numpy/scipy, also standalone): coverage, Umeyama scale, APE under Sim(3) / SE(3) /
+  4-DoF position+yaw (needs the map json's `gravity_world`), rotation APE, RPE over
+  1/5/10 m (metric and scaled), local scale spread over 5 s windows, gravity error at
+  the first keyframe, APE-minimising time offset and loop-pair residuals; written to
+  `<out-dir>/accuracy_report.md`. EuRoC's ground-truth body frame is ~5.5° off both
+  ORB-SLAM3's and wslam's: the report estimates and removes that constant offset before
+  rotation APE and RPE. evo's RPE does not, so its RPE reads ~4× too high (ORB-SLAM3:
+  8.2 % vs 2.1 % over 1 m).
 - No current wslam end-to-end accuracy numbers are recorded: the earlier
   `ACCURACY_ANALYSIS.md` and its results were removed as outdated.
   `benchmarks/results/` (gitignored) keeps only the raw ORB-SLAM3 baseline
@@ -365,7 +375,14 @@ no skipping before the second keyframe. `MotionPredictor::predict` preintegrates
 samples after the keyframe with the mapping stage's own calibration, predicts the median
 parallax over an image grid at the median depth, and bounds both quantities by
 `confidence_sigmas` of the gyro/accel noise and random walk (`IMUSensorParams`), bias,
-attitude, velocity and depth errors. `max_consecutive_skips` (10) forces a model run.
+attitude, velocity and depth errors (default 2σ). The parallax bound is the largest median
+parallax over the motions with each error at kσ along 14 sampled directions (axes and
+diagonals) and the near depth — not the median plus a corner-pixel worst case, which was
+2–3× looser. `max_consecutive_skips` (10) forces a model run. Before there is a prior
+(no keyframe yet) it skips frames whose last 50 IMU samples are stationary
+(`map::utils::StationaryScore` < 0.5; the first frame always runs, at most 40 in a row:
+the score can't see constant rotation or velocity) — V1_01_easy's parked lead-in is only
+~100 frames, the MAV lifts off around frame 105.
 Skipped frames leave the marker and the pending features for the next run, so promotion
 stays correct. The gate logs predicted vs measured motion on frames that ran
 (`grep '\[prefilter\]'`).
@@ -408,7 +425,13 @@ shared IMU helpers and env knobs live in `map/utils.{hpp,cpp}`. Stage order
 - `FilterKeyframePass` — v1's gate (min landmarks, rotation OR median parallax over all
   inliers, min new landmarks, bootstrap/gravity window). *Takes* the triangulation and
   RANSAC results so an early-stopped pose estimate never maps stale geometry. Publishes
-  the reference marker and a `KeyframeCandidate`.
+  the reference marker and a `KeyframeCandidate`. The first keyframe (the origin) needs
+  only the bootstrap tests (gravity window, `bootstrap_min_parallax_px` frame to frame,
+  min landmarks): applying the small-motion test to frame-to-frame motion held it back
+  to frame ~670 of V1_01_easy, 27 s into the flight, where the zero-velocity prior was
+  wrong and the stationary window's gravity was 8° off; it now lands at liftoff
+  (frame ~107). The window's gravity is also rotated to the keyframe by the
+  bias-corrected gyro (`map::utils::PropagateGravity`; the log line reports the turn).
 - `DrainSmootherPass` → `SubmitSmootherPass::drainPending()` — blocks on the previous
   keyframe's update (only accepted keyframes reach it), archives keyframes that left
   the window (`SharedBindings::archived_poses`, last in-window estimate), and *retires*
