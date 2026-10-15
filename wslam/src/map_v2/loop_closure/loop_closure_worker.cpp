@@ -430,6 +430,8 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
         = candidate_record.archived_pose.value_or(graph_.vioPose(candidate));
 
     std::vector<PnpCorrespondence> correspondences;
+    // Landmark of each correspondence
+    std::vector<uint64_t> correspondence_landmarks;
     std::set<uint64_t> used_landmarks;
 
     for (const PairMatch* match : confident) {
@@ -454,6 +456,7 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
         }
 
         used_landmarks.insert(landmark);
+        correspondence_landmarks.push_back(landmark);
         correspondences.push_back(PnpCorrespondence{
             .point_candidate = point_candidate,
             .query_ray = map::util::PixelToNormalised(
@@ -495,10 +498,20 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
                         pnp->inliers, translation, rotation * 180.0 / M_PI));
     }
 
+    std::vector<LoopObservation> observations;
+    observations.reserve(pnp->inlier_indices.size());
+    for (const size_t index : pnp->inlier_indices) {
+        observations.push_back(LoopObservation{
+            .landmark = correspondence_landmarks[index],
+            .query_ray = correspondences[index].query_ray,
+        });
+    }
+
     return AcceptedLoop{
         .edge = {.candidate = candidate,
                  .query = query,
                  .T_candidate_query = pnp->T_candidate_query},
+        .observations = std::move(observations),
         .similarity = similarity,
         .matches = confident.size(),
         .correspondences = pnp->correspondences,

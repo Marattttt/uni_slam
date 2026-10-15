@@ -7,6 +7,7 @@
 #include <expected>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "config.hpp"
 
@@ -26,6 +27,8 @@ struct PnpResult {
     gtsam::Pose3 T_candidate_query;
     size_t inliers = 0;
     size_t correspondences = 0;
+    // Indices of the inliers into the correspondences
+    std::vector<size_t> inlier_indices;
 };
 
 // RANSAC PnP on calibrated rays: 6-point linear (DLT) hypotheses, an

@@ -5,6 +5,7 @@
 #include <bit>
 #include <cstdint>
 #include <flat_map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -389,6 +390,25 @@ struct LoopClosureEdge {
 };
 
 // Outcome of a run's loop closure, GTSAM-free, for the map export
+// Outcome of the export-time global bundle adjustment
+struct GlobalBaReport {
+    // Whether its result became the map; otherwise outcome says why not
+    bool accepted = false;
+    std::string outcome;
+    size_t keyframes = 0;
+    size_t imu_factors = 0;
+    size_t landmarks = 0;
+    size_t observations = 0;
+    // Observations the loops' PnP inliers contributed
+    size_t loop_observations = 0;
+    size_t outliers_removed = 0;
+    size_t iterations = 0;
+    double initial_error = 0.0;
+    double final_error = 0.0;
+    double path_length_ratio = 1.0;
+    double seconds = 0.0;
+};
+
 struct LoopClosureReport {
     std::string model;
     size_t keyframes = 0;
@@ -401,6 +421,7 @@ struct LoopClosureReport {
     std::vector<LoopClosureEdge> loops;
     double mean_embed_ms = 0.0;
     double mean_verify_ms = 0.0;
+    std::optional<GlobalBaReport> global_ba;
 };
 };  // namespace wslam
 

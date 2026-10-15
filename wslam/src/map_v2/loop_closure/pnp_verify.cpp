@@ -271,5 +271,6 @@ std::expected<PnpResult, std::string> loop_closure::SolvePnp(
         .T_candidate_query = camera_pose,
         .inliers = inliers.size(),
         .correspondences = n,
+        .inlier_indices = std::move(inliers),
     };
 }

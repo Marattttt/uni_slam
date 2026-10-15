@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <utility>
 #include <vector>
 
 #include "data/provider_base.hpp"
@@ -45,6 +46,20 @@ struct TrackedKeypoint {
     // frame. The model re-detects the keyframe image when it becomes the
     // reference, so a lookup by keypoint index is confirmed by this pixel
     Eigen::Vector2d pixel;
+};
+
+// IMU samples between two consecutive keyframes, (from_ts, to_ts]
+struct ImuEdge {
+    PoseId from{0};
+    uint64_t from_ts = 0;
+    uint64_t to_ts = 0;
+    std::vector<data::IMUReading> samples;
+};
+
+// Velocity and IMU bias the smoother last estimated for a keyframe
+struct NavigationEstimate {
+    Eigen::Vector3d velocity = Eigen::Vector3d::Zero();
+    gtsam::imuBias::ConstantBias bias;
 };
 
 // Persistent state shared by the mapping passes (held by reference; owned by
@@ -95,6 +110,15 @@ struct SharedBindings {
     // Keyframe each landmark was created in, whose loop-closure correction
     // moves it at export
     std::flat_map<LandmarkId, PoseId> landmark_anchor;
+
+    // What the smoother consumed, kept for the whole run for the export-time
+    // global bundle adjustment: the IMU samples of every edge (by its later
+    // keyframe), every landmark observation (undistorted LOD-0 pixels), and
+    // the velocity and bias of each keyframe that left the window
+    std::flat_map<PoseId, ImuEdge> imu_edges;
+    std::flat_map<LandmarkId, std::vector<std::pair<PoseId, Eigen::Vector2d>>>
+        landmark_observations;
+    std::flat_map<PoseId, NavigationEstimate> archived_navigation;
 
     // Hand-over to the loop closure feed: the keyframe the last drain
     // settled, and what the drains archived since the feed last ran

@@ -74,9 +74,19 @@ struct DriftCorrection {
     size_t loops = 0;
 };
 
+// A candidate landmark the query keyframe of a loop observes: a PnP inlier
+struct LoopObservation {
+    uint64_t landmark = 0;
+    // Undistorted normalised image coordinates in the query camera
+    Eigen::Vector2d query_ray = Eigen::Vector2d::Zero();
+};
+
 // An accepted loop, with what verification measured
 struct AcceptedLoop {
     LoopEdge edge;
+    // The PnP inliers, for a global bundle adjustment to fuse the query's
+    // view of the candidate's landmarks
+    std::vector<LoopObservation> observations;
     float similarity = 0.0F;
     size_t matches = 0;
     size_t correspondences = 0;

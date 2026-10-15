@@ -143,6 +143,13 @@ void BuildFactorsPass::integrateImu(FactorBundle& bundle,
                                                       shared_.last_bias};
     const uint32_t integrated = utils::IntegrateImuWindow(
         combined, changes.imu, changes.prev_kf_ts, changes.curr_kf_ts);
+    shared_.imu_edges.insert_or_assign(changes.pose_id,
+                                       ImuEdge{
+                                           .from = changes.prev_pose_id,
+                                           .from_ts = changes.prev_kf_ts,
+                                           .to_ts = changes.curr_kf_ts,
+                                           .samples = changes.imu,
+                                       });
 
     bundle.new_factors.emplace_shared<gtsam::CombinedImuFactor>(
         prev_pose_key, prev_velocity_key, pose_key, velocity_key, prev_bias_key,
@@ -269,10 +276,12 @@ void BuildFactorsPass::addSmartFactors(FactorBundle& bundle,
             ++cloned;
         }
 
+        auto& recorded = shared_.landmark_observations[id];
         for (const Observation* observation : observations) {
             factor->add(
                 gtsam::Point2(observation->pixel.x(), observation->pixel.y()),
                 Pose(observation->pose));
+            recorded.emplace_back(observation->pose, observation->pixel);
         }
 
         shared_.smart_factors.insert_or_assign(id, factor);

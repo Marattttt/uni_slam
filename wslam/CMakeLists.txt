@@ -57,6 +57,7 @@ add_library(wslam_app
     src/map_v2/submit_updates.cpp
 
     src/map_v2/loop_closure/config.cpp
+    src/map_v2/loop_closure/global_ba.cpp
     src/map_v2/loop_closure/loop_closure_worker.cpp
     src/map_v2/loop_closure/merge.cpp
     src/map_v2/loop_closure/model_io.cpp

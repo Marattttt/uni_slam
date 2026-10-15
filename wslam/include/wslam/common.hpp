@@ -184,6 +184,10 @@ constexpr std::string MapSnapshotName = "gen:map:snap";
 // v2 with loop closure: the smoother's own (uncorrected, VIO) final
 // snapshot. MapSnapshotName then holds the loop-corrected one
 constexpr std::string MapSnapshotVioName = "gen:map:snapvio";
+// v2 with loop closure and a global bundle adjustment: the pose graph's
+// corrected map, before the adjustment. MapSnapshotName then holds the
+// adjusted one
+constexpr std::string MapSnapshotPgoName = "gen:map:snappgo";
 // v2 loop closure outcome (LoopClosureReport), for the export
 constexpr std::string LoopClosureReportName = "gen:lc:report";
 // Per-accepted-keyframe factor-graph delta produced by BuildFactorsPass and

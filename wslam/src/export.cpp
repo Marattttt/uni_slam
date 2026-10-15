@@ -3,8 +3,10 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <format>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -101,6 +103,24 @@ json cameraToJson(const data::CamSensorParams& cam) {
     };
 }
 
+json globalBaToJson(const GlobalBaReport& report) {
+    return json{
+        {"accepted", report.accepted},
+        {"outcome", report.outcome},
+        {"keyframes", report.keyframes},
+        {"imu_factors", report.imu_factors},
+        {"landmarks", report.landmarks},
+        {"observations", report.observations},
+        {"loop_observations", report.loop_observations},
+        {"outliers_removed", report.outliers_removed},
+        {"iterations", report.iterations},
+        {"initial_error", report.initial_error},
+        {"final_error", report.final_error},
+        {"path_length_ratio", report.path_length_ratio},
+        {"seconds", report.seconds},
+    };
+}
+
 json loopClosureToJson(const LoopClosureReport& report) {
     json rejections = json::object();
     for (const auto& [gate, count] : report.rejections) {
@@ -132,6 +152,8 @@ json loopClosureToJson(const LoopClosureReport& report) {
         {"loops", std::move(loops)},
         {"mean_embed_ms", report.mean_embed_ms},
         {"mean_verify_ms", report.mean_verify_ms},
+        {"global_ba",
+         report.global_ba ? globalBaToJson(*report.global_ba) : json(nullptr)},
     };
 }
 
@@ -224,6 +246,8 @@ std::optional<std::string> wslam::ExportMap(const AnyBag& storage,
         = storage.getPtr<MapSnapshot>(ResourceIdentifier::MapSnapshotName);
     const auto vio_ptr
         = storage.getPtr<MapSnapshot>(ResourceIdentifier::MapSnapshotVioName);
+    const auto pgo_ptr
+        = storage.getPtr<MapSnapshot>(ResourceIdentifier::MapSnapshotPgoName);
     const auto report_ptr = storage.getPtr<LoopClosureReport>(
         ResourceIdentifier::LoopClosureReportName);
     const LoopClosureReport* report
@@ -260,33 +284,52 @@ std::optional<std::string> wslam::ExportMap(const AnyBag& storage,
     if (auto err = writePly(opts.map_path, snap.landmarks)) {
         return std::format("writing PLY: {}", err.value());
     }
-    // With loop closure the main files hold the corrected map and
-    // <stem>_vio.* the smoother's own
+    // With loop closure the main files hold the corrected map (bundle
+    // adjusted when a global BA ran), <stem>_vio.* the smoother's own and
+    // <stem>_pgo.* the pose graph's correction before the adjustment
     const bool has_vio = vio_ptr.has_value();
+    const bool has_pgo = pgo_ptr.has_value();
     if (auto err = writeJson(meta_path, snap, cam, report,
-                             has_vio ? "loop_corrected" : "vio")) {
+                             has_pgo   ? "global_ba"
+                             : has_vio ? "loop_corrected"
+                                       : "vio")) {
         return std::format("writing JSON metadata: {}", err.value());
     }
 
-    if (has_vio) {
-        std::filesystem::path vio_map = opts.map_path;
-        vio_map.replace_filename(opts.map_path.stem().string() + "_vio.ply");
-        std::filesystem::path vio_meta = vio_map;
-        vio_meta.replace_extension(".json");
+    const auto write_sibling
+        = [&](const MapSnapshot& sibling, std::string_view suffix,
+              std::string_view trajectory) -> std::optional<std::string> {
+        std::filesystem::path sibling_map = opts.map_path;
+        sibling_map.replace_filename(
+            std::format("{}_{}.ply", opts.map_path.stem().string(), suffix));
+        std::filesystem::path sibling_meta = sibling_map;
+        sibling_meta.replace_extension(".json");
 
-        const MapSnapshot& vio = *vio_ptr.value();
-        if (auto err = writePly(vio_map, vio.landmarks)) {
-            return std::format("writing VIO PLY: {}", err.value());
+        if (auto err = writePly(sibling_map, sibling.landmarks)) {
+            return std::format("writing {} PLY: {}", suffix, err.value());
         }
-        if (auto err = writeJson(vio_meta, vio, cam, report, "vio")) {
-            return std::format("writing VIO JSON metadata: {}", err.value());
+        if (auto err
+            = writeJson(sibling_meta, sibling, cam, report, trajectory)) {
+            return std::format("writing {} JSON metadata: {}", suffix,
+                               err.value());
         }
-        spdlog::info(LOG_ID " Wrote the uncorrected (VIO) map to '{}'",
-                     vio_meta.string());
+        spdlog::info(LOG_ID " Wrote the {} map to '{}'", trajectory,
+                     sibling_meta.string());
+        return std::nullopt;
+    };
+    if (has_vio) {
+        if (auto err = write_sibling(*vio_ptr.value(), "vio", "vio")) {
+            return err;
+        }
+    }
+    if (has_pgo) {
+        if (auto err
+            = write_sibling(*pgo_ptr.value(), "pgo", "loop_corrected")) {
+            return err;
+        }
     }
 
-    spdlog::info(LOG_ID
-                 " Wrote map: {} landmarks → '{}', {} keyframes → '{}'",
+    spdlog::info(LOG_ID " Wrote map: {} landmarks → '{}', {} keyframes → '{}'",
                  snap.landmarks.size(), opts.map_path.string(),
                  snap.keyframes.size(), meta_path.string());
 

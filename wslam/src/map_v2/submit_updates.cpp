@@ -148,6 +148,16 @@ void SubmitSmootherPass::archiveMarginalisedPoses(
 
         const PoseId id{gtsam::Symbol(key).index()};
         shared_.archived_poses.insert_or_assign(id, value.cast<gtsam::Pose3>());
+        if (latest_values_.exists(Velocity(id))
+            && latest_values_.exists(Bias(id))) {
+            shared_.archived_navigation.insert_or_assign(
+                id,
+                NavigationEstimate{
+                    .velocity = latest_values_.at<gtsam::Vector3>(Velocity(id)),
+                    .bias
+                    = latest_values_.at<gtsam::imuBias::ConstantBias>(Bias(id)),
+                });
+        }
         shared_.poses_archived_since_feed.push_back(id);
         if (shared_.predicted_values.exists(key)) {
             shared_.predicted_values.erase(key);

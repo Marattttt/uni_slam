@@ -55,6 +55,11 @@ class SubmitSmootherPass : public compute::Pass {
     /// the pipeline loop, before the map is exported
     [[nodiscard]] std::optional<std::string> flush();
 
+    /// Estimate of the window after the last drained update
+    [[nodiscard]] const gtsam::Values& latestValues() const {
+        return latest_values_;
+    }
+
    private:
     AnyBag& storage_;
     SharedBindings& shared_;
