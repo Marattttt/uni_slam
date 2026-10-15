@@ -150,7 +150,7 @@ function (configureDependencies)
         endforeach()
     endif()
 
-    # ONNX Runtime is built out of band by build_onnxruntime.sh: it fetches some
+    # ONNX Runtime is built out of band by scripts/build_onnxruntime.sh: it fetches some
     # twenty dependencies of its own and builds Dawn as part of its WebGPU
     # execution provider, so a single install prefix carries both packages.
     #

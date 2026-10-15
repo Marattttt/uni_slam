@@ -55,9 +55,9 @@ Other dependencies are brought in through FetchContent:
 ONNX Runtime, Pangolin and GTSAM must all be pre-built and installed into
 `vendor/onnxruntime/install/`, `vendor/pangolin/install/` and
 `vendor/gtsam/install/` before CMake will succeed — they are not fetched by
-CMake. The repo ships helper scripts `build_onnxruntime.sh`,
-`build_pangolin.sh` and `build_gtsam.sh` for this. There is no separate Dawn
-build: `build_onnxruntime.sh` produces both `onnxruntime::onnxruntime` and
+CMake. The repo ships helper scripts `scripts/build_onnxruntime.sh`,
+`scripts/build_pangolin.sh` and `scripts/build_gtsam.sh` for this (run them from
+the repo root). There is no separate Dawn build: `scripts/build_onnxruntime.sh` produces both `onnxruntime::onnxruntime` and
 `dawn::webgpu_dawn` into one install prefix.
 
 ```bash

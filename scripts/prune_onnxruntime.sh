@@ -11,7 +11,7 @@
 #
 #   git revert <the prune commit>
 #   git subtree pull --prefix vendor/onnxruntime <url> <new tag> --squash
-#   ./prune_onnxruntime.sh && git commit
+#   ./scripts/prune_onnxruntime.sh && git commit
 #
 # Re-running this script is harmless; rm -rf on an already-pruned tree is a no-op.
 
