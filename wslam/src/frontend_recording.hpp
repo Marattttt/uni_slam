@@ -89,6 +89,11 @@ class FrontendRecorder {
 
     uint64_t last_imu_timestamp_ = 0;
     uint64_t reference_frame_index_ = 0;
+    // A reference-advance marker an earlier frame set and no model run has
+    // consumed yet (the prefilter skipped the frames since): set aside for
+    // the mapping stage, so the decision records only this frame's, and put
+    // back afterwards
+    bool pending_advance_ = false;
 };
 
 // Feeds a FrontendRecording to the passes downstream of the model

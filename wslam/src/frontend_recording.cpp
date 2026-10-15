@@ -340,6 +340,12 @@ std::optional<std::string> v2::FrontendRecorder::captureFrame() {
         return "no frame timestamp";
     }
 
+    // Still here after the detect stage means the model did not run to
+    // consume it
+    pending_advance_
+        = storage_.take<bool>(ResourceIdentifier::FeatureReferenceAdvanceName)
+              .value_or(false);
+
     RecordedFrame frame{
         .frame_index = recording_.frames.size(),
         .timestamp_ns = timestamp.value(),
@@ -376,13 +382,18 @@ std::optional<std::string> v2::FrontendRecorder::captureDecision() {
     }
 
     RecordedFrame& frame = recording_.frames.back();
-    // Left in place: the model's preserve pass consumes it next frame
+    // Left in place: the model consumes it on its next run. Only a marker the
+    // mapping stage set this frame is this frame's decision, which is what
+    // the replay checks
     frame.reference_advanced
         = storage_.get<bool>(ResourceIdentifier::FeatureReferenceAdvanceName)
               .value_or(false);
     if (frame.reference_advanced) {
         reference_frame_index_ = frame.frame_index;
+    } else if (pending_advance_) {
+        storage_.set(ResourceIdentifier::FeatureReferenceAdvanceName, true);
     }
+    pending_advance_ = false;
     return std::nullopt;
 }
 
