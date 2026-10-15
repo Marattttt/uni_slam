@@ -28,6 +28,17 @@ struct FilterKeyframeConfig {
     uint32_t gravity_window_samples = 200;
     double max_score_for_stationary = 0.8;
 
+    // Nominal gravity: the stationary window's specific force beyond it,
+    // along gravity, is accelerometer bias
+    double gravity_magnitude = 9.81;
+    // The last gravity-window-sized IMU window scoring below this is the
+    // last rest before the first keyframe (zero-velocity update); the
+    // first keyframe's velocity is integrated from its end
+    double zupt_max_score = 0.5;
+    // Sigma of that velocity: base plus growth per second integrated
+    double initial_velocity_sigma = 0.05;       // m/s
+    double initial_velocity_sigma_per_s = 0.2;  // m/s per s
+
     // Largest distance between a keyframe keypoint's pixel as recorded and as
     // re-detected under the same index, see TrackedKeypoint
     double association_tolerance_px = 0.5;

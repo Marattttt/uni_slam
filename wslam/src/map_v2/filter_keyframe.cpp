@@ -8,6 +8,8 @@
 #include <cmath>
 #include <concepts>
 #include <flat_map>
+#include <format>
+#include <string>
 #include <utility>
 
 #include "assert.hpp"
@@ -369,34 +371,74 @@ std::optional<std::string> FilterKeyframePass::initializeFirstFrame(
         return "finding stationary window: " + window.error();
     }
 
-    const auto [window_gravity, gyro_bias] = utils::RecoverGravityAndGyroBias(
-        window.value(), *camera_, *imu_params.value());
+    const utils::StartupImuState startup = utils::RecoverStartupImuState(
+        window.value(), *camera_, *imu_params.value(),
+        config_.gravity_magnitude);
+    const uint64_t quiet_end = window->samples.back().timestamp;
 
-    // The window's gravity is in the camera frame of the window's end; the
-    // world frame is this keyframe's camera, which may have turned since
-    const Eigen::Vector3d gravity = utils::PropagateGravity(
-        window_gravity, imu_readings, window->samples.back().timestamp,
-        keyframe_ts, gyro_bias, *camera_, *imu_params.value());
+    // The body is still at rest at the end of the last quiet window, which
+    // may come after the quietest one (motors spinning up): the first
+    // keyframe's velocity is integrated from there rather than assumed zero
+    const auto before_keyframe = std::ranges::find_if(
+        imu_readings, [keyframe_ts](const data::IMUReading& reading) {
+            return reading.timestamp > keyframe_ts;
+        });
+    const auto last_rest = utils::FindLastStationaryWindow(
+        {imu_readings.begin(), before_keyframe}, config_.gravity_window_samples,
+        config_.zupt_max_score);
+    const uint64_t rest_end
+        = last_rest ? std::max(quiet_end, last_rest->samples.back().timestamp)
+                    : quiet_end;
+
+    // Both windows' gravity is in the camera frame at their end; the world
+    // frame is this keyframe's camera, which may have turned since
+    const utils::PropagatedRest at_rest_end = utils::PropagateFromRest(
+        startup.gravity_cam, imu_readings, quiet_end, rest_end, startup.bias,
+        *camera_, *imu_params.value());
+    const utils::PropagatedRest at_keyframe = utils::PropagateFromRest(
+        at_rest_end.gravity_cam, imu_readings, rest_end, keyframe_ts,
+        startup.bias, *camera_, *imu_params.value());
+
+    const Eigen::Vector3d& gravity = at_keyframe.gravity_cam;
     const double propagated_rad = std::acos(std::clamp(
-        window_gravity.normalized().dot(gravity.normalized()), -1.0, 1.0));
+        startup.gravity_cam.normalized().dot(gravity.normalized()), -1.0, 1.0));
+    const double integrated_s
+        = static_cast<double>(keyframe_ts - rest_end) * 1e-9;
 
     shared_.gravity_world = gravity;
-    // The accelerometer bias is folded into the gravity estimate
-    shared_.last_bias = {Eigen::Vector3d::Zero(), gyro_bias};
+    shared_.last_bias = startup.bias;
+    shared_.last_velocity = at_keyframe.velocity_cam;
+    shared_.initial_velocity_sigma
+        = config_.initial_velocity_sigma
+          + config_.initial_velocity_sigma_per_s * integrated_s;
 
     const auto to_seconds
         = [](std::integral auto ns) { return static_cast<double>(ns) * 1e-9; };
+    const Eigen::Vector3d& accel_bias = startup.bias.accelerometer();
+    const Eigen::Vector3d& gyro_bias = startup.bias.gyroscope();
+    spdlog::info(
+        LOG_ID
+        " Initialized gravity from {} IMU samples; score:{:.3f} "
+        "window:[{:.3f} - {:.3f}s] gravity=({:.3f}, {:.3f}, {:.3f}) "
+        "(turned {:.2f} deg to the keyframe {:.3f} s later) "
+        "gyro_bias=({:.4f}, {:.4f}, {:.4f}) accel_bias=({:.4f}, "
+        "{:.4f}, {:.4f})",
+        window->samples.size(), window->score,
+        to_seconds(window->samples.front().timestamp), to_seconds(quiet_end),
+        gravity.x(), gravity.y(), gravity.z(), propagated_rad * 180.0 / M_PI,
+        to_seconds(keyframe_ts - quiet_end), gyro_bias.x(), gyro_bias.y(),
+        gyro_bias.z(), accel_bias.x(), accel_bias.y(), accel_bias.z());
     spdlog::info(LOG_ID
-                 " Initialized gravity from {} IMU samples; score:{:.3f} "
-                 "window:[{:.3f} - {:.3f}s] gravity=({:.3f}, {:.3f}, {:.3f}) "
-                 "(turned {:.2f} deg to the keyframe {:.3f} s later) "
-                 "gyro_bias=({:.4f}, {:.4f}, {:.4f})",
-                 window->samples.size(), window->score,
-                 to_seconds(window->samples.front().timestamp),
-                 to_seconds(window->samples.back().timestamp), gravity.x(),
-                 gravity.y(), gravity.z(), propagated_rad * 180.0 / M_PI,
-                 to_seconds(keyframe_ts - window->samples.back().timestamp),
-                 gyro_bias.x(), gyro_bias.y(), gyro_bias.z());
+                 " Initial velocity: at rest until {:.3f}s ({}), integrated "
+                 "{:.3f} s to the keyframe: |v|={:.3f} m/s ({:.3f}, {:.3f}, "
+                 "{:.3f}), prior sigma {:.3f} m/s",
+                 to_seconds(rest_end),
+                 last_rest
+                     ? std::format("last window score {:.3f}", last_rest->score)
+                     : std::string{"no later quiet window"},
+                 integrated_s, at_keyframe.velocity_cam.norm(),
+                 at_keyframe.velocity_cam.x(), at_keyframe.velocity_cam.y(),
+                 at_keyframe.velocity_cam.z(), shared_.initial_velocity_sigma);
 
     return std::nullopt;
 }

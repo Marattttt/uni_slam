@@ -71,6 +71,9 @@ struct SharedBindings {
     Eigen::Vector3d gravity_world = Eigen::Vector3d::Zero();
     gtsam::imuBias::ConstantBias last_bias;
     Eigen::Vector3d last_velocity = Eigen::Vector3d::Zero();
+    // Sigma of the first keyframe's velocity prior (centred on
+    // last_velocity at initialisation); 0 = the factor builder's default
+    double initial_velocity_sigma = 0.0;
 
     // Best known pose of each keyframe still in the smoother window: the
     // optimised one once drained, the initial guess before

@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <utility>
@@ -74,7 +75,39 @@ MappingStage v2::mapping::CreateMappingStage(
     // as long as Compute holds the passes
     auto shared = std::make_shared<SharedBindings>();
 
-    const FilterKeyframeConfig filter_config{};
+    FilterKeyframeConfig filter_config{};
+    filter_config.gravity_magnitude = utils::EnvDouble(
+        "WSLAM_GRAVITY_MAGNITUDE", filter_config.gravity_magnitude);
+    filter_config.zupt_max_score = utils::EnvDouble(
+        "WSLAM_INIT_ZUPT_SCORE", filter_config.zupt_max_score);
+    filter_config.initial_velocity_sigma = utils::EnvDouble(
+        "WSLAM_INIT_VELOCITY_SIGMA", filter_config.initial_velocity_sigma);
+    filter_config.initial_velocity_sigma_per_s
+        = utils::EnvDouble("WSLAM_INIT_VELOCITY_SIGMA_PER_S",
+                           filter_config.initial_velocity_sigma_per_s);
+
+    BuildFactorsPass::Opts build_opts{
+        .gate_min_rotation_rad = filter_config.min_rotation_rad,
+        .gate_min_parallax_px = filter_config.min_parallax_px,
+    };
+    build_opts.prior_pose_tilt_sigma_rad
+        = utils::EnvDouble(
+              "WSLAM_INIT_TILT_SIGMA_DEG",
+              build_opts.prior_pose_tilt_sigma_rad * 180.0 / std::numbers::pi)
+          * std::numbers::pi / 180.0;
+    build_opts.prior_accel_bias_sigma = utils::EnvDouble(
+        "WSLAM_INIT_ACCEL_BIAS_SIGMA", build_opts.prior_accel_bias_sigma);
+
+    spdlog::info(
+        LOG_ID
+        " IMU init: |g| {:.4f}, zero-velocity score < {:.2f}, "
+        "velocity sigma {:.3f} + {:.3f}/s m/s, tilt sigma {:.2f} deg, "
+        "accel bias sigma {:.3f}",
+        filter_config.gravity_magnitude, filter_config.zupt_max_score,
+        filter_config.initial_velocity_sigma,
+        filter_config.initial_velocity_sigma_per_s,
+        build_opts.prior_pose_tilt_sigma_rad * 180.0 / std::numbers::pi,
+        build_opts.prior_accel_bias_sigma);
 
     SubmitSmootherPass::Opts submit_opts{};
     // Headless runs only read the final snapshot (flush() publishes it); the
@@ -110,12 +143,8 @@ MappingStage v2::mapping::CreateMappingStage(
         AssociateLandmarksPass::Opts{
             .association_tolerance_px = filter_config.association_tolerance_px,
         }));
-    stage->add_pass(std::make_unique<BuildFactorsPass>(
-        storage, *shared,
-        BuildFactorsPass::Opts{
-            .gate_min_rotation_rad = filter_config.min_rotation_rad,
-            .gate_min_parallax_px = filter_config.min_parallax_px,
-        }));
+    stage->add_pass(
+        std::make_unique<BuildFactorsPass>(storage, *shared, build_opts));
     stage->add_pass(std::move(submit));
 
     if (!loop_closure) {

@@ -11,6 +11,7 @@
 #include <gtsam/slam/SmartFactorParams.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cmath>
 #include <flat_map>
 #include <utility>
@@ -79,21 +80,36 @@ void BuildFactorsPass::addGaugePriors(FactorBundle& bundle,
     bundle.new_values.insert(velocity_key,
                              gtsam::Vector3(shared_.last_velocity));
 
-    const gtsam::Vector6 pose_sigmas{opts_.prior_pose_rotation_sigma_rad,
-                                     opts_.prior_pose_rotation_sigma_rad,
-                                     opts_.prior_pose_rotation_sigma_rad,
-                                     opts_.prior_pose_position_sigma,
-                                     opts_.prior_pose_position_sigma,
-                                     opts_.prior_pose_position_sigma};
+    // Pose3's rotation tangent is in the body frame: the gravity axis there
+    // gets the gauge sigma, the two axes across it the tilt sigma
+    const double yaw_variance = opts_.prior_pose_rotation_sigma_rad
+                                * opts_.prior_pose_rotation_sigma_rad;
+    const double tilt_variance = std::max(
+        opts_.prior_pose_tilt_sigma_rad * opts_.prior_pose_tilt_sigma_rad,
+        yaw_variance);
+    const Eigen::Vector3d up = pose_init.rotation().unrotate(
+        gtsam::Point3(shared_.gravity_world.normalized()));
+    const Eigen::Matrix3d along_gravity = up * up.transpose();
+    gtsam::Matrix6 pose_covariance = gtsam::Matrix6::Zero();
+    pose_covariance.topLeftCorner<3, 3>()
+        = yaw_variance * along_gravity
+          + tilt_variance * (Eigen::Matrix3d::Identity() - along_gravity);
+    pose_covariance.bottomRightCorner<3, 3>()
+        = Eigen::Matrix3d::Identity()
+          * (opts_.prior_pose_position_sigma * opts_.prior_pose_position_sigma);
     bundle.new_factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-        pose_key, pose_init, Diagonal::Sigmas(pose_sigmas));
+        pose_key, pose_init,
+        gtsam::noiseModel::Gaussian::Covariance(pose_covariance));
 
+    const double velocity_sigma = shared_.initial_velocity_sigma > 0.0
+                                      ? shared_.initial_velocity_sigma
+                                      : opts_.prior_velocity_sigma;
     bundle.new_factors.emplace_shared<gtsam::PriorFactor<gtsam::Vector3>>(
-        velocity_key, gtsam::Vector3::Zero(),
-        Isotropic::Sigma(3, opts_.prior_velocity_sigma));
+        velocity_key, gtsam::Vector3(shared_.last_velocity),
+        Isotropic::Sigma(3, velocity_sigma));
 
     // Centred on the measured startup bias (gyroscope measured; accelerometer
-    // zero, folded into the gravity estimate)
+    // along gravity only, the rest is folded into the gravity estimate)
     const gtsam::Vector6 bias_sigmas{
         opts_.prior_accel_bias_sigma, opts_.prior_accel_bias_sigma,
         opts_.prior_accel_bias_sigma, opts_.prior_gyro_bias_sigma,
@@ -102,8 +118,14 @@ void BuildFactorsPass::addGaugePriors(FactorBundle& bundle,
         .emplace_shared<gtsam::PriorFactor<gtsam::imuBias::ConstantBias>>(
             bias_key, shared_.last_bias, Diagonal::Sigmas(bias_sigmas));
 
-    spdlog::debug(LOG_ID " gauge priors on x{}/v{}/b{} (first keyframe)",
-                  changes.pose_id.v, changes.pose_id.v, changes.pose_id.v);
+    spdlog::info(LOG_ID
+                 " gauge priors on x{}/v{}/b{} (first keyframe): tilt sigma "
+                 "{:.2f} deg, velocity ({:.3f}, {:.3f}, {:.3f}) sigma {:.3f} "
+                 "m/s",
+                 changes.pose_id.v, changes.pose_id.v, changes.pose_id.v,
+                 std::sqrt(tilt_variance) * 180.0 / M_PI,
+                 shared_.last_velocity.x(), shared_.last_velocity.y(),
+                 shared_.last_velocity.z(), velocity_sigma);
 }
 
 void BuildFactorsPass::integrateImu(FactorBundle& bundle,

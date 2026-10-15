@@ -154,42 +154,83 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> utils::RecoverGravityAndGyroBias(
     return {gravity, gyro_bias};
 }
 
-Eigen::Vector3d utils::PropagateGravity(
-    const Eigen::Vector3d& gravity_cam,
-    std::span<const data::IMUReading> readings, uint64_t from_ts,
-    uint64_t to_ts, const Eigen::Vector3d& gyro_bias,
-    const data::CamSensorParams& cam, const data::IMUSensorParams& imu) {
+std::optional<utils::StationaryWindow> utils::FindLastStationaryWindow(
+    std::span<const data::IMUReading> readings, size_t window_size,
+    double max_score) {
+    if (window_size == 0 || readings.size() < window_size) {
+        return std::nullopt;
+    }
+
+    const auto step = std::max(1UZ, window_size / 2);
+    for (size_t end = readings.size();; end -= step) {
+        const auto window = readings.subspan(end - window_size, window_size);
+        const double score = StationaryScore(window);
+        if (score < max_score) {
+            return StationaryWindow{.samples = window, .score = score};
+        }
+        if (end < window_size + step) {
+            return std::nullopt;
+        }
+    }
+}
+
+utils::StartupImuState utils::RecoverStartupImuState(
+    const StationaryWindow& window, const data::CamSensorParams& cam,
+    const data::IMUSensorParams& imu, double gravity_magnitude) {
     const Eigen::Matrix3d r_body_cam = cam.T_BS.block<3, 3>(0, 0);
     const Eigen::Matrix3d r_body_imu = imu.T_BS.block<3, 3>(0, 0);
     const Eigen::Matrix3d r_cam_imu = r_body_cam.transpose() * r_body_imu;
 
-    // Orientation of the IMU at to_ts in its frame at from_ts, from the
-    // bias-corrected gyroscope (each sample held until the next one)
-    Eigen::Matrix3d r_from_to = Eigen::Matrix3d::Identity();
-    for (size_t i = 0; i < readings.size(); ++i) {
-        const uint64_t begin = std::max(readings[i].timestamp, from_ts);
-        const uint64_t end = std::min(
-            i + 1 < readings.size() ? readings[i + 1].timestamp : to_ts, to_ts);
-        if (end <= begin) {
-            continue;
-        }
-        const double dt = static_cast<double>(end - begin) * 1e-9;
-        const Eigen::Vector3d rate
-            = Eigen::Vector3d{static_cast<double>(readings[i].wx()),
-                              static_cast<double>(readings[i].wy()),
-                              static_cast<double>(readings[i].wz())}
-              - gyro_bias;
-        const double angle = rate.norm() * dt;
-        if (angle > 0.0) {
-            r_from_to
-                = r_from_to
-                  * Eigen::AngleAxisd{angle, rate.normalized()}.toRotationMatrix();
-        }
+    const auto [accel_mean, gyro_mean] = MeanAccelGyroImu(window.samples);
+
+    // At rest the specific force is -gravity + accel bias (IMU frame). Its
+    // direction is taken as gravity's; what exceeds the nominal magnitude
+    // along it is bias
+    const Eigen::Vector3d gravity_imu
+        = -accel_mean.normalized() * gravity_magnitude;
+    const Eigen::Vector3d accel_bias = accel_mean + gravity_imu;
+
+    return StartupImuState{
+        .gravity_cam = r_cam_imu * gravity_imu,
+        .bias = gtsam::imuBias::ConstantBias{accel_bias, gyro_mean},
+    };
+}
+
+utils::PropagatedRest utils::PropagateFromRest(
+    const Eigen::Vector3d& gravity_cam,
+    std::span<const data::IMUReading> readings, uint64_t from_ts,
+    uint64_t to_ts, const gtsam::imuBias::ConstantBias& bias,
+    const data::CamSensorParams& cam, const data::IMUSensorParams& imu) {
+    if (to_ts <= from_ts) {
+        return {.gravity_cam = gravity_cam};
     }
 
-    // The world does not move: gravity seen from the later IMU frame
-    const Eigen::Vector3d gravity_imu = r_cam_imu.transpose() * gravity_cam;
-    return r_cam_imu * (r_from_to.transpose() * gravity_imu);
+    // Navigation frame: the camera at from_ts, where gravity_cam holds
+    gtsam::PreintegratedCombinedMeasurements combined{
+        CreateImuCalibration(cam, imu, gravity_cam, 1e-4), bias};
+
+    const auto first = std::ranges::find_if(
+        readings, [from_ts](const auto& r) { return r.timestamp > from_ts; });
+    const auto last = std::find_if(first, readings.end(), [to_ts](auto& r) {
+        return r.timestamp > to_ts;
+    });
+    const std::span<const data::IMUReading> window{first, last};
+    if (window.empty()) {
+        return {.gravity_cam = gravity_cam};
+    }
+    IntegrateImuWindow(combined, window, from_ts, to_ts);
+
+    const gtsam::NavState state
+        = combined.predict(gtsam::NavState{gtsam::Rot3{}, gtsam::Point3::Zero(),
+                                           gtsam::Velocity3::Zero()},
+                           bias);
+
+    // The world does not move: both seen from the camera at to_ts
+    const Eigen::Matrix3d r_from_to = state.pose().rotation().matrix();
+    return {
+        .gravity_cam = r_from_to.transpose() * gravity_cam,
+        .velocity_cam = r_from_to.transpose() * state.v(),
+    };
 }
 
 std::shared_ptr<gtsam::PreintegrationCombinedParams>

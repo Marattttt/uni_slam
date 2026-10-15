@@ -264,20 +264,80 @@ TEST(MotionPredictionTest, StationaryScoreSeparatesParkedFromShaking) {
     EXPECT_NEAR(map::utils::StationaryScore(shaking), 1.0, 1e-3);
 }
 
-TEST(MotionPredictionTest, PropagateGravityFollowsTheGyroscope) {
+TEST(MotionPredictionTest, PropagateFromRestFollowsTheGyroscope) {
     // 0.6 rad/s measured about x with a 0.1 rad/s bias: 0.5 rad in one second
-    const auto samples = Samples(1.0, Eigen::Vector3d{0.6, 0.0, 0.0});
-    const uint64_t from = samples.front().timestamp;
+    const auto samples = Samples(1.1, Eigen::Vector3d{0.6, 0.0, 0.0});
+    const uint64_t from = kKeyframeTs;
     const uint64_t to = from + 1'000'000'000;
 
-    const Eigen::Vector3d gravity = map::utils::PropagateGravity(
-        {0.0, 0.0, -kGravity}, samples, from, to, {0.1, 0.0, 0.0}, Camera(),
-        Imu());
+    const auto state = map::utils::PropagateFromRest(
+        {0.0, 0.0, -kGravity}, samples, from, to,
+        gtsam::imuBias::ConstantBias{Eigen::Vector3d::Zero(),
+                                     Eigen::Vector3d{0.1, 0.0, 0.0}},
+        Camera(), Imu());
 
     // Seen from a camera turned by +0.5 rad about x: R_x(0.5)^T * g
-    EXPECT_NEAR(gravity.x(), 0.0, 1e-6);
-    EXPECT_NEAR(gravity.y(), -kGravity * std::sin(0.5), 1e-4);
-    EXPECT_NEAR(gravity.z(), -kGravity * std::cos(0.5), 1e-4);
+    EXPECT_NEAR(state.gravity_cam.x(), 0.0, 1e-6);
+    EXPECT_NEAR(state.gravity_cam.y(), -kGravity * std::sin(0.5), 1e-4);
+    EXPECT_NEAR(state.gravity_cam.z(), -kGravity * std::cos(0.5), 1e-4);
+}
+
+TEST(MotionPredictionTest, PropagateFromRestIntegratesAcceleration) {
+    // 1 m/s^2 along x on top of gravity, for one second
+    auto samples = Samples(1.0, Eigen::Vector3d::Zero());
+    for (auto& sample : samples) {
+        sample.vals[3] = 1.0F;
+    }
+    const auto state = map::utils::PropagateFromRest(
+        {0.0, 0.0, -kGravity}, samples, kKeyframeTs,
+        kKeyframeTs + 1'000'000'000, gtsam::imuBias::ConstantBias{}, Camera(),
+        Imu());
+    EXPECT_NEAR(state.velocity_cam.x(), 1.0, 1e-4);
+    EXPECT_NEAR(state.velocity_cam.y(), 0.0, 1e-6);
+    EXPECT_NEAR(state.velocity_cam.z(), 0.0, 1e-4);
+
+    // At rest, it stays there
+    const auto rest = map::utils::PropagateFromRest(
+        {0.0, 0.0, -kGravity}, Samples(1.0, Eigen::Vector3d::Zero()),
+        kKeyframeTs, kKeyframeTs + 1'000'000'000,
+        gtsam::imuBias::ConstantBias{}, Camera(), Imu());
+    EXPECT_LT(rest.velocity_cam.norm(), 1e-4);
+}
+
+TEST(MotionPredictionTest, StartupStateSplitsTheBiasAlongGravity) {
+    auto samples = Samples(1.0, Eigen::Vector3d{0.08, 0.0, 0.0});
+    for (auto& sample : samples) {
+        sample.vals[5] = 9.79F;
+    }
+    const auto state = map::utils::RecoverStartupImuState(
+        map::utils::StationaryWindow{.samples = samples, .score = 0.0},
+        Camera(), Imu(), kGravity);
+
+    EXPECT_NEAR(state.gravity_cam.z(), -kGravity, 1e-9);
+    EXPECT_NEAR(state.gravity_cam.head<2>().norm(), 0.0, 1e-9);
+    EXPECT_NEAR(state.bias.accelerometer().z(), 9.79 - kGravity, 1e-4);
+    EXPECT_NEAR(state.bias.gyroscope().x(), 0.08, 1e-6);
+}
+
+TEST(MotionPredictionTest, LastStationaryWindowEndsAtMotionOnset) {
+    // Parked for 3 s, then shaking for 1 s
+    auto samples = Samples(4.0, Eigen::Vector3d::Zero());
+    const size_t onset = samples.size() * 3 / 4;
+    for (size_t i = onset; i < samples.size(); ++i) {
+        samples[i].vals[5] += (i % 2 == 0) ? 1.0F : -1.0F;
+    }
+
+    const auto window = map::utils::FindLastStationaryWindow(samples, 200, 0.5);
+    ASSERT_TRUE(window.has_value());
+    const size_t end
+        = static_cast<size_t>(&window->samples.back() - samples.data() + 1);
+    EXPECT_LE(end, onset);
+    EXPECT_GT(end + 100, onset);
+
+    // Fewer samples than a window
+    EXPECT_FALSE(
+        map::utils::FindLastStationaryWindow({samples.data(), 150}, 200, 0.5)
+            .has_value());
 }
 
 }  // namespace

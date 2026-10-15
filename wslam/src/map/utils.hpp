@@ -1,6 +1,7 @@
 #pragma once
 
 #include <gtsam/navigation/CombinedImuFactor.h>
+#include <gtsam/navigation/ImuBias.h>
 #include <gtsam/navigation/PreintegrationCombinedParams.h>
 
 #include <Eigen/Core>
@@ -8,6 +9,7 @@
 #include <expected>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -49,12 +51,41 @@ RecoverGravityAndGyroBias(const StationaryWindow& window,
                           const data::CamSensorParams& cam,
                           const data::IMUSensorParams& imu);
 
-// gravity_cam (camera frame at from_ts) seen from the camera at to_ts:
-// rotated by the bias-corrected gyroscope samples in [from_ts, to_ts]
-[[nodiscard]] Eigen::Vector3d PropagateGravity(
+// The newest window of window_size samples (half-window stride back from the
+// end of readings) whose StationaryScore is below max_score: the last moment
+// the body is known to be at rest. nullopt when no full window is
+[[nodiscard]] std::optional<StationaryWindow> FindLastStationaryWindow(
+    std::span<const data::IMUReading> readings, size_t window_size,
+    double max_score);
+
+// Gravity and IMU bias measured over a stationary window
+struct StartupImuState {
+    // Camera frame, gravity_magnitude long
+    Eigen::Vector3d gravity_cam = Eigen::Vector3d::Zero();
+    // IMU frame. The gyroscope's is the window's mean rate; the
+    // accelerometer's is the part of the mean specific force along gravity
+    // beyond gravity_magnitude. The part across gravity can't be told from a
+    // tilt at rest, so it stays in the gravity direction
+    gtsam::imuBias::ConstantBias bias;
+};
+
+[[nodiscard]] StartupImuState RecoverStartupImuState(
+    const StationaryWindow& window, const data::CamSensorParams& cam,
+    const data::IMUSensorParams& imu, double gravity_magnitude);
+
+// A body at rest at from_ts, seen from the camera at to_ts
+struct PropagatedRest {
+    // Gravity and velocity in the camera frame at to_ts
+    Eigen::Vector3d gravity_cam = Eigen::Vector3d::Zero();
+    Eigen::Vector3d velocity_cam = Eigen::Vector3d::Zero();
+};
+
+// Preintegrates the samples of readings in (from_ts, to_ts] with bias from a
+// rest state at from_ts, whose gravity in the camera frame is gravity_cam
+[[nodiscard]] PropagatedRest PropagateFromRest(
     const Eigen::Vector3d& gravity_cam,
     std::span<const data::IMUReading> readings, uint64_t from_ts,
-    uint64_t to_ts, const Eigen::Vector3d& gyro_bias,
+    uint64_t to_ts, const gtsam::imuBias::ConstantBias& bias,
     const data::CamSensorParams& cam, const data::IMUSensorParams& imu);
 
 // Preintegration parameters from the IMU noise densities, the startup gravity

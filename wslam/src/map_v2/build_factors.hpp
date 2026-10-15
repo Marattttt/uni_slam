@@ -4,6 +4,7 @@
 #include <gtsam/navigation/PreintegrationCombinedParams.h>
 
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string>
 
@@ -32,9 +33,15 @@ namespace wslam::v2::mapping {
 class BuildFactorsPass : public compute::Pass {
    public:
     struct Opts {
-        // Prior noise on the very first pose. Tight to lock the gauge
+        // Prior noise on the very first pose. Tight to lock the gauge:
+        // position and the rotation about gravity
         double prior_pose_position_sigma = 1e-4;
         double prior_pose_rotation_sigma_rad = 1e-4;
+        // ... but not its tilt, which gravity observes: the stationary
+        // window's gravity carries the accelerometer bias across it, so the
+        // smoother re-levels the first pose once the body rotates. 0 locks
+        // the tilt too
+        double prior_pose_tilt_sigma_rad = 3.0 * std::numbers::pi / 180.0;
 
         // Pixel noise (sigma) for the smart projection factors at LOD-0
         double projection_pixel_sigma = 1.5;
@@ -46,8 +53,10 @@ class BuildFactorsPass : public compute::Pass {
         // Landmarks further than this are not used by the smart factors
         double max_landmark_distance = 15.0;
 
-        // Initial-velocity prior on the first keyframe, anchored at motion
-        // onset, so near but not exactly zero
+        // Initial-velocity prior on the first keyframe, centred on the
+        // velocity integrated from the last rest. Its sigma comes from the
+        // keyframe gate (SharedBindings::initial_velocity_sigma); this is the
+        // fallback
         double prior_velocity_sigma = 0.25;  // m/s
         // Initial-bias prior on the first keyframe, centred on the measured
         // startup bias
