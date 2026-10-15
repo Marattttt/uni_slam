@@ -114,6 +114,12 @@ It sets:
   `WSLAM_LC_MIN_SIMILARITY`, `WSLAM_LC_MIN_KEYFRAME_GAP`, `WSLAM_LC_MIN_INLIERS`,
   `WSLAM_LC_NODE_MIN_TRANSLATION`, `WSLAM_LC_NODE_MIN_ROTATION`, `WSLAM_LC_THREADS`
   override `LoopClosureConfig` knobs (`map_v2/loop_closure/config.hpp`).
+- `WSLAM_GRAVITY_MAGNITUDE` (9.81), `WSLAM_INIT_ZUPT_SCORE` (0.5),
+  `WSLAM_INIT_VELOCITY_SIGMA` (0.05 m/s), `WSLAM_INIT_VELOCITY_SIGMA_PER_S` (0.2),
+  `WSLAM_INIT_TILT_SIGMA_DEG` (3; 0 locks x1's tilt as before), `WSLAM_INIT_ACCEL_BIAS_SIGMA`
+  (0.1) — the v2 IMU initialisation (`FilterKeyframeConfig`, `BuildFactorsPass::Opts`).
+- `WSLAM_GLOBAL_BA` (1; 0 disables), `WSLAM_GBA_MAX_ITERS` (15), `WSLAM_GBA_MIN_OBS` (3) —
+  the export-time global bundle adjustment after loop closure.
 - `WSLAM_ORT_THREADS` — optional intra-op threads of the front end's ORT CPU session.
   By default ORT takes one per physical core; with loop closure on `--device=cpu` the
   pipeline gives it the physical cores minus `WSLAM_LC_THREADS` instead.
@@ -152,8 +158,9 @@ re-scores the v2 geometry under every score-floor / weighting / refinement confi
 (`WSLAM_ABLATION_REPORT_OUT=path.md`). Results and analysis:
 `benchmarks/POSE_ESTIMATE_V2_NOTE.md`.
 `LocalSmootherTest`/`JobWorkerTest` cover the v2 mapping back-end machinery (no data).
-`MotionPredictionTest`/`FramePrefilterPassTest` cover the frame prefilter on synthetic IMU
-data (no data).
+`MotionPredictionTest`/`FramePrefilterPassTest` cover the frame prefilter and the IMU
+initialisation helpers on synthetic IMU data (no data). `GlobalBaTest` runs the global
+bundle adjustment on a synthetic circling run whose initial guess drifted in scale and yaw.
 `LoopClosureModelIoTest`, `PlaceDatabaseTest`, `PnpVerifyTest` and `PoseGraphTest` cover
 the loop closure pieces (no data); `Models/LoopClosureDatasetTest` checks each place
 recognition model whose path is set on a ground-truth V1_01_easy revisit (MegaLoc on
@@ -295,12 +302,21 @@ two local patches (C++17 bump; `LoopClosing.h` `mnFullBAIdx` bool→int) — whe
 modifying it, remember the changes are tracked in this repo's history.
 
 - `benchmarks/build_orbslam3.sh` — builds ORB-SLAM3 + its Thirdparty against
-  system OpenCV and the project's `vendor/pangolin/install` (needs
-  `CMAKE_POLICY_VERSION_MINIMUM=3.5` under CMake ≥ 4).
-- `benchmarks/run_orbslam3_euroc.sh` — runs mono-inertial on the `.env`
-  EuRoC sequence; trajectories land in `benchmarks/results/`. The binary
-  segfaults at shutdown *after* saving (known upstream viewer/GL teardown
-  race) — the script tolerates it and validates the output files instead.
+  OpenCV 4 and the project's `vendor/pangolin/install` (needs
+  `CMAKE_POLICY_VERSION_MINIMUM=3.5` under CMake ≥ 4). The system OpenCV is 5 now, which
+  ORB-SLAM3 does not build against: `ORB_OPENCV_DIR` points it at an OpenCV 4.13 install
+  (a minimal one lives in `~/dev/proj/resources/res_uni_slam/opencv4/install`), baked into
+  the run path; `ORB_BUILD_JOBS` (8) caps the jobs.
+- `benchmarks/run_orbslam3_euroc.sh [MAX_FRAMES] [RUN_INDEX]` — runs mono-inertial on the
+  `EUROC_DIR` (or `.env`) sequence, read from the directory name (`V1_03_difficult` →
+  `V103` timestamps); trajectories land in `benchmarks/results/` as
+  `f_dataset-<SEQ>_monoi[_<N>f][_r<I>].txt`. ORB-SLAM3 is not deterministic: repeat it
+  with a run index. The binary segfaults at shutdown *after* saving (known upstream
+  viewer/GL teardown race) — the script tolerates it and validates the output files instead.
+- `benchmarks/run_wslam_euroc.sh MAV0_DIR OUT_DIR [BUILD_DIR]` — a full v2 run
+  (`--device=cpu`, mapping and loop closure on) over a sequence, `--max-iters` set to its
+  cam0 frame count; `OUT_DIR` gets the maps, `run.log`, the perf yaml and `status.txt`.
+  Don't edit it while a run uses it: bash reads scripts as it goes.
 - `benchmarks/compare.py` (run with `benchmarks/.venv/bin/python`; venv has
   `evo` + `numpy`) — converts wslam `map.json`, ORB-SLAM3 txt (ns
   timestamps), and EuRoC GT csv to TUM format and runs `evo_ape`/`evo_rpe`.
@@ -315,11 +331,14 @@ modifying it, remember the changes are tracked in this repo's history.
   ORB-SLAM3's and wslam's: the report estimates and removes that constant offset before
   rotation APE and RPE. evo's RPE does not, so its RPE reads ~4× too high (ORB-SLAM3:
   8.2 % vs 2.1 % over 1 m).
-- No current wslam end-to-end accuracy numbers are recorded: the earlier
-  `ACCURACY_ANALYSIS.md` and its results were removed as outdated.
-  `benchmarks/results/` (gitignored) keeps only the raw ORB-SLAM3 baseline
-  trajectories (`f_`/`kf_dataset-V101_monoi[_582f].txt`); re-run
-  `compare.py` to regenerate `gt.tum` and the converted `.tum` files.
+- `benchmarks/NOTE_HARD_SEQUENCES.md` — the current end-to-end numbers: wslam (VIO, pose
+  graph, global BA) against ORB-SLAM3 (3 runs) on V1_01_easy, V1_03_difficult and
+  V2_03_difficult, before and after the IMU-init change. `benchmarks/results/`
+  (gitignored) holds the runs (`<SEQ>/wslam_{before,after}/`, ORB `f_`/`kf_` files) and
+  their `eval/accuracy_report.md`; `summarize_reports.py` tabulates them. Datasets:
+  `~/dev/proj/resources/res_uni_slam/euroc/vicon_room{1,2}/<sequence>/<sequence>/mav0`
+  (V2_03 came from the Research Collection's `vicon_room2.zip` by HTTP range requests —
+  the server throttles each connection to ~100 KB/s).
 - `benchmarks/HOWTO_REEVALUATE.md` — the re-evaluation checklist: run with a
   per-experiment `--out-dir`, check Umeyama scale → RPE → APE in that order,
   and verify root-cause fixes with the debug-log greps (re-observation rate,
@@ -430,8 +449,19 @@ shared IMU helpers and env knobs live in `map/utils.{hpp,cpp}`. Stage order
   min landmarks): applying the small-motion test to frame-to-frame motion held it back
   to frame ~670 of V1_01_easy, 27 s into the flight, where the zero-velocity prior was
   wrong and the stationary window's gravity was 8° off; it now lands at liftoff
-  (frame ~107). The window's gravity is also rotated to the keyframe by the
-  bias-corrected gyro (`map::utils::PropagateGravity`; the log line reports the turn).
+  (frame ~107). IMU initialisation (`initializeFirstFrame`): gravity and gyro bias come
+  from the quietest window (`map::utils::RecoverStartupImuState`: gravity of nominal
+  magnitude along the mean specific force, the excess along it is accel bias — the
+  part across gravity can't be told from tilt at rest). The **last** window still below
+  `zupt_max_score` marks the last rest (motors spinning up still count): the first
+  keyframe's velocity is preintegrated from there (`map::utils::PropagateFromRest`, which
+  also turns gravity into the keyframe's camera) instead of being assumed zero, with a
+  prior sigma that grows with the integrated time. `BuildFactorsPass` puts x1's pose prior
+  tight on position and on rotation about gravity only: its tilt gets
+  `prior_pose_tilt_sigma_rad` (3°), so the smoother re-levels gravity jointly with the
+  accel bias once the body rotates (VIO's gauge is 4-DoF). Score the result with the
+  report's **world-frame** gravity line: the camera-frame one at x1 includes EuRoC's
+  ~5.5° ground-truth body-frame offset.
 - `DrainSmootherPass` → `SubmitSmootherPass::drainPending()` — blocks on the previous
   keyframe's update (only accepted keyframes reach it), archives keyframes that left
   the window (`SharedBindings::archived_poses`, last in-window estimate), and *retires*
@@ -483,9 +513,27 @@ marginals are linearised in the VIO frame); the correction is a 4-DoF drift tran
 for live output, and at export `ApplyCorrections` (`merge.*`) moves every keyframe by its
 node's `T_corr * T_vio^-1` and every landmark by its anchor keyframe's
 (`SharedBindings::landmark_anchor`). The flush order is smoother flush → final feed →
-`finish()` → merge: `MapSnapshotName` becomes the corrected map and
+`finish()` → merge → global BA: `MapSnapshotName` becomes the corrected map and
 `MapSnapshotVioName` keeps the smoother's, exported as `<stem>_vio.{ply,json}` (so one
-run yields both trajectories). Models: `place_recognition.*` (MegaLoc / MixVPR, contract
+run yields both trajectories). **Global BA** (`global_ba.*`, `MergeLoopClosure` in
+`map_stage.cpp`): the whole run re-solved from the corrected map with GTSAM LM —
+explicit `Point3` landmarks with Huber `GenericProjectionFactor`s (not smart factors:
+their zero-on-degeneracy is what collapsed scale in an earlier global batch BA),
+`CombinedImuFactor`s re-preintegrated from the samples `SharedBindings::imu_edges` kept,
+velocity/bias from `archived_navigation`, every observation (`landmark_observations`),
+and each accepted loop's PnP inliers as observations of the candidate's landmarks from
+the query keyframe (`AcceptedLoop::observations`) — what lets it fix more than the
+pose graph's 4 DoF. Landmarks need ≥ 3 views, positive depth and rays ≥ 1° apart (lower
+parallax made GTSAM report indeterminate Hessians). Two solves (outliers > 4 px dropped
+in between, the second capped at a third of the iterations), a tight prior on the first
+keyframe; rejected (pose graph map kept) when the error does not drop or the path length
+changes by > 5 %. Single-threaded (GTSAM is built without TBB): 200–340 s on the 2-minute
+EuRoC sequences (~700–1200 keyframes, 300–370k observations), so it fits only at export —
+ORB-SLAM3 runs its full BA in a thread but only below 200 keyframes
+(`LoopClosing.cc:1199`), otherwise it relies on its essential graph. Results:
+`benchmarks/NOTE_HARD_SEQUENCES.md`. When accepted, `MapSnapshotName` is the adjusted map and
+`MapSnapshotPgoName` the pose graph's, exported as `<stem>_pgo.*`; the json's
+`loop_closure.global_ba` reports it. Models: `place_recognition.*` (MegaLoc / MixVPR, contract
 checked at load, `model_io.*` adapts images by **squashing** to the model size with exact
 area averaging, gray → RGB, ImageNet normalisation — neither export normalises). With
 `--device=gpu` the place recognition session runs on the WebGPU EP on an auxiliary
