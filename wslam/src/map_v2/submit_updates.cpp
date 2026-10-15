@@ -89,6 +89,7 @@ std::optional<std::string> SubmitSmootherPass::drainPending() {
     WSLAM_ASSERT(
         latest_values_.exists(velocity_key) && latest_values_.exists(bias_key),
         "the newest keyframe's velocity and bias are inside the window");
+    shared_.last_drained_pose = pending_pose_id_;
     shared_.last_velocity = latest_values_.at<gtsam::Vector3>(velocity_key);
     shared_.last_bias
         = latest_values_.at<gtsam::imuBias::ConstantBias>(bias_key);
@@ -115,6 +116,7 @@ void SubmitSmootherPass::archiveMarginalisedPoses(
 
         const PoseId id{gtsam::Symbol(key).index()};
         shared_.archived_poses.insert_or_assign(id, value.cast<gtsam::Pose3>());
+        shared_.poses_archived_since_feed.push_back(id);
         if (shared_.predicted_values.exists(key)) {
             shared_.predicted_values.erase(key);
         }
@@ -163,6 +165,7 @@ void SubmitSmootherPass::reconcileSmartFactors(
             if (triangulation.has_value()) {
                 shared_.archived_landmarks.insert_or_assign(
                     id, triangulation.value());
+                shared_.landmarks_archived_since_feed.push_back(id);
                 ++archived;
             }
         }

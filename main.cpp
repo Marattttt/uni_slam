@@ -54,6 +54,8 @@ WslamConfig parseArgs(std::span<char*> args) {
                 std::string(arg.substr(kKeyframesFlag.size())));
         } else if (arg == "-no-mapping") {
             config.enable_mapping = false;
+        } else if (arg == "-no-loop-closure") {
+            config.enable_loop_closure = false;
         } else if (arg.starts_with(kDeviceFlag)) {
             const auto value = arg.substr(kDeviceFlag.size());
             if (value == "gpu") {

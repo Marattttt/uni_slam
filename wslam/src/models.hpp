@@ -5,6 +5,8 @@
 #include <bit>
 #include <cstdint>
 #include <flat_map>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "common.hpp"
@@ -333,6 +335,34 @@ struct MapSnapshot {
     std::vector<KeyframePose> keyframes;
     std::vector<LandmarkEstimate> landmarks;
     MapStats stats;
+};
+
+// A loop the v2 loop closure accepted, for the map export
+struct LoopClosureEdge {
+    PoseId query;
+    PoseId candidate;
+    float similarity = 0.0F;
+    size_t matches = 0;
+    size_t correspondences = 0;
+    size_t inliers = 0;
+    // How far the loop moved the query relative to the candidate
+    double correction_translation_m = 0.0;
+    double correction_rotation_rad = 0.0;
+};
+
+// Outcome of a run's loop closure, GTSAM-free, for the map export
+struct LoopClosureReport {
+    std::string model;
+    size_t keyframes = 0;
+    size_t nodes = 0;
+    size_t queries = 0;
+    size_t queries_skipped = 0;
+    size_t candidates = 0;
+    // Rejections by the gate that stopped them
+    std::vector<std::pair<std::string, size_t>> rejections;
+    std::vector<LoopClosureEdge> loops;
+    double mean_embed_ms = 0.0;
+    double mean_verify_ms = 0.0;
 };
 };  // namespace wslam
 

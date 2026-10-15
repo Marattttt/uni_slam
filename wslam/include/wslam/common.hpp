@@ -54,6 +54,11 @@ struct WslamConfig {
     // the GPU (see frontend_recording.hpp). Empty means no recording. v2 with
     // mapping only
     std::filesystem::path frontend_recording_out;
+
+    // Run loop closure (place recognition, PnP verification, a pose graph)
+    // on a thread of its own, and export the loop-corrected map next to the
+    // uncorrected one. v2 with mapping only
+    bool enable_loop_closure = true;
 };
 
 struct LOD {
@@ -171,6 +176,11 @@ constexpr std::string RansacResultName = "gen:feat:ransac";
 constexpr std::string TriangulationResultName = "gen:tri";
 constexpr std::string MapDeltaName = "gen:map:delta";
 constexpr std::string MapSnapshotName = "gen:map:snap";
+// v2 with loop closure: the smoother's own (uncorrected, VIO) final
+// snapshot. MapSnapshotName then holds the loop-corrected one
+constexpr std::string MapSnapshotVioName = "gen:map:snapvio";
+// v2 loop closure outcome (LoopClosureReport), for the export
+constexpr std::string LoopClosureReportName = "gen:lc:report";
 // Per-accepted-keyframe factor-graph delta produced by BuildFactorsPass and
 // consumed by the iSAM update pass (graph + values + smart-factor bookkeeping).
 constexpr std::string FactorBundleName = "gen:map:facbndl";

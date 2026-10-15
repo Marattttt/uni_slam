@@ -1,6 +1,12 @@
 #include "wslam.hpp"
 
+#include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <set>
+#include <thread>
+#include <utility>
 #include <expected>
 #include <format>
 #include <memory>
@@ -18,6 +24,8 @@
 #include "frontend_recording.hpp"
 #include "keyframe_schedule.hpp"
 #include "map/mapping.hpp"
+#include "map/utils.hpp"
+#include "map_v2/loop_closure/loop_closure_worker.hpp"
 #include "map_v2/map_stage.hpp"
 #include "pose_estimate_cpu/pose_estimate_cpu.hpp"
 #include "pose_estimate_v2/pose_estimate.hpp"
@@ -58,6 +66,34 @@ void AddMappingStage(compute::Compute& compute, MappingStage mapping,
 
         return std::nullopt;
     });
+}
+
+// Physical cores (what ONNX Runtime sizes a CPU session's pool to by
+// default): distinct (package, core) pairs in sysfs, else the logical count
+int PhysicalCoreCount() {
+    std::set<std::pair<std::string, std::string>> cores;
+    const std::filesystem::path cpus{"/sys/devices/system/cpu"};
+    std::error_code error;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(cpus, error)) {
+        const std::string name = entry.path().filename().string();
+        if (!name.starts_with("cpu")
+            || name.find_first_not_of("0123456789", 3) != std::string::npos
+            || name.size() == 3) {
+            continue;
+        }
+        std::ifstream package(entry.path() / "topology" / "physical_package_id");
+        std::ifstream core(entry.path() / "topology" / "core_id");
+        std::string package_id;
+        std::string core_id;
+        if (package >> package_id && core >> core_id) {
+            cores.emplace(package_id, core_id);
+        }
+    }
+    if (!cores.empty()) {
+        return static_cast<int>(cores.size());
+    }
+    return static_cast<int>(std::max(1U, std::thread::hardware_concurrency()));
 }
 
 std::unique_ptr<compute::Stage> MakeCustomStage(
@@ -167,6 +203,51 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
                                        ? v2::ReferenceAdvance::OnKeyframeMarker
                                        : v2::ReferenceAdvance::EveryFrame;
 
+    // WSLAM_ORT_THREADS overrides the front end's CPU session pool size
+    // (applied after the loop closure budget below)
+    const int frontend_threads
+        = map::utils::EnvInt("WSLAM_ORT_THREADS", 0);
+
+    // Loop closure loads its models next to the front end's, on the same
+    // provider; created before the stages so a missing model fails fast
+    std::shared_ptr<v2::mapping::loop_closure::LoopClosureWorker> loop_closure;
+    if (config.enable_mapping && config.enable_loop_closure) {
+        namespace lc = v2::mapping::loop_closure;
+
+        lc::LoopClosureConfig lc_defaults;
+        lc_defaults.matcher_model_path = model_options->model_path;
+        lc_defaults.matcher_keypoint_count = model_options->keypoint_count;
+        auto lc_config = lc::ReadLoopClosureConfigFromEnv(lc_defaults);
+        if (!lc_config) {
+            return "loop closure config: " + std::move(lc_config).error();
+        }
+
+        auto camera = compute.getStorage().get<data::CamSensorParams>(
+            ResourceIdentifier::GetCameraIntrinsicsName(0));
+        if (!camera) {
+            return "loop closure: camera parameters are not published yet";
+        }
+
+        // The front end's CPU session would take every physical core;
+        // leave the loop closure sessions theirs
+        if (config.compute_device == compute::ComputeDevice::Cpu) {
+            const int budget = std::max(
+                1, PhysicalCoreCount() - lc_config->intra_op_threads);
+            ort->setDefaultCpuThreads(budget);
+        }
+
+        auto worker = lc::CreateLoopClosureWorker(*ort, lc_config.value(),
+                                                  camera.value());
+        if (!worker) {
+            return "loop closure: " + std::move(worker).error();
+        }
+        loop_closure = std::move(worker).value();
+    }
+
+    if (frontend_threads > 0) {
+        ort->setDefaultCpuThreads(frontend_threads);
+    }
+
     compute.addStage(v2::CreateFeatureDetectStage(
         compute, bindings, std::move(ort), std::move(provider),
         model_options->model_path, reference_advance, config,
@@ -194,7 +275,8 @@ std::optional<std::string> wslam::impl::CreateWslamPipelineV2Impl(
     if (config.enable_mapping) {
         AddMappingStage(compute,
                         v2::mapping::CreateMappingStage(
-                            compute, compute.getStorage(), config),
+                            compute, compute.getStorage(), config,
+                            std::move(loop_closure)),
                         config);
     }
 

@@ -4,6 +4,8 @@ add_executable(wslam_tests
     match_scores_tests.cpp
     sensor_loader_tests.cpp
     local_smoother_tests.cpp
+    loop_closure_tests.cpp
+    loop_closure_dataset_tests.cpp
     mapping_replay_tests.cpp
     pose_estimate_dataset_tests.cpp
 )

@@ -24,6 +24,7 @@ Options:
                     JSON to the pipeline (all IMU is kept). Requires -v2.
   -no-mapping       v2 only: run without the mapping stage; the model then
                     pairs consecutive frames.
+  -no-loop-closure  v2 only: run the mapping stage without loop closure.
   --record-frontend=PATH
                     v2 only: record the front-end output (model matches,
                     IMU, keyframe decisions) to PATH (.msgpack) for
@@ -48,6 +49,7 @@ for arg in "$@"; do
         --map-out=*)    RUN_ARGS+=("$arg") ;;
         --keyframes=*)  RUN_ARGS+=("$arg") ;;
         -no-mapping)    RUN_ARGS+=("$arg") ;;
+        -no-loop-closure) RUN_ARGS+=("$arg") ;;
         --record-frontend=*) RUN_ARGS+=("$arg") ;;
         Debug)          BUILD_TYPE="Debug" ;;
         Release)        BUILD_TYPE="RelWithDebInfo" ;;

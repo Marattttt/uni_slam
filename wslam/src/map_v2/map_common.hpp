@@ -88,6 +88,21 @@ struct SharedBindings {
     // handling outside the local smoother
     std::flat_map<PoseId, gtsam::Pose3> archived_poses;
     std::flat_map<LandmarkId, Eigen::Vector3d> archived_landmarks;
+
+    // Keyframe each landmark was created in, whose loop-closure correction
+    // moves it at export
+    std::flat_map<LandmarkId, PoseId> landmark_anchor;
+
+    // Hand-over to the loop closure feed: the keyframe the last drain
+    // settled, and what the drains archived since the feed last ran
+    PoseId last_drained_pose{0};
+    std::vector<PoseId> poses_archived_since_feed;
+    std::vector<LandmarkId> landmarks_archived_since_feed;
+
+    // Newest loop-closure drift correction (T_corrected = T_drift * T_vio),
+    // identity until a loop is accepted; 0 = none
+    gtsam::Pose3 drift_correction;
+    uint64_t drift_correction_version = 0;
 };
 
 // Outcome of looking up a reference-image keypoint among the landmarks of the

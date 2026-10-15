@@ -48,10 +48,21 @@ add_library(wslam_app
 
     src/map_v2/associate_landmarks.cpp
     src/map_v2/build_factors.cpp
+    src/map_v2/feed_loop_closure.cpp
     src/map_v2/filter_keyframe.cpp
     src/map_v2/map_stage.cpp
     src/map_v2/smoother_worker.cpp
     src/map_v2/submit_updates.cpp
+
+    src/map_v2/loop_closure/config.cpp
+    src/map_v2/loop_closure/loop_closure_worker.cpp
+    src/map_v2/loop_closure/merge.cpp
+    src/map_v2/loop_closure/model_io.cpp
+    src/map_v2/loop_closure/pair_matcher.cpp
+    src/map_v2/loop_closure/place_database.cpp
+    src/map_v2/loop_closure/place_recognition.cpp
+    src/map_v2/loop_closure/pnp_verify.cpp
+    src/map_v2/loop_closure/pose_graph.cpp
 
     src/viz/viz.cpp
     src/viz/vizualize_data.cpp
@@ -81,6 +92,7 @@ target_link_libraries(wslam_app
 target_link_libraries(wslam_app
     PRIVATE
     gtsam
+    faiss
     pango_display pango_python
     nlohmann_json::nlohmann_json
     ctre::ctre

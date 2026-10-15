@@ -6,6 +6,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <string_view>
 
 #include "common.hpp"
 #include "models.hpp"
@@ -100,9 +101,45 @@ json cameraToJson(const data::CamSensorParams& cam) {
     };
 }
 
+json loopClosureToJson(const LoopClosureReport& report) {
+    json rejections = json::object();
+    for (const auto& [gate, count] : report.rejections) {
+        rejections[gate] = count;
+    }
+
+    json loops = json::array();
+    for (const LoopClosureEdge& loop : report.loops) {
+        loops.push_back(json{
+            {"query", loop.query.v},
+            {"candidate", loop.candidate.v},
+            {"similarity", loop.similarity},
+            {"matches", loop.matches},
+            {"correspondences", loop.correspondences},
+            {"inliers", loop.inliers},
+            {"correction_translation_m", loop.correction_translation_m},
+            {"correction_rotation_rad", loop.correction_rotation_rad},
+        });
+    }
+
+    return json{
+        {"model", report.model},
+        {"keyframes", report.keyframes},
+        {"nodes", report.nodes},
+        {"queries", report.queries},
+        {"queries_skipped", report.queries_skipped},
+        {"candidates", report.candidates},
+        {"rejections", std::move(rejections)},
+        {"loops", std::move(loops)},
+        {"mean_embed_ms", report.mean_embed_ms},
+        {"mean_verify_ms", report.mean_verify_ms},
+    };
+}
+
 std::optional<std::string> writeJson(const std::filesystem::path& path,
                                      const MapSnapshot& snap,
-                                     const data::CamSensorParams& cam) {
+                                     const data::CamSensorParams& cam,
+                                     const LoopClosureReport* loop_closure,
+                                     std::string_view trajectory) {
     json doc;
     doc["format_version"] = kFormatVersion;
     // OpenCV convention: x-right, y-down, z-forward (along view direction).
@@ -129,6 +166,13 @@ std::optional<std::string> writeJson(const std::filesystem::path& path,
         {"landmarks", snap.stats.landmarks},
         {"factors", snap.stats.factors},
     };
+
+    // Optional: which estimate this file holds, and the loop closure outcome
+    // (v2 with loop closure)
+    doc["trajectory"] = trajectory;
+    if (loop_closure != nullptr) {
+        doc["loop_closure"] = loopClosureToJson(*loop_closure);
+    }
 
     doc["created_at_unix"]
         = std::chrono::duration_cast<std::chrono::seconds>(
@@ -170,6 +214,12 @@ std::optional<std::string> wslam::ExportMap(const AnyBag& storage,
 
     const auto snap_ptr
         = storage.getPtr<MapSnapshot>(ResourceIdentifier::MapSnapshotName);
+    const auto vio_ptr
+        = storage.getPtr<MapSnapshot>(ResourceIdentifier::MapSnapshotVioName);
+    const auto report_ptr = storage.getPtr<LoopClosureReport>(
+        ResourceIdentifier::LoopClosureReportName);
+    const LoopClosureReport* report
+        = report_ptr.has_value() ? report_ptr.value() : nullptr;
     if (!snap_ptr.has_value()) {
         return std::format("ExportMap: no MapSnapshot under key '{}'",
                            ResourceIdentifier::MapSnapshotName);
@@ -202,8 +252,29 @@ std::optional<std::string> wslam::ExportMap(const AnyBag& storage,
     if (auto err = writePly(opts.map_path, snap.landmarks)) {
         return std::format("writing PLY: {}", err.value());
     }
-    if (auto err = writeJson(meta_path, snap, cam)) {
+    // With loop closure the main files hold the corrected map and
+    // <stem>_vio.* the smoother's own
+    const bool has_vio = vio_ptr.has_value();
+    if (auto err = writeJson(meta_path, snap, cam, report,
+                             has_vio ? "loop_corrected" : "vio")) {
         return std::format("writing JSON metadata: {}", err.value());
+    }
+
+    if (has_vio) {
+        std::filesystem::path vio_map = opts.map_path;
+        vio_map.replace_filename(opts.map_path.stem().string() + "_vio.ply");
+        std::filesystem::path vio_meta = vio_map;
+        vio_meta.replace_extension(".json");
+
+        const MapSnapshot& vio = *vio_ptr.value();
+        if (auto err = writePly(vio_map, vio.landmarks)) {
+            return std::format("writing VIO PLY: {}", err.value());
+        }
+        if (auto err = writeJson(vio_meta, vio, cam, report, "vio")) {
+            return std::format("writing VIO JSON metadata: {}", err.value());
+        }
+        spdlog::info(LOG_ID " Wrote the uncorrected (VIO) map to '{}'",
+                     vio_meta.string());
     }
 
     spdlog::info(LOG_ID

@@ -80,6 +80,7 @@ std::optional<std::string> AssociateLandmarksPass::execute() {
         } else {
             shared_.last_landmark.v++;
             landmark = shared_.last_landmark;
+            shared_.landmark_anchor.emplace(landmark, changes.pose_id);
             ++fresh;
 
             // A marginalised landmark's factor already held the previous
