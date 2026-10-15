@@ -95,6 +95,18 @@ This writes `wslam.tum`, `gt.tum`, the converted ORB trajectory, and prints
 APE + RPE for both systems. `--convert-only` skips the evo runs if you only
 want the `.tum` files.
 
+Add `--report` (and `--cam-to-body "$EUROC_DIR/cam0/sensor.yaml"` for wslam)
+for `accuracy_report.py`'s table, written to `<out-dir>/accuracy_report.md`:
+coverage (a late first keyframe hides part of the flight from every other
+number), Umeyama scale, APE under Sim(3) / SE(3) / 4-DoF position+yaw,
+rotation APE, RPE over 1/5/10 m, the spread of the Sim(3) scale over 5 s
+windows (scale drift), the gravity error at the first keyframe, the
+APE-minimising time offset and the loop-pair residuals. Prefer its RPE to
+evo's: the EuRoC ground truth's body frame is ~5.5° off both systems' body
+frames, which evo's world alignment can't absorb, and every relative
+translation is rotated by it (ORB-SLAM3 over 1 m: 8.2 % in evo, 2.1 % with
+the offset removed).
+
 ## 3. Record the three headline numbers
 
 For each experiment, note (a table in your lab notes / the paper is enough):
@@ -103,7 +115,7 @@ For each experiment, note (a table in your lab notes / the paper is enough):
 |---|---|
 | APE RMSE, Sim(3) | step 2 output (`evo_ape ... -as`) |
 | **Umeyama scale** | `evo_ape tum gt.tum wslam.tum -as -v` → "Scale correction" |
-| RPE RMSE per 1 m | step 2 output (`evo_rpe ... --delta 1 --delta_unit m`) |
+| RPE RMSE per 1 m | `--report` (offset-corrected); evo's `evo_rpe ... --delta 1 --delta_unit m` reads high |
 
 Expected progression as fixes land — check them **in this order**:
 

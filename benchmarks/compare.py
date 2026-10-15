@@ -232,6 +232,12 @@ def main() -> int:
                              "(default: benchmarks/results)")
     parser.add_argument("--convert-only", action="store_true",
                         help="only write .tum files, skip the evo runs")
+    parser.add_argument("--report", action="store_true",
+                        help="also print the accuracy report "
+                             "(accuracy_report.py: coverage, Umeyama scale, "
+                             "APE under Sim(3)/SE(3)/4-DoF, RPE over 1/5/10 m, "
+                             "local scale, gravity, time offset, loop pairs) "
+                             "and write it to <out-dir>/accuracy_report.md")
     args = parser.parse_args()
 
     if not args.wslam and not args.orb and args.gt is None:
@@ -240,6 +246,8 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     estimates = []
+    # (label, .tum, map json or None) per estimate, for the report
+    report_inputs = []
     cam_in_body = (read_euroc_t_bs(args.cam_to_body)
                    if args.cam_to_body is not None else None)
     for wslam_path in args.wslam:
@@ -247,10 +255,12 @@ def main() -> int:
         out_path = args.out_dir / (stem + ".tum")
         convert_wslam_map_json(wslam_path, out_path, cam_in_body)
         estimates.append(out_path)
+        report_inputs.append((stem, out_path, wslam_path))
     for orb_path in args.orb:
         out_path = args.out_dir / (orb_path.stem + ".tum")
         convert_orbslam_txt(orb_path, out_path)
         estimates.append(out_path)
+        report_inputs.append((orb_path.stem, out_path, None))
 
     groundtruth_tum = None
     if args.gt is not None:
@@ -270,7 +280,31 @@ def main() -> int:
     for estimate_tum in estimates:
         print(f"\n=== {estimate_tum.name} vs ground truth ===")
         all_ok &= run_evo_comparison(groundtruth_tum, estimate_tum)
+
+    if args.report:
+        write_accuracy_report(groundtruth_tum, report_inputs, cam_in_body,
+                              args.out_dir / "accuracy_report.md")
     return 0 if all_ok else 1
+
+
+def write_accuracy_report(groundtruth_tum: Path,
+                          report_inputs: list[tuple[str, Path, Path | None]],
+                          cam_in_body: list[list[float]] | None,
+                          out_path: Path) -> None:
+    """Print accuracy_report.py's report and write it to out_path."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import numpy as np
+    import accuracy_report
+
+    estimates = [accuracy_report.EstimateInputs(label, tum, map_json)
+                 for label, tum, map_json in report_inputs]
+    text = accuracy_report.build_report(
+        groundtruth_tum, estimates,
+        np.asarray(cam_in_body) if cam_in_body is not None else None)
+    print("\n=== accuracy report ===\n")
+    print(text)
+    out_path.write_text(text, encoding="utf-8")
+    print(f"wrote accuracy report -> {out_path}")
 
 
 if __name__ == "__main__":
