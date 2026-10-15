@@ -309,18 +309,34 @@ def evaluate(inputs: EstimateInputs, truth_full: Trajectory,
                                     leveling)
         report.add("APE translation, position + yaw (4-DoF)",
                    stats_cell(ape(estimate, truth, posyaw), "m"))
+        # The world frame's gravity against the ground truth's vertical,
+        # through the SE(3) alignment of the positions: what levels the
+        # trajectory, independent of the body-frame offset of orientations
+        aligned_gravity = se3.rotation @ gravity_direction
+        report.add("**gravity direction error, world frame** (SE(3) "
+                   "position alignment)",
+                   f"{np.degrees(np.arccos(np.clip(np.dot(aligned_gravity, -UP), -1.0, 1.0))):.2f} deg")
         if cam_in_body is not None:
-            # Ground-truth gravity in the first keyframe's camera frame (the
-            # estimate's world frame)
+            # Ground-truth gravity in the first keyframe's camera frame, and
+            # the estimate's: the world frame is that camera's at
+            # initialisation, but the smoother may have re-levelled it since
             first_body = truth.rotations[0].as_matrix()
             camera_in_world = first_body @ cam_in_body[:3, :3]
             truth_gravity = camera_in_world.T @ -UP
+            keyframes = sorted(document.get("keyframes", []),
+                               key=lambda kf: int(kf["id"]))
+            estimated_gravity = gravity_direction
+            if keyframes:
+                first_rotation = np.asarray(keyframes[0]["R_world_cam"],
+                                            dtype=float)
+                estimated_gravity = first_rotation.T @ gravity_direction
             angle = np.degrees(np.arccos(np.clip(
-                np.dot(truth_gravity, gravity_direction), -1.0, 1.0)))
-            report.add("gravity direction error at the first keyframe",
+                np.dot(truth_gravity, estimated_gravity), -1.0, 1.0)))
+            report.add("gravity direction error at the first keyframe, "
+                       "camera frame",
                        f"{angle:.2f} deg (against the ground truth's "
-                       f"orientation, which is itself 2.75 deg off a parked "
-                       f"accelerometer's gravity on V1_01_easy)")
+                       f"orientation, so it includes the constant body-frame "
+                       f"offset below; the world-frame line above does not)")
     else:
         report.add("APE translation, position + yaw (4-DoF)",
                    "n/a (map json has no gravity_world)")
