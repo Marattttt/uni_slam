@@ -99,10 +99,33 @@ double MedianParallax(const GridGeometry& grid, const Eigen::Matrix3d& rotation,
     std::nth_element(parallaxes.begin(), middle, parallaxes.end());
     return *middle;
 }
+
+// Unit directions the motion errors are sampled along: the 6 axis directions
+// and the 8 diagonals, so a worst-case error direction is never more than
+// ~35 degrees from a sample
+std::vector<Eigen::Vector3d> MakeErrorDirections() {
+    std::vector<Eigen::Vector3d> directions;
+    for (int axis = 0; axis < 3; ++axis) {
+        for (const double sign : {-1.0, 1.0}) {
+            Eigen::Vector3d direction = Eigen::Vector3d::Zero();
+            direction[axis] = sign;
+            directions.push_back(direction);
+        }
+    }
+    for (const double x : {-1.0, 1.0}) {
+        for (const double y : {-1.0, 1.0}) {
+            for (const double z : {-1.0, 1.0}) {
+                directions.push_back(Eigen::Vector3d{x, y, z}.normalized());
+            }
+        }
+    }
+    return directions;
+}
 }  // namespace
 
 struct v2::MotionPredictor::State {
     GridGeometry grid;
+    std::vector<Eigen::Vector3d> error_directions;
     std::shared_ptr<gtsam::PreintegrationCombinedParams> calibration;
     Eigen::Vector3d calibration_gravity = Eigen::Vector3d::Zero();
 };
@@ -115,6 +138,7 @@ v2::MotionPredictor::MotionPredictor(data::CamSensorParams camera,
       options_(options),
       state_(std::make_unique<State>()) {
     state_->grid = MakeGrid(camera_, options_);
+    state_->error_directions = MakeErrorDirections();
 }
 
 v2::MotionPredictor::~MotionPredictor() = default;
@@ -154,10 +178,14 @@ v2::MotionPredictor::predict(const KeyframeMotionPrior& prior,
     // keyframe's state. The pose variables are camera poses, so the predicted
     // NavState is the camera's
     const gtsam::imuBias::ConstantBias bias{prior.accel_bias, prior.gyro_bias};
-    gtsam::PreintegratedCombinedMeasurements preintegrated{
-        map::utils::CreateImuCalibration(
-            camera, imu_params, prior.gravity_world, kIntegrationSigma),
-        bias};
+    if (!state_->calibration
+        || state_->calibration_gravity != prior.gravity_world) {
+        state_->calibration = map::utils::CreateImuCalibration(
+            camera, imu_params, prior.gravity_world, kIntegrationSigma);
+        state_->calibration_gravity = prior.gravity_world;
+    }
+    gtsam::PreintegratedCombinedMeasurements preintegrated{state_->calibration,
+                                                           bias};
     map::utils::IntegrateImuWindow(preintegrated, imu, prior.keyframe_ts,
                                    frame_ts);
 
@@ -200,7 +228,6 @@ v2::MotionPredictor::predict(const KeyframeMotionPrior& prior,
                     + accel_walk * accel_walk * dt2 * dt2 * dt / 20.0);
 
     const GridGeometry& grid = state_->grid;
-    const double focal = std::max(camera.intrinsics[0], camera.intrinsics[1]);
     const double k = options.confidence_sigmas;
 
     KeyframeMotionPrediction prediction;
@@ -214,20 +241,40 @@ v2::MotionPredictor::predict(const KeyframeMotionPrior& prior,
     prediction.parallax_px = MedianParallax(
         grid, rotation, translation, prior.median_depth_m, camera.intrinsics);
 
-    // Upper bound: the nominal motion seen against a scene as close as the
-    // depth's error allows, plus the image motion the remaining rotation and
-    // translation errors can cause anywhere in the image
+    // Upper bound: the largest median parallax over the motions the errors
+    // allow, each error at k sigmas along one of the sampled directions, for
+    // the nominal scene depth and one as close as the depth's error allows.
+    // The median is taken per motion, as the gate does: bounding each grid
+    // point by its own worst case would add the image-corner error to the
+    // median (2-3x looser on V1_01_easy)
     const double near_depth
         = prior.median_depth_m / (1.0 + k * options.depth_sigma);
-    const double radius = grid.max_radius_px;
-    const double rotation_error_px = focal
-                                     * (1.0 + radius * radius / (focal * focal))
-                                     * k * rotation_sigma;
-    const double translation_error_px
-        = (focal + radius) * k * translation_sigma / near_depth;
-    prediction.parallax_upper_px = MedianParallax(grid, rotation, translation,
-                                                  near_depth, camera.intrinsics)
-                                   + rotation_error_px + translation_error_px;
+    const double rotation_error = k * rotation_sigma;
+    const double translation_error = k * translation_sigma;
+    const std::vector<Eigen::Vector3d>& directions = state_->error_directions;
+
+    double parallax_upper = prediction.parallax_px;
+    for (size_t r = 0; r <= directions.size(); ++r) {
+        const Eigen::Matrix3d rotated
+            = r == 0 ? rotation
+                     : Eigen::Matrix3d{
+                           Eigen::AngleAxisd{rotation_error,
+                                             directions[r - 1]}
+                           * rotation};
+        for (size_t t = 0; t <= directions.size(); ++t) {
+            const Eigen::Vector3d moved
+                = t == 0 ? translation
+                         : Eigen::Vector3d{translation
+                                           + translation_error
+                                                 * directions[t - 1]};
+            for (const double depth : {prior.median_depth_m, near_depth}) {
+                parallax_upper = std::max(
+                    parallax_upper, MedianParallax(grid, rotated, moved, depth,
+                                                   camera.intrinsics));
+            }
+        }
+    }
+    prediction.parallax_upper_px = parallax_upper;
 
     prediction.small_motion
         = prediction.rotation_upper_rad < prior.min_rotation_rad

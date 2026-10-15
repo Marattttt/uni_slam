@@ -99,7 +99,8 @@ class FilterKeyframePass : public compute::Pass {
         KeyframeCandidate& candidate) const;
 
     [[nodiscard]] std::optional<std::string> initializeFirstFrame(
-        std::span<const data::IMUReading> imu_readings) const;
+        std::span<const data::IMUReading> imu_readings,
+        uint64_t keyframe_ts) const;
 };
 
 }  // namespace wslam::v2::mapping

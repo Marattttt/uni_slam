@@ -3,16 +3,71 @@
 #include <gtsam/geometry/Pose3.h>
 #include <spdlog/spdlog.h>
 
+#include <Eigen/Geometry>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <format>
+#include <limits>
 #include <ranges>
 
 using namespace wslam;
 using namespace wslam::map;
 
 #define LOG_ID "[Mapping utils]"
+
+double utils::StationaryScore(std::span<const data::IMUReading> window) {
+    if (window.empty()) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    // Quietness of one window: population standard deviation of the
+    // acceleration magnitude, plus the mean angular-velocity deviation from
+    // the window's own mean. Subtracting the window mean makes the gyroscope
+    // term immune to a constant bias, and using acceleration *magnitude*
+    // makes the accelerometer term immune to a constant gravity vector, so a
+    // parked vehicle scores near zero.
+    const auto sample_count = static_cast<double>(window.size());
+
+    Eigen::Vector3d mean_angular_velocity = Eigen::Vector3d::Zero();
+    double acceleration_magnitude_sum = 0.0;
+    double acceleration_magnitude_squared_sum = 0.0;
+    for (const data::IMUReading& reading : window) {
+        mean_angular_velocity
+            += Eigen::Vector3d(static_cast<double>(reading.wx()),
+                               static_cast<double>(reading.wy()),
+                               static_cast<double>(reading.wz()));
+        const double acceleration_magnitude
+            = Eigen::Vector3d(static_cast<double>(reading.ax()),
+                              static_cast<double>(reading.ay()),
+                              static_cast<double>(reading.az()))
+                  .norm();
+        acceleration_magnitude_sum += acceleration_magnitude;
+        acceleration_magnitude_squared_sum
+            += acceleration_magnitude * acceleration_magnitude;
+    }
+    mean_angular_velocity /= sample_count;
+
+    double angular_velocity_deviation_sum = 0.0;
+    for (const data::IMUReading& reading : window) {
+        const Eigen::Vector3d angular_velocity(
+            static_cast<double>(reading.wx()),
+            static_cast<double>(reading.wy()),
+            static_cast<double>(reading.wz()));
+        angular_velocity_deviation_sum
+            += (angular_velocity - mean_angular_velocity).norm();
+    }
+
+    const double mean_acceleration_magnitude
+        = acceleration_magnitude_sum / sample_count;
+    const double acceleration_magnitude_variance
+        = std::max(0.0, acceleration_magnitude_squared_sum / sample_count
+                            - mean_acceleration_magnitude
+                                  * mean_acceleration_magnitude);
+
+    return std::sqrt(acceleration_magnitude_variance)
+           + angular_velocity_deviation_sum / sample_count;
+}
 
 std::expected<utils::StationaryWindow, std::string> utils::FindStationaryWindow(
     std::span<const data::IMUReading> readings, size_t window_size,
@@ -23,56 +78,6 @@ std::expected<utils::StationaryWindow, std::string> utils::FindStationaryWindow(
     if (readings.size() == 0) {
         return std::unexpected("buffer size 0");
     }
-
-    // Quietness of one window: population standard deviation of the
-    // acceleration magnitude, plus the mean angular-velocity deviation from
-    // the window's own mean. Subtracting the window mean makes the gyroscope
-    // term immune to a constant bias, and using acceleration *magnitude*
-    // makes the accelerometer term immune to a constant gravity vector, so a
-    // parked vehicle scores near zero.
-    const auto score_window
-        = [](std::span<const data::IMUReading> window) -> double {
-        const auto sample_count = static_cast<double>(window.size());
-
-        Eigen::Vector3d mean_angular_velocity = Eigen::Vector3d::Zero();
-        double acceleration_magnitude_sum = 0.0;
-        double acceleration_magnitude_squared_sum = 0.0;
-        for (const data::IMUReading& reading : window) {
-            mean_angular_velocity
-                += Eigen::Vector3d(static_cast<double>(reading.wx()),
-                                   static_cast<double>(reading.wy()),
-                                   static_cast<double>(reading.wz()));
-            const double acceleration_magnitude
-                = Eigen::Vector3d(static_cast<double>(reading.ax()),
-                                  static_cast<double>(reading.ay()),
-                                  static_cast<double>(reading.az()))
-                      .norm();
-            acceleration_magnitude_sum += acceleration_magnitude;
-            acceleration_magnitude_squared_sum
-                += acceleration_magnitude * acceleration_magnitude;
-        }
-        mean_angular_velocity /= sample_count;
-
-        double angular_velocity_deviation_sum = 0.0;
-        for (const data::IMUReading& reading : window) {
-            const Eigen::Vector3d angular_velocity(
-                static_cast<double>(reading.wx()),
-                static_cast<double>(reading.wy()),
-                static_cast<double>(reading.wz()));
-            angular_velocity_deviation_sum
-                += (angular_velocity - mean_angular_velocity).norm();
-        }
-
-        const double mean_acceleration_magnitude
-            = acceleration_magnitude_sum / sample_count;
-        const double acceleration_magnitude_variance
-            = std::max(0.0, acceleration_magnitude_squared_sum / sample_count
-                                - mean_acceleration_magnitude
-                                      * mean_acceleration_magnitude);
-
-        return std::sqrt(acceleration_magnitude_variance)
-               + angular_velocity_deviation_sum / sample_count;
-    };
 
     const auto step = std::max(1UZ, window_size / 2);
     const auto windows
@@ -91,7 +96,7 @@ std::expected<utils::StationaryWindow, std::string> utils::FindStationaryWindow(
             continue;
         }
         const std::span<const data::IMUReading> window(chunk);
-        const double score = score_window(window);
+        const double score = StationaryScore(window);
         if (score < best.score) {
             best = {.samples = window, .score = score};
         }
@@ -147,6 +152,44 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> utils::RecoverGravityAndGyroBias(
     const auto gyro_bias = gyro_mean;
 
     return {gravity, gyro_bias};
+}
+
+Eigen::Vector3d utils::PropagateGravity(
+    const Eigen::Vector3d& gravity_cam,
+    std::span<const data::IMUReading> readings, uint64_t from_ts,
+    uint64_t to_ts, const Eigen::Vector3d& gyro_bias,
+    const data::CamSensorParams& cam, const data::IMUSensorParams& imu) {
+    const Eigen::Matrix3d r_body_cam = cam.T_BS.block<3, 3>(0, 0);
+    const Eigen::Matrix3d r_body_imu = imu.T_BS.block<3, 3>(0, 0);
+    const Eigen::Matrix3d r_cam_imu = r_body_cam.transpose() * r_body_imu;
+
+    // Orientation of the IMU at to_ts in its frame at from_ts, from the
+    // bias-corrected gyroscope (each sample held until the next one)
+    Eigen::Matrix3d r_from_to = Eigen::Matrix3d::Identity();
+    for (size_t i = 0; i < readings.size(); ++i) {
+        const uint64_t begin = std::max(readings[i].timestamp, from_ts);
+        const uint64_t end = std::min(
+            i + 1 < readings.size() ? readings[i + 1].timestamp : to_ts, to_ts);
+        if (end <= begin) {
+            continue;
+        }
+        const double dt = static_cast<double>(end - begin) * 1e-9;
+        const Eigen::Vector3d rate
+            = Eigen::Vector3d{static_cast<double>(readings[i].wx()),
+                              static_cast<double>(readings[i].wy()),
+                              static_cast<double>(readings[i].wz())}
+              - gyro_bias;
+        const double angle = rate.norm() * dt;
+        if (angle > 0.0) {
+            r_from_to
+                = r_from_to
+                  * Eigen::AngleAxisd{angle, rate.normalized()}.toRotationMatrix();
+        }
+    }
+
+    // The world does not move: gravity seen from the later IMU frame
+    const Eigen::Vector3d gravity_imu = r_cam_imu.transpose() * gravity_cam;
+    return r_cam_imu * (r_from_to.transpose() * gravity_imu);
 }
 
 std::shared_ptr<gtsam::PreintegrationCombinedParams>

@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "assert.hpp"
@@ -37,15 +38,25 @@ v2::FramePrefilterOptions v2::ReadFramePrefilterOptionsFromEnv() {
                                               prediction.depth_sigma);
     options.max_consecutive_skips = utils::EnvU32(
         "WSLAM_PREFILTER_MAX_SKIPS", options.max_consecutive_skips);
+    options.stationary_window_samples
+        = utils::EnvU32("WSLAM_PREFILTER_STATIONARY_WINDOW",
+                        options.stationary_window_samples);
+    options.stationary_max_score = utils::EnvDouble(
+        "WSLAM_PREFILTER_STATIONARY_SCORE", options.stationary_max_score);
+    options.max_stationary_skips = utils::EnvU32(
+        "WSLAM_PREFILTER_MAX_STATIONARY_SKIPS", options.max_stationary_skips);
 
     spdlog::info(LOG_ID
                  " {} sigmas; gyro bias {} rad/s, accel bias {} m/s^2, "
                  "attitude {} rad, velocity >= {} m/s, depth {}; at most {} "
-                 "skips in a row",
+                 "skips in a row; stationary below score {} over {} samples, "
+                 "at most {} in a row",
                  prediction.confidence_sigmas, prediction.gyro_bias_sigma,
                  prediction.accel_bias_sigma, prediction.attitude_sigma,
                  prediction.velocity_sigma, prediction.depth_sigma,
-                 options.max_consecutive_skips);
+                 options.max_consecutive_skips, options.stationary_max_score,
+                 options.stationary_window_samples,
+                 options.max_stationary_skips);
 
     return options;
 }
@@ -70,17 +81,26 @@ std::optional<std::string> v2::FramePrefilterPass::initialize() {
     return std::nullopt;
 }
 
+bool v2::FramePrefilterPass::isStationary(
+    std::span<const data::IMUReading> imu, uint64_t frame_ts,
+    double& score) const {
+    // The samples up to the frame; later ones belong to later frames
+    const auto past_frame = std::ranges::find_if(
+        imu,
+        [frame_ts](const auto& sample) { return sample.timestamp > frame_ts; });
+    const auto available = static_cast<size_t>(past_frame - imu.begin());
+    const size_t window = options_.stationary_window_samples;
+    if (window == 0 || available < window) {
+        return false;
+    }
+
+    score = utils::StationaryScore(imu.subspan(available - window, window));
+    return score < options_.stationary_max_score;
+}
+
 std::optional<std::string> v2::FramePrefilterPass::execute() {
     WSLAM_ASSERT(predictor_.has_value(), "executing before initialize()");
     ++frames_;
-
-    const auto prior = storage_.getPtr<KeyframeMotionPrior>(
-        ResourceIdentifier::KeyframeMotionPriorName);
-    if (!prior) {
-        // Before the second keyframe, or after one without a usable depth
-        consecutive_skips_ = 0;
-        return std::nullopt;
-    }
 
     const auto frame_ts
         = storage_.get<uint64_t>(ResourceIdentifier::FrameTimestampNsName);
@@ -93,12 +113,39 @@ std::optional<std::string> v2::FramePrefilterPass::execute() {
         return "no IMU buffer";
     }
 
+    const auto prior = storage_.getPtr<KeyframeMotionPrior>(
+        ResourceIdentifier::KeyframeMotionPriorName);
+    if (!prior) {
+        // Before the second keyframe, or after one without a usable depth.
+        // The first frame always runs: it gives the model its reference
+        consecutive_skips_ = 0;
+        double score = 0.0;
+        if (model_runs_ > 0 && stationary_skips_ < options_.max_stationary_skips
+            && isStationary(*imu.value(), frame_ts.value(), score)) {
+            ++stationary_skips_;
+            ++stationary_skipped_;
+            ++skipped_;
+            spdlog::info(LOG_ID
+                         " Skipping: stationary (IMU score {:.3f} < {:.3f}); "
+                         "{} in a row, {} stationary of {} frames",
+                         score, options_.stationary_max_score,
+                         stationary_skips_, stationary_skipped_, frames_);
+            storage_.set(ResourceIdentifier::FrameSkippedName, true);
+            return compute::kStageStopExecution;
+        }
+        stationary_skips_ = 0;
+        ++model_runs_;
+        return std::nullopt;
+    }
+    stationary_skips_ = 0;
+
     auto prediction
         = predictor_->predict(*prior.value(), *imu.value(), frame_ts.value());
     if (!prediction) {
         spdlog::warn(LOG_ID " No prediction ({}); running the model",
                      prediction.error());
         consecutive_skips_ = 0;
+        ++model_runs_;
         return std::nullopt;
     }
 
@@ -126,6 +173,7 @@ std::optional<std::string> v2::FramePrefilterPass::execute() {
                  prediction->parallax_upper_px,
                  prediction->small_motion ? " (skip cap reached)" : "");
     consecutive_skips_ = 0;
+    ++model_runs_;
     storage_.set(ResourceIdentifier::KeyframeMotionPredictionName,
                  std::move(prediction).value());
 

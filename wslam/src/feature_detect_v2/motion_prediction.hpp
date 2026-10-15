@@ -17,7 +17,7 @@ namespace wslam::v2 {
 
 struct MotionPredictionOptions {
     // Width of the upper bounds, in standard deviations
-    double confidence_sigmas = 3.0;
+    double confidence_sigmas = 2.0;
 
     // 1-sigma errors of the keyframe state the prior carries. The IMU's own
     // noise densities and random walks come from its sensor parameters

@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Core>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -15,6 +16,7 @@
 #include "data/provider_base.hpp"
 #include "feature_detect_v2/frame_prefilter.hpp"
 #include "feature_detect_v2/motion_prediction.hpp"
+#include "map/utils.hpp"
 #include "models.hpp"
 
 namespace {
@@ -209,6 +211,73 @@ TEST_F(FramePrefilterPassTest, SkipsSmallMotionUpToTheCap) {
     // And the count starts over
     setFrame(0.2);
     EXPECT_EQ(pass.execute(), compute::kStageStopExecution);
+}
+
+TEST_F(FramePrefilterPassTest, SkipsStationaryFramesBeforeAPrior) {
+    v2::FramePrefilterOptions options;
+    options.max_stationary_skips = 3;
+    v2::FramePrefilterPass pass(storage, options);
+    ASSERT_EQ(pass.initialize(), std::nullopt);
+
+    // The first frame runs whatever the IMU says: the model needs a reference
+    setFrame(0.5);
+    EXPECT_EQ(pass.execute(), std::nullopt);
+
+    // A parked IMU (constant readings): skipped up to the cap
+    for (int frame = 1; frame <= 3; ++frame) {
+        setFrame(0.5 + 0.05 * frame);
+        EXPECT_EQ(pass.execute(), compute::kStageStopExecution);
+        EXPECT_TRUE(storage.take<bool>(ResourceIdentifier::FrameSkippedName)
+                        .value_or(false));
+    }
+    setFrame(0.7);
+    EXPECT_EQ(pass.execute(), std::nullopt);
+    EXPECT_FALSE(storage.has(ResourceIdentifier::FrameSkippedName));
+}
+
+TEST_F(FramePrefilterPassTest, RunsWhenTheImuMovesBeforeAPrior) {
+    v2::FramePrefilterPass pass(storage, v2::FramePrefilterOptions{});
+    ASSERT_EQ(pass.initialize(), std::nullopt);
+    setFrame(0.5);
+    ASSERT_EQ(pass.execute(), std::nullopt);
+
+    // Shaking: the angular velocity alternates by 2 rad/s sample to sample
+    auto samples = Samples(1.0, Eigen::Vector3d::Zero());
+    for (size_t i = 0; i < samples.size(); ++i) {
+        samples[i].vals[0] = (i % 2 == 0) ? 1.0F : -1.0F;
+    }
+    storage.set(ResourceIdentifier::GetImuVecName(), samples);
+
+    setFrame(0.55);
+    EXPECT_EQ(pass.execute(), std::nullopt);
+    EXPECT_FALSE(storage.has(ResourceIdentifier::FrameSkippedName));
+}
+
+TEST(MotionPredictionTest, StationaryScoreSeparatesParkedFromShaking) {
+    const auto parked = Samples(0.25, Eigen::Vector3d{0.08, 0.0, 0.0});
+    EXPECT_NEAR(map::utils::StationaryScore(parked), 0.0, 1e-6);
+
+    auto shaking = parked;
+    for (size_t i = 0; i < shaking.size(); ++i) {
+        shaking[i].vals[5] += (i % 2 == 0) ? 1.0F : -1.0F;
+    }
+    EXPECT_NEAR(map::utils::StationaryScore(shaking), 1.0, 1e-3);
+}
+
+TEST(MotionPredictionTest, PropagateGravityFollowsTheGyroscope) {
+    // 0.6 rad/s measured about x with a 0.1 rad/s bias: 0.5 rad in one second
+    const auto samples = Samples(1.0, Eigen::Vector3d{0.6, 0.0, 0.0});
+    const uint64_t from = samples.front().timestamp;
+    const uint64_t to = from + 1'000'000'000;
+
+    const Eigen::Vector3d gravity = map::utils::PropagateGravity(
+        {0.0, 0.0, -kGravity}, samples, from, to, {0.1, 0.0, 0.0}, Camera(),
+        Imu());
+
+    // Seen from a camera turned by +0.5 rad about x: R_x(0.5)^T * g
+    EXPECT_NEAR(gravity.x(), 0.0, 1e-6);
+    EXPECT_NEAR(gravity.y(), -kGravity * std::sin(0.5), 1e-4);
+    EXPECT_NEAR(gravity.z(), -kGravity * std::cos(0.5), 1e-4);
 }
 
 }  // namespace

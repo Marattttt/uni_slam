@@ -24,6 +24,12 @@ struct StationaryWindow {
     double score = std::numeric_limits<double>::infinity();
 };
 
+// Quietness of an IMU window: population standard deviation of the
+// acceleration magnitude plus the mean angular-velocity deviation from the
+// window mean, so a constant gravity vector and gyroscope bias score zero (so
+// do constant rotation and constant velocity). Infinite for an empty window
+[[nodiscard]] double StationaryScore(std::span<const data::IMUReading> window);
+
 // Slides a window of window_size samples (half-window stride) over readings and
 // returns the quietest one: population standard deviation of the acceleration
 // magnitude plus the mean angular-velocity deviation from the window mean.
@@ -42,6 +48,14 @@ struct StationaryWindow {
 RecoverGravityAndGyroBias(const StationaryWindow& window,
                           const data::CamSensorParams& cam,
                           const data::IMUSensorParams& imu);
+
+// gravity_cam (camera frame at from_ts) seen from the camera at to_ts:
+// rotated by the bias-corrected gyroscope samples in [from_ts, to_ts]
+[[nodiscard]] Eigen::Vector3d PropagateGravity(
+    const Eigen::Vector3d& gravity_cam,
+    std::span<const data::IMUReading> readings, uint64_t from_ts,
+    uint64_t to_ts, const Eigen::Vector3d& gyro_bias,
+    const data::CamSensorParams& cam, const data::IMUSensorParams& imu);
 
 // Preintegration parameters from the IMU noise densities, the startup gravity
 // estimate and the camera/IMU extrinsics

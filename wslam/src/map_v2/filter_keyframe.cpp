@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <concepts>
 #include <flat_map>
 #include <utility>
@@ -253,10 +254,17 @@ bool FilterKeyframePass::shouldAccept(
             return false;
         }
 
+        // The first keyframe is the origin: it has no edge to gate, so it
+        // lands at motion onset, where its zero-velocity prior and the
+        // gravity of the stationary window hold. The small-motion test below
+        // reads frame-to-frame motion here (the reference advances every
+        // frame before origin) and held the bootstrap back until fast motion,
+        // ~28 s into V1_01_easy's flight
         spdlog::info(LOG_ID
-                     " Attempt bootstrapping on parallax median {:.2f} and "
+                     " Bootstrapping on parallax median {:.2f} and "
                      "rotation {:.2f}",
                      info.median_parallax, rotation);
+        return true;
     }
 
     const bool is_small_motion
@@ -321,7 +329,8 @@ std::optional<std::string> FilterKeyframePass::processImu(
     }
 
     if (candidate.isFirstKeyframe()) {
-        if (auto err = initializeFirstFrame(imu_buffer.value())) {
+        if (auto err = initializeFirstFrame(imu_buffer.value(),
+                                            candidate.curr_kf_ts)) {
             return "initializing first keyframe: " + std::move(err).value();
         }
     }
@@ -345,7 +354,8 @@ std::optional<std::string> FilterKeyframePass::processImu(
 }
 
 std::optional<std::string> FilterKeyframePass::initializeFirstFrame(
-    std::span<const data::IMUReading> imu_readings) const {
+    std::span<const data::IMUReading> imu_readings,
+    uint64_t keyframe_ts) const {
     const auto imu_params = storage_.getPtr<data::IMUSensorParams>(
         ResourceIdentifier::ImuParamsName);
     if (!imu_params) {
@@ -359,8 +369,16 @@ std::optional<std::string> FilterKeyframePass::initializeFirstFrame(
         return "finding stationary window: " + window.error();
     }
 
-    const auto [gravity, gyro_bias] = utils::RecoverGravityAndGyroBias(
+    const auto [window_gravity, gyro_bias] = utils::RecoverGravityAndGyroBias(
         window.value(), *camera_, *imu_params.value());
+
+    // The window's gravity is in the camera frame of the window's end; the
+    // world frame is this keyframe's camera, which may have turned since
+    const Eigen::Vector3d gravity = utils::PropagateGravity(
+        window_gravity, imu_readings, window->samples.back().timestamp,
+        keyframe_ts, gyro_bias, *camera_, *imu_params.value());
+    const double propagated_rad = std::acos(std::clamp(
+        window_gravity.normalized().dot(gravity.normalized()), -1.0, 1.0));
 
     shared_.gravity_world = gravity;
     // The accelerometer bias is folded into the gravity estimate
@@ -371,12 +389,14 @@ std::optional<std::string> FilterKeyframePass::initializeFirstFrame(
     spdlog::info(LOG_ID
                  " Initialized gravity from {} IMU samples; score:{:.3f} "
                  "window:[{:.3f} - {:.3f}s] gravity=({:.3f}, {:.3f}, {:.3f}) "
+                 "(turned {:.2f} deg to the keyframe {:.3f} s later) "
                  "gyro_bias=({:.4f}, {:.4f}, {:.4f})",
                  window->samples.size(), window->score,
                  to_seconds(window->samples.front().timestamp),
                  to_seconds(window->samples.back().timestamp), gravity.x(),
-                 gravity.y(), gravity.z(), gyro_bias.x(), gyro_bias.y(),
-                 gyro_bias.z());
+                 gravity.y(), gravity.z(), propagated_rad * 180.0 / M_PI,
+                 to_seconds(keyframe_ts - window->samples.back().timestamp),
+                 gyro_bias.x(), gyro_bias.y(), gyro_bias.z());
 
     return std::nullopt;
 }
