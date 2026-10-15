@@ -29,7 +29,9 @@ adapter used by `--device=cpu`: Dawn's dependency fetcher skips it, so the scrip
 checks it out into `vendor/onnxruntime/build/swiftshader` at the commit pinned in
 Dawn's `DEPS` (it fails if Dawn moves), configures Dawn with
 `DAWN_ENABLE_SWIFTSHADER=ON`, and installs `libvk_swiftshader.so` next to
-`libwebgpu_dawn.so`, which is where Dawn looks for it at run time. **Eigen is pinned to 3.4.0** in `cmake/configureDependencies.cmake`
+`libwebgpu_dawn.so`, which is where Dawn looks for it at run time. **FAISS** (loop closure) is the one FetchContent dependency with a native build:
+v1.15.1 by tarball hash, CPU only, linking the system BLAS/LAPACK and OpenMP.
+**Eigen is pinned to 3.4.0** in `cmake/configureDependencies.cmake`
 because GTSAM 4.3a1 bundles Eigen 3.4.0 and statically asserts the Eigen
 WORLD/MAJOR/MINOR version matches the consumer's at compile time.
 
@@ -57,6 +59,8 @@ Flags:
   types equally, so the default request lands on SwiftShader. `GPU::initAdapter` rejects an
   adapter whose type doesn't match the requested device either way.
 - `-no-mapping` — v2 only: drop the mapping stage; the model then pairs consecutive frames.
+- `-no-loop-closure` — v2 with mapping: run without the loop closure thread
+  (`WslamConfig::enable_loop_closure`, default on).
 - `--record-frontend=PATH.msgpack` — v2 with mapping only: record the front-end output
   for replaying the mapping stage without the GPU (see `MappingReplayTest` below).
 - `--max-iters=N` — stop after N pipeline iterations (0 = unlimited).
@@ -90,6 +94,17 @@ It sets:
 - `WSLAM_ONNX_KEYPOINTS` — optional keypoints per image the model returns; defaults to
   1024 (`raco_lightglue::kDefaultKeypointCount`). Set it when testing another model
   variant; the model's keypoints output shape is checked against it at startup.
+- `WSLAM_VPR_MIXVPR_MODEL`, `WSLAM_VPR_MEGALOC_MODEL` — place recognition models of the
+  v2 loop closure (required with loop closure on: MixVPR for `--device=cpu`, MegaLoc for
+  `--device=gpu`). Exports of `~/dev/test/ort-export`: `mixvpr_320x320.onnx`,
+  `megaloc_322x224_fp16.onnx` (or `_322x322_fp16`; the size is read from the model).
+  `WSLAM_VPR_MODEL=megaloc|mixvpr` overrides the choice; `WSLAM_LC_TOP_N`,
+  `WSLAM_LC_MIN_SIMILARITY`, `WSLAM_LC_MIN_KEYFRAME_GAP`, `WSLAM_LC_MIN_INLIERS`,
+  `WSLAM_LC_NODE_MIN_TRANSLATION`, `WSLAM_LC_NODE_MIN_ROTATION`, `WSLAM_LC_THREADS`
+  override `LoopClosureConfig` knobs (`map_v2/loop_closure/config.hpp`).
+- `WSLAM_ORT_THREADS` — optional intra-op threads of the front end's ORT CPU session.
+  By default ORT takes one per physical core; with loop closure on `--device=cpu` the
+  pipeline gives it the physical cores minus `WSLAM_LC_THREADS` instead.
 - `WSLAM_FRONTEND_RECORDING` — optional front-end recording for `MappingReplayTest`
   (kept outside the repo).
 - `TUM_FR1_RGBD_DIR` — path to TUM RGB-D dataset (the TUM provider has been removed, so this variable is currently unused).
@@ -125,6 +140,11 @@ re-scores the v2 geometry under every score-floor / weighting / refinement confi
 (`WSLAM_ABLATION_REPORT_OUT=path.md`). Results and analysis:
 `benchmarks/POSE_ESTIMATE_V2_NOTE.md`.
 `LocalSmootherTest`/`JobWorkerTest` cover the v2 mapping back-end machinery (no data).
+`LoopClosureModelIoTest`, `PlaceDatabaseTest`, `PnpVerifyTest` and `PoseGraphTest` cover
+the loop closure pieces (no data); `Models/LoopClosureDatasetTest` checks each place
+recognition model whose path is set on a ground-truth V1_01_easy revisit (MegaLoc on
+the CPU EP takes ~3 min per image — it is a GPU model; `WSLAM_LC_PARITY_OUT=prefix`
+dumps a descriptor for a Python parity check).
 `MappingReplayTest` replays a front-end recording (`WSLAM_FRONTEND_RECORDING=path.msgpack`,
 made by `pc_wslam -v2 --max-iters=N --record-frontend=PATH`; skips without it) through
 the CPU RANSAC/triangulation passes and the v2 mapping stage, fails at the first
@@ -258,6 +278,9 @@ modifying it, remember the changes are tracked in this repo's history.
 - `benchmarks/compare.py` (run with `benchmarks/.venv/bin/python`; venv has
   `evo` + `numpy`) — converts wslam `map.json`, ORB-SLAM3 txt (ns
   timestamps), and EuRoC GT csv to TUM format and runs `evo_ape`/`evo_rpe`.
+  `--cam-to-body mav0/cam0/sensor.yaml` converts wslam's camera poses to the body
+  frame (needed for a meaningful RPE); `--wslam` is repeatable (`map.json` and
+  `map_vio.json` of a loop closure run).
 - No current wslam end-to-end accuracy numbers are recorded: the earlier
   `ACCURACY_ANALYSIS.md` and its results were removed as outdated.
   `benchmarks/results/` (gitignored) keeps only the raw ORB-SLAM3 baseline
@@ -362,6 +385,41 @@ counted in keyframes (`WSLAM_SMOOTHER_WINDOW`, default 10; lag = N − 1);
 factor indices, so the result carries `live_slots` (factor pointer → slot); a submitted
 smart factor missing from it was marginalised. Never mutate a submitted factor or call
 `point()` on one while a job runs. Snapshot = archive + in-window estimate.
+
+**Loop closure** (`wslam/src/map_v2/loop_closure/`, `namespace
+wslam::v2::mapping::loop_closure`; results and process in
+`benchmarks/NOTE_LOOP_CLOSURE.md`) runs on its own thread (`LoopClosureWorker`, a
+mutex + condvar event queue — not `base::JobWorker`, which allows one job).
+`FeedLoopClosurePass` runs last in the mapping stage (accepted keyframes only) and never
+waits: it pushes the keyframe's image (`PlaceImage`, 8-bit) with the landmarks it tracks
+(`active_landmarks` pixels), and a `MapUpdateEvent` with the pose the last drain settled
+plus what the drains archived (`SharedBindings::*_since_feed`); it pulls the newest
+`DriftCorrection` into `SharedBindings::drift_correction`. The worker embeds **every**
+keyframe, gates it into the pose graph (`NodeGate`: a keyframe that did not move/turn
+enough from the last node is attached to it, not added), adds nodes to a FAISS
+`IndexIDMap2(IndexFlatIP)` and queries only the **newest** node of each batch:
+top-N candidates at least `min_keyframe_gap` keyframes / `min_time_gap_s` older, then
+RaCo-LightGlue on the (candidate, query) pair (its own CPU session; the front-end model),
+candidate keypoints → landmarks by nearest tracked pixel → archived 3D points in the
+candidate camera frame, then PnP (`pnp_verify.*`: own 6-point DLT RANSAC + Huber
+Gauss-Newton, no OpenCV) and a consistency bound against the graph's estimate.
+The pose graph (`pose_graph.*`) is pose-only iSAM2: odometry `BetweenFactor`s from the
+VIO, a `Pose3AttitudeFactor` per node holding roll/pitch to the VIO (gravity observes
+them), loop `BetweenFactor`s (Gaussian by default: a Cauchy kernel would ignore the
+many-sigma correction a true loop makes). The **smoother is never modified** (its
+marginals are linearised in the VIO frame); the correction is a 4-DoF drift transform
+for live output, and at export `ApplyCorrections` (`merge.*`) moves every keyframe by its
+node's `T_corr * T_vio^-1` and every landmark by its anchor keyframe's
+(`SharedBindings::landmark_anchor`). The flush order is smoother flush → final feed →
+`finish()` → merge: `MapSnapshotName` becomes the corrected map and
+`MapSnapshotVioName` keeps the smoother's, exported as `<stem>_vio.{ply,json}` (so one
+run yields both trajectories). Models: `place_recognition.*` (MegaLoc / MixVPR, contract
+checked at load, `model_io.*` adapts images by **squashing** to the model size with exact
+area averaging, gray → RGB, ImageNet normalisation — neither export normalises). With
+`--device=gpu` the place recognition session runs on the WebGPU EP on an auxiliary
+device (`GPU::createAuxiliaryDevice`, EP context 2: the pipeline's device is not shared
+across threads); the matcher stays on the CPU (`matcher_on_gpu`). Loop closure sessions
+use `WSLAM_LC_THREADS` (4) threads with spinning off.
 
 `frontend_recording.{hpp,cpp}` (`v2::FrontendRecorder` / `v2::FrontendReplay`,
 MessagePack): with mapping the front end depends on the keyframe decisions, so a
