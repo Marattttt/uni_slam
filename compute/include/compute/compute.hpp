@@ -77,11 +77,15 @@ class Compute {
    private:
     std::filesystem::path generatePerfOutFilePath() const;
 
+    // First, so it outlives the stages: threads they own (loop closure)
+    // record into it until they are joined
+    PerfRecorder perf_;
     std::shared_ptr<GPU> gpu_;
     std::vector<std::unique_ptr<Stage>> stages_;
     AnyBag storage_;
-    PerfRecorder perf_;
     std::filesystem::path perf_logs_output_;
+    // Set by prepare(); finalize() then writes the perf log last
+    bool write_perf_log_ = false;
     std::vector<Flushable> flushes_;
 };
 };  // namespace compute

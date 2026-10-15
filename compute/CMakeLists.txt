@@ -19,6 +19,11 @@ if(LOG_AWAITER_CALLS)
     target_compile_definitions(wslam_compute PRIVATE LOG_AWAITER_CALLS)
 endif()
 
+# PUBLIC: consumers' #ifdef NPERF must agree with the library's
+if(NOT ENABLE_PERF_RECORDING)
+    target_compile_definitions(wslam_compute PUBLIC NPERF)
+endif()
+
 target_link_libraries(wslam_compute
     PUBLIC
     wslam::base

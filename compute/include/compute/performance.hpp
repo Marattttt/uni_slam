@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <flat_map>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,7 +17,13 @@ namespace wslam::compute {
 
 // Class for recording performance of different segments of code.
 // Supports nested calls: beginRecord returns a Scope, and while it is alive,
-// all further calls to beginRecord will fall under that scope
+// all further calls to beginRecord on the same thread will fall under that
+// scope
+//
+// Safe to record into from several threads. Every thread's records are rooted
+// at its thread id (setThreadId, or "thread <n>" for a thread that never set
+// one), so each thread gets a tree of its own. The open scopes are per thread
+// and shared by every recorder on it
 //
 // Defining NPERF makes calls of this class essentially no-op
 class PerfRecorder {
@@ -52,19 +59,25 @@ class PerfRecorder {
         std::vector<double> calls;
     };
 
+    // Names the calling thread's root in every recorder. Call it before the
+    // thread records anything; the id must not contain the delimiter '$'
+    static void setThreadId(std::string thread_id);
+    [[nodiscard]] static const std::string& getThreadId();
+
     [[nodiscard]] Scope beginRecord(std::string_view label);
     [[nodiscard]] std::optional<std::string> writeFile(
         const std::filesystem::path& path) const;
     [[nodiscard]] YAML::Node toYaml() const;
 
+    // Drops the records of every thread. Scopes still open record when they
+    // close
     void clear();
 
    private:
+    mutable std::mutex mutex_;
     std::flat_map<std::string, Stats> records_;
-    std::string current_scope_;
 
     void popScope(const Scope& scope) noexcept;
-    void addScope(std::string_view scope);
 };
 
 }  // namespace wslam::compute

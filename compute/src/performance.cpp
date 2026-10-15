@@ -2,7 +2,11 @@
 
 #include <Eigen/src/Core/Matrix.h>
 
+#include <atomic>
+#include <cassert>
 #include <chrono>
+#include <cstdint>
+#include <format>
 #include <fstream>
 #include <ranges>
 #include <string_view>
@@ -11,20 +15,45 @@
 
 using namespace wslam::compute;
 
-auto PerfRecorder::beginRecord(std::string_view label) -> Scope {
-#ifdef NPERF
-    return Scope(*this, {});
-#else
-    addScope(label);
-    return Scope(*this, Clock::now());
-#endif
+namespace {
+struct ThreadState {
+    std::string id;
+    // Path of the open scopes, rooted at the id; empty while none is open
+    std::string scope;
+};
+
+thread_local ThreadState g_thread_state;
+std::atomic<uint32_t> g_unnamed_threads{0};
+}  // namespace
+
+void PerfRecorder::setThreadId(std::string thread_id) {
+    assert(thread_id.find(kDelimiter) == std::string::npos
+           && "perf thread id contains the scope delimiter");
+    assert(g_thread_state.scope.empty()
+           && "perf thread id set while a scope is open");
+    g_thread_state.id = std::move(thread_id);
 }
 
-void PerfRecorder::addScope(std::string_view scope) {
-    if (current_scope_.length() > 0) {
-        current_scope_ += kDelimiter;
+const std::string& PerfRecorder::getThreadId() {
+    if (g_thread_state.id.empty()) {
+        g_thread_state.id = std::format("thread {}", g_unnamed_threads++);
     }
-    current_scope_ += scope;
+    return g_thread_state.id;
+}
+
+auto PerfRecorder::beginRecord(std::string_view label) -> Scope {
+#ifdef NPERF
+    (void)label;
+    return Scope(*this, {});
+#else
+    std::string& scope = g_thread_state.scope;
+    if (scope.empty()) {
+        scope = getThreadId();
+    }
+    scope += kDelimiter;
+    scope += label;
+    return Scope(*this, Clock::now());
+#endif
 }
 
 void PerfRecorder::popScope(const Scope& scope) noexcept {
@@ -33,28 +62,30 @@ void PerfRecorder::popScope(const Scope& scope) noexcept {
 #else
     const auto elapsed = std::chrono::duration<double, std::ratio<1, 1> >(
         Clock::now() - scope.start);
-    records_[current_scope_].calls.emplace_back(
-        static_cast<double>(elapsed.count()));
 
-    const auto last_segment = current_scope_.find_last_of(kDelimiter);
-    if (last_segment == std::string::npos) {
-        current_scope_.clear();
-        return;
+    std::string& current = g_thread_state.scope;
+    {
+        std::scoped_lock lock(mutex_);
+        records_[current].calls.emplace_back(
+            static_cast<double>(elapsed.count()));
     }
-    current_scope_.resize(last_segment);
+
+    current.resize(current.find_last_of(kDelimiter));
+    // Only the thread id is left: no scope is open
+    if (current.find_last_of(kDelimiter) == std::string::npos) {
+        current.clear();
+    }
 #endif
 }
 
 void PerfRecorder::clear() {
-    current_scope_ = "";
+    std::scoped_lock lock(mutex_);
     records_.clear();
 }
 
+#ifndef NPERF
 namespace {
 YAML::Node StatsToYaml(const PerfRecorder::Stats& stats) {
-#ifdef NPERF
-    (void)stats;
-#else
     YAML::Node node(YAML::NodeType::Map);
 
     if (stats.calls.empty()) {
@@ -96,15 +127,17 @@ YAML::Node StatsToYaml(const PerfRecorder::Stats& stats) {
     node["count"] = calls.size();
 
     return node;
-#endif
 }
 
 }  // namespace
+#endif
 
 std::optional<std::string> PerfRecorder::writeFile(
     const std::filesystem::path& path) const {
 #ifdef NPERF
+    // Recording is compiled out: there is nothing to write
     (void)path;
+    return std::nullopt;
 #else
     std::ofstream file(path, std::ios::out | std::ios::trunc);
     if (!file) {
@@ -129,6 +162,7 @@ YAML::Node PerfRecorder::toYaml() const {
 #ifdef NPERF
     return root;
 #else
+    std::scoped_lock lock(mutex_);
 
     for (const auto& [k, v] : records_) {
         YAML::Node current = root;

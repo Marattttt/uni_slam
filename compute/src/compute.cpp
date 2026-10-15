@@ -84,21 +84,23 @@ std::optional<std::string> Compute::prepare(const ComputeConfig& opts) {
         return std::format("resources: {}", err.value());
     }
 
-    addFlushable(
-        [this]() { return this->perf_.writeFile(generatePerfOutFilePath()); });
+    write_perf_log_ = true;
 
     return std::nullopt;
 }
 
 std::optional<std::string> Compute::initizalize() {
-    const auto scope = perf_.beginRecord("initialization");
+    {
+        // Closed before the write, so the init log has its total
+        const auto scope = perf_.beginRecord("initialization");
 
-    for (auto& stage : stages_) {
-        const auto perfscope = perf_.beginRecord(stage->getId());
+        for (auto& stage : stages_) {
+            const auto perfscope = perf_.beginRecord(stage->getId());
 
-        if (auto err = stage->initialize()) {
-            return std::format("iniiializing stage {}: {}", stage->getId(),
-                               err.value());
+            if (auto err = stage->initialize()) {
+                return std::format("iniiializing stage {}: {}",
+                                   stage->getId(), err.value());
+            }
         }
     }
 
@@ -139,6 +141,13 @@ std::optional<std::vector<std::string>> Compute::finalize() {
     for (auto& f : flushes_) {
         if (auto err = f()) {
             errors.emplace_back(std::move(err).value());
+        }
+    }
+
+    // After the flushables: they join the threads that record into perf_
+    if (write_perf_log_) {
+        if (auto err = perf_.writeFile(generatePerfOutFilePath())) {
+            errors.emplace_back("saving perf logs: " + std::move(err).value());
         }
     }
 

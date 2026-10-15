@@ -90,6 +90,8 @@ extern "C" void handleShutdownSignal(int signal) {
 }  // namespace
 
 int main_test(WslamConfig config) {
+    compute::PerfRecorder::setThreadId("main");
+
     compute::Compute comp;
     if (auto err
         = comp.prepare(compute::createDefaultConfig(config.compute_device))) {

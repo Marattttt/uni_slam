@@ -10,6 +10,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 option(LOG_AWAITER_CALLS "Enable logging about future adding / completion in compute::Awaiter" OFF)
 option(ENABLE_SANITIZERS FALSE)
 option(BUILD_TESTS "Build the unit tests (fetches GoogleTest)" OFF)
+option(ENABLE_PERF_RECORDING "Record per-pass timings with compute::PerfRecorder (OFF defines NPERF)" ON)
 
 # Declared before configureDependencies() so the GoogleTest fetch inside it sees
 # the option's value.
