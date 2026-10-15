@@ -7,6 +7,7 @@
 #include <flat_map>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "yaml-cpp/yaml.h"
@@ -28,6 +29,17 @@ class PerfRecorder {
     struct Scope {
         PerfRecorder& recorder;
         Clock::time_point start;
+
+        Scope(PerfRecorder& recorder, Clock::time_point start)
+            : recorder(recorder), start(start) {}
+        // A moved-from scope must not pop: wrapping a scope in an optional
+        // otherwise pops it twice, once right away and once at the end
+        Scope(Scope&& other) noexcept
+            : recorder(other.recorder), start(std::exchange(other.start, {})) {}
+        Scope(const Scope&) = delete;
+        Scope& operator=(const Scope&) = delete;
+        Scope& operator=(Scope&&) = delete;
+
         ~Scope() {
             // Ensure that a non-empty scope is the only one calling popScope
             if (start.time_since_epoch().count() > 0) {

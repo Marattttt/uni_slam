@@ -13,10 +13,10 @@ using namespace wslam::compute;
 
 auto PerfRecorder::beginRecord(std::string_view label) -> Scope {
 #ifdef NPERF
-    return Scope{.recorder = *this};
+    return Scope(*this, {});
 #else
     addScope(label);
-    return Scope{.recorder = *this, .start = Clock::now()};
+    return Scope(*this, Clock::now());
 #endif
 }
 

@@ -116,6 +116,11 @@ std::optional<std::string> GpuStage::runBatched() {
 
         auto& cpu_pass = std::get<std::unique_ptr<Pass>>(pass);
 
+        const auto perfscope
+            = perf_ != nullptr
+                  ? std::optional{perf_->beginRecord(cpu_pass->getId())}
+                  : std::nullopt;
+
         auto err = cpu_pass->execute();
 
         if (!err) {
