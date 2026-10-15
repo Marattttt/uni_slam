@@ -104,6 +104,31 @@ function (configureDependencies)
         "${fast_cpp_csv_parser_SOURCE_DIR}"
     )
 
+    # FAISS indexes the loop closure's place descriptors. Pinned to a release
+    # tarball by hash. CPU only: the GPU, Python, C API and demo builds are
+    # all on by default upstream. It links the system BLAS/LAPACK and OpenMP
+    FetchContent_Declare(
+        faiss
+        URL      https://github.com/facebookresearch/faiss/archive/refs/tags/v1.15.1.tar.gz
+        URL_HASH SHA256=7b583010cc3c0a778b909a1beecbc5a4bd42f415d82af734b2c05d5eaaca0ffa
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    set(FAISS_ENABLE_GPU    OFF CACHE BOOL "" FORCE)
+    set(FAISS_ENABLE_MKL    OFF CACHE BOOL "" FORCE)
+    set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
+    set(FAISS_ENABLE_C_API  OFF CACHE BOOL "" FORCE)
+    set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
+    set(FAISS_ENABLE_METAL  OFF CACHE BOOL "" FORCE)
+    # The index holds one descriptor per keyframe, so a SIMD build buys
+    # nothing; generic builds the single `faiss` target
+    set(FAISS_OPT_LEVEL "generic" CACHE STRING "" FORCE)
+    FetchContent_MakeAvailable(faiss)
+    # Keep FAISS's headers out of the strict project warnings
+    get_target_property(FAISS_INC faiss INTERFACE_INCLUDE_DIRECTORIES)
+    set_target_properties(faiss PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${FAISS_INC}"
+    )
+
     if(BUILD_TESTS)
         FetchContent_Declare(
             googletest
