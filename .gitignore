@@ -9,6 +9,7 @@ NOTES_*.md
 # ORB-SLAM3 benchmark workspace
 benchmarks/.venv/
 benchmarks/results/
+**/__pycache__/**
 
 # Generated perf logs
 init_perflog.yaml
