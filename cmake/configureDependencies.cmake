@@ -56,8 +56,7 @@ function (configureDependencies)
     FetchContent_Declare(
         stb
         GIT_REPOSITORY https://github.com/nothings/stb.git
-        GIT_TAG        master
-        GIT_SHALLOW    TRUE
+        GIT_TAG        2c980bb59875b0d32144a71867fbdebb2f77cd20
     )
     FetchContent_MakeAvailable(stb)
     add_library(stb INTERFACE)
@@ -95,8 +94,7 @@ function (configureDependencies)
     FetchContent_Declare(
         fast_cpp_csv_parser
         GIT_REPOSITORY https://github.com/ben-strasser/fast-cpp-csv-parser.git
-        GIT_TAG        master
-        GIT_SHALLOW    TRUE
+        GIT_TAG        574a9fe4d323ba63416877a4a5fe59088d37aa34
     )
     FetchContent_MakeAvailable(fast_cpp_csv_parser)
     add_library(fast_cpp_csv_parser INTERFACE)
