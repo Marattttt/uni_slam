@@ -115,7 +115,7 @@ YAML::Node StatsToYaml(const PerfRecorder::Stats& stats) {
         "perc_75",
     };
 
-    for (size_t i : std::views::iota(1UZ, 3UZ)) {
+    for (size_t i : std::views::iota(0UZ, 3UZ)) {
         const auto label = perc_labels.at(i);
 
         const auto perc = static_cast<double>(i) * 0.25;
