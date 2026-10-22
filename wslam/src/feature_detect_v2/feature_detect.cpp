@@ -12,7 +12,6 @@
 #include "common.hpp"
 #include "compute/gpu_stage.hpp"
 #include "data/provider_base.hpp"
-#include "fill_pyramid.hpp"
 #include "frame_prefilter.hpp"
 #include "onnx_cpu_feature_detect.hpp"
 #include "onnx_feature_detect.hpp"
@@ -179,14 +178,8 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
     }
 
     StorageImageProvider img_provider{compute.getStorage()};
-    stage->add_pass(std::make_unique<FillPyramidPass>(
-        gpu, bindings,
-        PassFillPyramidOpts{
-            .image_getter = std::move(img_provider),
-            .storage = compute.getStorage(),
-        }));
-
-    stage->add_pass(std::make_unique<PackModelInputPass>(gpu, bindings));
+    stage->add_pass(std::make_unique<PackModelInputPass>(
+        gpu, bindings, std::move(img_provider)));
 
     switch (config.compute_device) {
         case compute::ComputeDevice::Gpu:

@@ -4,6 +4,9 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include <array>
+#include <cstdint>
+#include <ranges>
+#include <vector>
 
 #include "common.hpp"
 #include "raco_lightglue.hpp"
@@ -59,7 +62,7 @@ std::optional<std::string> v2::PackModelInputPass::initialize() {
 
 std::optional<std::string> v2::PackModelInputPass::initTextureViews() {
     const wgpu::TextureViewDescriptor desc{
-        .label = LOG_ID " model level view",
+        .label = LOG_ID " source view",
         .format = wgpu::TextureFormat::R32Float,
         .dimension = wgpu::TextureViewDimension::e2D,
         .baseMipLevel = 0,
@@ -68,7 +71,7 @@ std::optional<std::string> v2::PackModelInputPass::initTextureViews() {
     };
 
     auto create_views = [&] {
-        view_ = bindings_->getTexture(model::kInputLod.v).CreateView(&desc);
+        view_ = bindings_->getSourceTexture().CreateView(&desc);
     };
 
     return gpu_->getAwaiter()
@@ -184,6 +187,12 @@ std::optional<std::string> v2::PackModelInputPass::initComputePipeline() {
 std::optional<std::string> v2::PackModelInputPass::submitWork() {
     spdlog::info(LOG_ID " Executing");
 
+    // The queue write runs before the pack submitted below, so the compute
+    // pass sees this frame
+    if (auto err = writeSource()) {
+        return "writing source frame: " + err.value();
+    }
+
     const uint32_t groups_x = CeilDiv(model::kInputWidth, kWorkgroupSize);
     const uint32_t groups_y = CeilDiv(model::kInputHeight, kWorkgroupSize);
 
@@ -208,4 +217,54 @@ std::optional<std::string> v2::PackModelInputPass::submitWork() {
                 .executeAll()
                 .transform([](const auto& err) { return "awaiter: " + err; });
         });
+}
+
+std::optional<std::string> v2::PackModelInputPass::writeSource() {
+    spdlog::info(LOG_ID " Writing source texture");
+
+    wgpu::Queue queue = gpu_->getDevice().GetQueue();
+
+    wgpu::TexelCopyTextureInfo copy_info{
+        .texture = bindings_->getSourceTexture(),
+        .mipLevel = 0,
+        .origin = {.x = 0, .y = 0},
+        .aspect = wgpu::TextureAspect::All,
+    };
+
+    wgpu::TexelCopyBufferLayout copy_layout{
+        .offset = 0,
+        .bytesPerRow = GPUConst::pixel_size * GPUConst::frame_width,
+        .rowsPerImage = GPUConst::frame_height,
+    };
+
+    wgpu::Extent3D extent{.width = GPUConst::frame_width,
+                          .height = GPUConst::frame_height,
+                          .depthOrArrayLayers = 1,};
+
+    auto data = image_getter_();
+    if (!data.has_value()) {
+        return "end of data";
+    }
+
+    if (data->empty()) {
+        return "data is empty";
+    }
+
+    const auto image_head = data.value() | std::views::take(10)
+                            | std::views::transform([](const auto& x) {
+                                  return static_cast<uint8_t>(x);
+                              })
+                            | std::ranges::to<std::vector<uint8_t>>();
+    spdlog::debug(LOG_ID " Got image data. Head: {}", image_head);
+
+    auto awaiter = gpu_->getAwaiter();
+
+    auto callback = [&]() {
+        queue.WriteTexture(&copy_info, data->data(), data->size_bytes(),
+                           &copy_layout, &extent);
+    };
+
+    return awaiter.runChecked(callback, LOG_ID " write texture source")
+        .executeAll(false)
+        .transform([](auto&& err) { return "write source texture: " + err; });
 }

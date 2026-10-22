@@ -47,14 +47,10 @@ constexpr int64_t kDefaultKeypointCount = 512;
 // Model input height and width must both be multiples of this
 constexpr uint32_t kSizeMultiple = 32;
 
-// Pyramid level fed to the model, centre-cropped down to multiples of
-// kSizeMultiple
-constexpr LOD kInputLod{0};
-
-constexpr uint32_t kSourceWidth = static_cast<uint32_t>(
-    GPUBindingSize::getPyramidLayerDimensions(kInputLod).first);
-constexpr uint32_t kSourceHeight = static_cast<uint32_t>(
-    GPUBindingSize::getPyramidLayerDimensions(kInputLod).second);
+// The model input is a centre crop of the camera frame, reduced to multiples
+// of kSizeMultiple
+constexpr uint32_t kSourceWidth = GPUConst::frame_width;
+constexpr uint32_t kSourceHeight = GPUConst::frame_height;
 
 constexpr uint32_t kInputWidth = kSourceWidth / kSizeMultiple * kSizeMultiple;
 constexpr uint32_t kInputHeight = kSourceHeight / kSizeMultiple * kSizeMultiple;
@@ -65,7 +61,7 @@ constexpr uint32_t kCropX = (kSourceWidth - kInputWidth) / 2;
 constexpr uint32_t kCropY = (kSourceHeight - kInputHeight) / 2;
 
 static_assert(kInputWidth > 0 && kInputHeight > 0,
-              "pyramid level is smaller than one model tile");
+              "camera frame is smaller than one model tile");
 static_assert(kInputWidth % kSizeMultiple == 0
                   && kInputHeight % kSizeMultiple == 0,
               "model input must be a multiple of kSizeMultiple");
@@ -100,8 +96,8 @@ static_assert(std::is_standard_layout_v<KeypointPosition>
 // where the centre of the top-left pixel is (0, 0)
 constexpr double kPixelCentreOffset = 0.5;
 
-// Keypoint position in pixels of the source pyramid level (kInputLod), in the
-// convention of the camera intrinsics
+// Keypoint position in camera pixels, in the convention of the camera
+// intrinsics
 [[nodiscard]] inline Eigen::Vector2d ToSourcePixel(
     const KeypointPosition& keypoint) {
     return {static_cast<double>(keypoint.x) + kCropX - kPixelCentreOffset,

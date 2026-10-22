@@ -2,8 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include <format>
-
+#include "common.hpp"
 #include "raco_lightglue.hpp"
 
 using namespace wslam::v2;
@@ -13,55 +12,43 @@ using namespace wslam::v2;
 std::optional<std::string> SharedBindings::initialize() {
     spdlog::info(LOG_ID " initializing");
 
-    if (auto err = initTextures()) {
-        return "textures: " + err.value();
+    if (auto err = initTexture()) {
+        return "texture: " + err.value();
     }
 
-    if (auto err = initBuffers()) {
-        return "buffers: " + err.value();
+    if (auto err = initBuffer()) {
+        return "buffer: " + err.value();
     }
 
     return std::nullopt;
 }
 
-std::optional<std::string> SharedBindings::initTextures() {
-    spdlog::info(LOG_ID " allocating a pyramid of {} textures",
-                 GPUConst::levels_of_detail);
+std::optional<std::string> SharedBindings::initTexture() {
+    spdlog::info(LOG_ID " allocating the source texture ({}x{})",
+                 GPUConst::frame_width, GPUConst::frame_height);
 
-    auto awaiter = gpu_->getAwaiter();
-
-    for (uint32_t lod = 0; lod < GPUConst::levels_of_detail; ++lod) {
-        initTexture(awaiter, lod);
-    }
-
-    return awaiter.executeAll();
-}
-
-void SharedBindings::initTexture(compute::Awaiter& awaiter, uint32_t lod) {
-    const auto [width, height] = GPUBindingSize::getPyramidLayerDimensions(
-        {static_cast<uint8_t>(lod)});
-
-    const std::string label = std::format("Frame texture for lod {}", lod);
     const wgpu::TextureDescriptor texture_desc{
-        .label = label.c_str(),
+        .label = "Frame texture",
         .usage = wgpu::TextureUsage::TextureBinding
-                 | wgpu::TextureUsage::StorageBinding
-                 | wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::CopySrc,
+                 | wgpu::TextureUsage::CopyDst,
         .dimension = wgpu::TextureDimension::e2D,
-        .size = {.width = static_cast<uint32_t>(width),
-                 .height = static_cast<uint32_t>(height),
+        .size = {.width = GPUConst::frame_width,
+                 .height = GPUConst::frame_height,
                  .depthOrArrayLayers = 1,},
         .format = wgpu::TextureFormat::R32Float,
     };
 
-    auto create_texture = [&] {
-        pyramid_.at(lod) = gpu_->getDevice().CreateTexture(&texture_desc);
-    };
-
-    awaiter.runChecked(create_texture, LOG_ID " create texture");
+    return gpu_->getAwaiter()
+        .runChecked(
+            [&] {
+                source_texture_
+                    = gpu_->getDevice().CreateTexture(&texture_desc);
+            },
+            LOG_ID " create texture")
+        .executeAll();
 }
 
-std::optional<std::string> SharedBindings::initBuffers() {
+std::optional<std::string> SharedBindings::initBuffer() {
     using BU = wgpu::BufferUsage;
     constexpr auto kUsage = BU::Storage | BU::CopySrc | BU::CopyDst;
 

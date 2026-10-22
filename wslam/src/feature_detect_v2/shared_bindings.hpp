@@ -2,20 +2,18 @@
 
 #include <webgpu/webgpu_cpp.h>
 
-#include <array>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 
 #include "assert.hpp"
-#include "common.hpp"
-#include "compute/awaiter.hpp"
 #include "compute/gpu.hpp"
 
 namespace wslam::v2 {
 
 // GPU resources shared by the passes of the v2 feature detect stage: the
-// current frame's pyramid and the model's input. Owned jointly by those passes
+// current frame's image and the model's input. Owned jointly by those passes
 // through a shared_ptr. keypoint_count is the model's keypoints per image,
 // fixed at startup
 class SharedBindings {
@@ -28,9 +26,9 @@ class SharedBindings {
 
     [[nodiscard]] std::optional<std::string> initialize();
 
-    // Level lod of the current frame's pyramid
-    [[nodiscard]] const wgpu::Texture& getTexture(size_t lod) const {
-        return pyramid_.at(lod);
+    // The current frame, at camera resolution
+    [[nodiscard]] const wgpu::Texture& getSourceTexture() const {
+        return source_texture_;
     }
 
     // Model input, raco_lightglue::kImagesShape
@@ -44,12 +42,11 @@ class SharedBindings {
     std::shared_ptr<compute::GPU> gpu_;
     const int64_t keypoint_count_;
 
-    std::array<wgpu::Texture, GPUConst::levels_of_detail> pyramid_;
+    wgpu::Texture source_texture_;
     wgpu::Buffer images_buffer_;
 
-    [[nodiscard]] std::optional<std::string> initTextures();
-    [[nodiscard]] std::optional<std::string> initBuffers();
-    void initTexture(compute::Awaiter& awaiter, uint32_t lod);
+    [[nodiscard]] std::optional<std::string> initTexture();
+    [[nodiscard]] std::optional<std::string> initBuffer();
 };
 
 }  // namespace wslam::v2
