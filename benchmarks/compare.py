@@ -9,6 +9,9 @@ Inputs (all optional, but at least one trajectory is required):
                       does not accept — detected and divided by 1e9)
   - EuRoC ground truth data.csv   (nanosecond timestamps, quaternion stored
                       w-first; reordered to TUM's x y z w)
+  - UZH-FPV groundtruth.txt       (already TUM: `t tx ty tz qx qy qz qw`,
+                      seconds, IMU pose on the IMU clock; detected by its
+                      header / space separation)
 
 Every input is written as a `.tum` file into --out-dir. Unless --convert-only
 is given and a ground truth was provided, evo_ape and evo_rpe are then run for
@@ -17,7 +20,8 @@ can be re-run by hand).
 
 Frame caveat: wslam poses are camera-frame, ORB-SLAM3's EuRoC save and the
 ground truth are body/IMU-frame. Pass --cam-to-body with the sequence's
-cam0/sensor.yaml to convert wslam poses to the body frame first
+cam0/sensor.yaml (EuRoC) or the Kalibr camchain-imucam-*.yaml (UZH-FPV, body =
+IMU, T_BS = T_cam_imu^-1) to convert wslam poses to the body frame first
 (T_world_body = T_world_cam * T_BS^-1); without it the `-as` (Umeyama +
 scale) alignment absorbs the global part of the difference, but RPE compares
 camera-frame motion with body-frame motion and the camera<->body lever arm
@@ -38,7 +42,9 @@ from pathlib import Path
 
 NANOSECONDS_PER_SECOND = 1e9
 # Timestamps this large cannot be seconds (would be year ~5138); treat as ns.
-NANOSECOND_THRESHOLD = 1e14
+# Low enough for clocks that start near zero: UZH-FPV's are ~1.4e3 s, i.e.
+# ~1.4e12 ns
+NANOSECOND_THRESHOLD = 1e11
 
 
 def rotation_matrix_to_quaternion(matrix: list[list[float]]) -> tuple[float, float, float, float]:
@@ -97,6 +103,26 @@ def read_euroc_t_bs(sensor_yaml: Path) -> list[list[float]]:
     if len(values) != 16:
         raise ValueError(f"{sensor_yaml}: T_BS has {len(values)} values")
     return [values[row * 4:(row + 1) * 4] for row in range(4)]
+
+
+def read_kalibr_t_bs(camchain_yaml: Path) -> list[list[float]]:
+    """cam0's camera-in-body transform from a Kalibr camchain-imucam yaml,
+    with the IMU as the body: T_BS = T_cam_imu^-1."""
+    import yaml
+
+    document = yaml.safe_load(camchain_yaml.read_text(encoding="utf-8"))
+    cam_from_imu = document["cam0"]["T_cam_imu"]
+    return invert_rigid([[float(v) for v in row] for row in cam_from_imu])
+
+
+def read_t_bs(sensor_yaml: Path) -> list[list[float]]:
+    """T_BS of a EuRoC sensor.yaml or a Kalibr camchain-imucam yaml."""
+    text = sensor_yaml.read_text(encoding="utf-8")
+    if "T_BS" in text:
+        return read_euroc_t_bs(sensor_yaml)
+    if "T_cam_imu" in text:
+        return read_kalibr_t_bs(sensor_yaml)
+    raise ValueError(f"{sensor_yaml}: neither a EuRoC sensor.yaml nor a Kalibr camchain")
 
 
 def invert_rigid(t: list[list[float]]) -> list[list[float]]:
@@ -163,7 +189,34 @@ def convert_orbslam_txt(trajectory_path: Path, out_path: Path) -> None:
     write_tum(out_path, rows)
 
 
-def convert_euroc_groundtruth_csv(csv_path: Path, out_path: Path) -> None:
+def convert_groundtruth(path: Path, out_path: Path, time_offset_s: float = 0.0) -> None:
+    """EuRoC data.csv or UZH-FPV groundtruth.txt -> TUM, time_offset_s added
+    to every timestamp."""
+    with path.open("r", encoding="utf-8") as f:
+        first = next((line for line in f if line.strip() and not line.startswith("#")), "")
+    if "," in first:
+        convert_euroc_groundtruth_csv(path, out_path, time_offset_s)
+    else:
+        convert_tum_groundtruth(path, out_path, time_offset_s)
+
+
+def convert_tum_groundtruth(path: Path, out_path: Path, time_offset_s: float = 0.0) -> None:
+    """UZH-FPV groundtruth.txt (`t tx ty tz qx qy qz qw`, seconds) -> TUM."""
+    rows = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            fields = [float(value) for value in line.split()]
+            if len(fields) != 8:
+                raise ValueError(f"{path}: expected 8 columns, got {len(fields)}")
+            rows.append((fields[0] + time_offset_s, *fields[1:]))
+    write_tum(out_path, rows)
+
+
+def convert_euroc_groundtruth_csv(csv_path: Path, out_path: Path,
+                                  time_offset_s: float = 0.0) -> None:
     """EuRoC state_groundtruth_estimate0/data.csv -> TUM.
 
     Columns: timestamp[ns], p x y z, q w x y z, (velocity/bias columns ignored).
@@ -175,7 +228,7 @@ def convert_euroc_groundtruth_csv(csv_path: Path, out_path: Path) -> None:
             if not line or line.startswith("#"):
                 continue
             fields = line.split(",")
-            timestamp = int(fields[0]) / NANOSECONDS_PER_SECOND
+            timestamp = int(fields[0]) / NANOSECONDS_PER_SECOND + time_offset_s
             tx, ty, tz = (float(v) for v in fields[1:4])
             qw, qx, qy, qz = (float(v) for v in fields[4:8])
             rows.append((timestamp, tx, ty, tz, qx, qy, qz, qw))
@@ -220,12 +273,19 @@ def main() -> int:
     parser.add_argument("--wslam", type=Path, action="append", default=[],
                         help="wslam map.json (ExportMap sidecar, repeatable)")
     parser.add_argument("--cam-to-body", type=Path,
-                        help="EuRoC cam0/sensor.yaml: convert wslam camera "
+                        help="EuRoC cam0/sensor.yaml or Kalibr "
+                             "camchain-imucam-*.yaml: convert wslam camera "
                              "poses to the body frame with its T_BS")
     parser.add_argument("--orb", type=Path, action="append", default=[],
                         help="ORB-SLAM3 trajectory txt (repeatable)")
     parser.add_argument("--gt", type=Path,
-                        help="EuRoC ground truth data.csv")
+                        help="EuRoC ground truth data.csv or UZH-FPV "
+                             "groundtruth.txt")
+    parser.add_argument("--gt-time-offset", type=float, default=0.0, metavar="SECONDS",
+                        help="added to the ground truth's timestamps, to put them on "
+                             "the estimates' (IMU) clock. UZH-FPV indoor_45_2's "
+                             "groundtruth.txt runs ~16 ms ahead of its IMU: -0.016 "
+                             "(measured with gyro_time_offset.py)")
     parser.add_argument("--out-dir", type=Path,
                         default=Path(__file__).resolve().parent / "results",
                         help="directory for the converted .tum files "
@@ -248,7 +308,7 @@ def main() -> int:
     estimates = []
     # (label, .tum, map json or None) per estimate, for the report
     report_inputs = []
-    cam_in_body = (read_euroc_t_bs(args.cam_to_body)
+    cam_in_body = (read_t_bs(args.cam_to_body)
                    if args.cam_to_body is not None else None)
     for wslam_path in args.wslam:
         stem = "wslam" if len(args.wslam) == 1 else wslam_path.stem
@@ -265,7 +325,7 @@ def main() -> int:
     groundtruth_tum = None
     if args.gt is not None:
         groundtruth_tum = args.out_dir / "gt.tum"
-        convert_euroc_groundtruth_csv(args.gt, groundtruth_tum)
+        convert_groundtruth(args.gt, groundtruth_tum, args.gt_time_offset)
 
     if args.convert_only:
         return 0
