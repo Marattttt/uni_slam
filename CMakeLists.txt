@@ -11,6 +11,12 @@ option(LOG_AWAITER_CALLS "Enable logging about future adding / completion in com
 option(ENABLE_SANITIZERS FALSE)
 option(BUILD_TESTS "Build the unit tests (fetches GoogleTest)" OFF)
 option(ENABLE_PERF_RECORDING "Record per-pass timings with compute::PerfRecorder (OFF defines NPERF)" ON)
+# The camera resolution the GPU buffers, the image pyramid and the model input
+# are sized for at compile time (wslam/include/wslam/common.hpp). EuRoC is
+# 752x480, UZH-FPV's Snapdragon cameras are 640x480: a dataset of another size
+# needs its own build directory
+set(WSLAM_FRAME_WIDTH 752 CACHE STRING "Camera image width the pipeline is compiled for")
+set(WSLAM_FRAME_HEIGHT 480 CACHE STRING "Camera image height the pipeline is compiled for")
 
 # Declared before configureDependencies() so the GoogleTest fetch inside it sees
 # the option's value.
@@ -47,6 +53,12 @@ add_subdirectory(wslam)
 target_link_libraries(wslam_compute PRIVATE project_options)
 target_link_libraries(wslam_data PRIVATE project_options)
 target_link_libraries(wslam_app PRIVATE project_options)
+# PUBLIC: common.hpp is a public header and its consumers (tests, pc_wslam)
+# must see the same size
+target_compile_definitions(wslam_app PUBLIC
+    WSLAM_FRAME_WIDTH=${WSLAM_FRAME_WIDTH}
+    WSLAM_FRAME_HEIGHT=${WSLAM_FRAME_HEIGHT}
+)
 
 add_executable(pc_wslam main.cpp)
 target_link_libraries(pc_wslam PRIVATE wslam::app onnxruntime::onnxruntime project_options)

@@ -12,6 +12,12 @@ Options:
   -h, --help        Show this help and exit.
   -gui              Enable the Pangolin visualization GUI.
   -v2               Run the v2 pipeline.
+  --dataset=euroc|uzh-fpv
+                    Dataset format (default euroc: EUROC_DIR). uzh-fpv reads
+                    UZH_FPV_DIR and UZH_FPV_CALIB_DIR and needs a 640x480
+                    build: pass 640x480 as well.
+  640x480           Build into build/640x480 for 640x480 cameras
+                    (UZH-FPV Snapdragon) instead of build/ (752x480, EuRoC).
   --device=gpu|cpu  Where compute runs (default gpu). cpu runs Dawn on its
                     SwiftShader CPU adapter and, with -v2, the model on
                     ONNX Runtime's CPU execution provider.
@@ -36,9 +42,9 @@ Options:
 EOF
 }
 
-mkdir -p build
-
 LOG_AWAITER=OFF
+BUILD_DIR=build
+FRAME_SIZE_ARGS=()
 RUN_ARGS=()
 BUILD_TYPE=Debug
 
@@ -49,6 +55,9 @@ for arg in "$@"; do
         -gui)           RUN_ARGS+=("-gui") ;;
         -v2)            RUN_ARGS+=("-v2") ;;
         --device=*)     RUN_ARGS+=("$arg") ;;
+        --dataset=*)    RUN_ARGS+=("$arg") ;;
+        640x480)        BUILD_DIR=build/640x480
+                        FRAME_SIZE_ARGS=(-DWSLAM_FRAME_WIDTH=640 -DWSLAM_FRAME_HEIGHT=480) ;;
         --max-iters=*)  RUN_ARGS+=("$arg") ;;
         --map-out=*)    RUN_ARGS+=("$arg") ;;
         --keyframes=*)  RUN_ARGS+=("$arg") ;;
@@ -64,15 +73,18 @@ for arg in "$@"; do
     esac
 done
 
-cmake -S . -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DLOG_AWAITER_CALLS=$LOG_AWAITER
+mkdir -p "$BUILD_DIR"
 
-cmake --build build
+cmake -S . -B "$BUILD_DIR" -G Ninja \
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+    -DLOG_AWAITER_CALLS=$LOG_AWAITER \
+    "${FRAME_SIZE_ARGS[@]}"
+
+cmake --build "$BUILD_DIR"
 
 echo "BUILD FOR PROJECT pc_wslam SUCCESSFUL!!!"
 
 export WSLAM_SHADER_SRC_DIR="$PWD"
 
 source .env
-./build/pc_wslam "${RUN_ARGS[@]}"
+"./$BUILD_DIR/pc_wslam" "${RUN_ARGS[@]}"
