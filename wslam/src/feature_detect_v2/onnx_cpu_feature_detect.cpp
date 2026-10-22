@@ -21,13 +21,15 @@ std::optional<std::string> v2::OrtCpuFeatureDetectPass::initialize() {
         return "split model: " + err.value();
     }
 
-    images_.resize(model::kImagesBytes / sizeof(float));
+    input_ = std::make_shared<CpuModelInput>();
+    storage_.set(ResourceIdentifier::CpuModelInputName, input_);
 
     try {
         const auto memory_info
             = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        auto values = input_->values();
         images_tensor_.emplace(Ort::Value::CreateTensor<float>(
-            memory_info, images_.data(), images_.size(),
+            memory_info, values.data(), values.size(),
             model::kImagesShape.data(), model::kImagesShape.size()));
     } catch (const Ort::Exception& e) {
         return std::format("creating images tensor: {}", e.what());
@@ -42,12 +44,6 @@ std::optional<std::string> v2::OrtCpuFeatureDetectPass::execute() {
     }
 
     spdlog::info(LOG_ID " Executing");
-
-    if (auto err
-        = gpu_->readBufferInto(bindings_->getImagesBuffer(),
-                               std::as_writable_bytes(std::span{images_}))) {
-        return "reading images: " + err.value();
-    }
 
     return runner_.run(*images_tensor_);
 }

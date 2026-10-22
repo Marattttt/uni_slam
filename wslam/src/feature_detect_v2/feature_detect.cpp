@@ -177,23 +177,24 @@ std::unique_ptr<compute::Stage> v2::CreateFeatureDetectStage(
             compute.getStorage(), ReadFramePrefilterOptionsFromEnv()));
     }
 
-    StorageImageProvider img_provider{compute.getStorage()};
-    stage->add_pass(std::make_unique<PackModelInputPass>(
-        gpu, bindings, std::move(img_provider)));
-
     switch (config.compute_device) {
-        case compute::ComputeDevice::Gpu:
+        case compute::ComputeDevice::Gpu: {
             // GPU pass: ORT submits to the same queue, so it runs after the
             // packing
+            StorageImageProvider img_provider{compute.getStorage()};
+            stage->add_pass(std::make_unique<PackModelInputPass>(
+                gpu, bindings, std::move(img_provider)));
             stage->add_pass(std::make_unique<OrtFeatureDetectPass>(
                 std::move(ort), models.paths, reference_advance,
                 std::move(bindings), compute.getStorage()));
             break;
+        }
         case compute::ComputeDevice::Cpu:
-            // CPU pass: the stage waits for the packing before running it
+            // No GPU work: SensorLoaderPass fills the pass's host model input
+            // directly (CpuModelInputName)
             stage->add_pass(std::make_unique<OrtCpuFeatureDetectPass>(
                 std::move(ort), models.paths, reference_advance,
-                std::move(bindings), compute.getStorage()));
+                bindings->getKeypointCount(), compute.getStorage()));
             break;
     }
 

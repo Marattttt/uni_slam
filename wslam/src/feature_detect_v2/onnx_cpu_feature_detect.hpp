@@ -2,45 +2,43 @@
 
 #include <onnxruntime/onnxruntime_cxx_api.h>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
+#include <utility>
 
 #include "anybag.hpp"
-#include "compute/gpu.hpp"
 #include "compute/onnx_interop.hpp"
 #include "compute/pass.hpp"
-#include "shared_bindings.hpp"
+#include "cpu_model_input.hpp"
 #include "split_model.hpp"
 
 namespace wslam::v2 {
 
 // Runs the split RaCo-ALIKED-LightGlue models (SplitModelRunner) on ONNX
-// Runtime's CPU execution provider, on the current frame packed into the
-// images buffer, which it reads back
+// Runtime's CPU execution provider, on the host model input the v2
+// SensorLoaderPass fills (CpuModelInputName)
 class OrtCpuFeatureDetectPass : public compute::Pass {
    public:
     OrtCpuFeatureDetectPass(std::shared_ptr<compute::OrtProvider> ort,
                             SplitModelPaths paths, ReferenceAdvance advance,
-                            std::shared_ptr<SharedBindings> bindings,
-                            AnyBag& storage)
-        : gpu_(ort->getGPU()),
-          bindings_(std::move(bindings)),
+                            int64_t keypoint_count, AnyBag& storage)
+        : storage_(storage),
           runner_(std::move(ort), std::move(paths), /*use_webgpu_ep=*/false,
-                  bindings_->getKeypointCount(), advance, storage) {}
+                  keypoint_count, advance, storage) {}
 
     [[nodiscard]] std::optional<std::string> initialize() override;
     [[nodiscard]] std::optional<std::string> execute() override;
     [[nodiscard]] std::string getId() const override;
 
    private:
-    std::shared_ptr<compute::GPU> gpu_;
-    std::shared_ptr<SharedBindings> bindings_;
+    AnyBag& storage_;
     SplitModelRunner runner_;
 
-    // Host copy of the images buffer, viewed by images_tensor_
-    std::vector<float> images_;
+    // Model input in host memory, published for SensorLoaderPass
+    std::shared_ptr<CpuModelInput> input_;
+    // Views input_ and must be destroyed before it
     std::optional<Ort::Value> images_tensor_;
 };
 

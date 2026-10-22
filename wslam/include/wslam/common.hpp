@@ -228,6 +228,10 @@ constexpr std::string FrameSkippedName = "gen:frm:skip";
 constexpr std::string OrtMatchesName = "gen:ort:match";
 // std::vector<float>, one score per OrtMatchesName row
 constexpr std::string OrtMatchScoresName = "gen:ort:mscore";
+// std::shared_ptr<v2::CpuModelInput>: host NCHW model input for
+// --device=cpu, published by OrtCpuFeatureDetectPass::initialize() and
+// filled by the v2 SensorLoaderPass. Absent on the GPU path
+constexpr std::string CpuModelInputName = "res:mdl:in:cpu";
 // v2 pose estimate stage, previous -> current frame of the model's pair.
 // v2::KeypointMatches
 constexpr std::string KeypointMatchesName = "gen:kp:match";

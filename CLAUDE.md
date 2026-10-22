@@ -396,12 +396,15 @@ real rows, `ParseMatches`). Features are never re-detected: each run's output is
 exactly those the keyframe reported, under the same indices. All v2 code lives in
 `namespace wslam::v2` (the v2 `SensorLoaderPass` shares its name with v1 and is
 compiled into the same library). Per frame: `SensorLoaderPass` → `FramePrefilterPass`
-(below; with mapping) → `PackModelInputPass` (uploads the frame into the source texture,
-then centre-crops it to 736×480, gray → RGB, NCHW `[1, 3, H, W]` into the images
-buffer) →
-`OrtCpuFeatureDetectPass` (`--device=cpu`: reads the images buffer back, CPU EP) or
-`OrtFeatureDetectPass` (GPU pass in the same wait batch, WebGPU EP reading the images buffer
-in place; blocked at startup until WebGPU exports exist). Both delegate to
+(below; with mapping) → the model pass. On `--device=gpu`, `PackModelInputPass` uploads
+the frame into the source texture and centre-crops it to 736×480, gray → RGB, NCHW
+`[1, 3, H, W]` into the images buffer, and `OrtFeatureDetectPass` runs in the same wait
+batch (WebGPU EP reading the images buffer in place; blocked at startup until WebGPU
+exports exist). On `--device=cpu` the stage does **no GPU work**: `OrtCpuFeatureDetectPass`
+publishes a host buffer (`v2::CpuModelInput`, `ResourceIdentifier::CpuModelInputName`)
+sized for the model input, the `SensorLoaderPass` writes the centre-cropped RGB frame
+into it, and the pass binds that memory once as its ORT CPU EP input — there is no
+upload, pack dispatch or readback. Both delegate to
 `SplitModelRunner`, which publishes the matches, `OrtKeypointsName` (reference keypoints then
 current, the `[left K | right K]` layout `LoadMatchesPass` reads) and the current frame's
 `FrameFeatures` under `OrtFrameFeaturesName` (`shared_ptr<const>`, what loop closure stores).

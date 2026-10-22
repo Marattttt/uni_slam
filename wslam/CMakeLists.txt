@@ -12,6 +12,7 @@ add_library(wslam_app
     src/feature_detect/generate_features.cpp
     src/feature_detect/sensor_loader.cpp
 
+    src/feature_detect_v2/cpu_model_input.cpp
     src/feature_detect_v2/feature_detect.cpp
     src/feature_detect_v2/frame_prefilter.cpp
     src/feature_detect_v2/motion_prediction.cpp

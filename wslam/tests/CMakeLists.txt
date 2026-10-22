@@ -1,6 +1,7 @@
 add_executable(wslam_tests
     epipolar_geometry_tests.cpp
     global_ba_tests.cpp
+    cpu_model_input_tests.cpp
     keyframe_schedule_tests.cpp
     match_scores_tests.cpp
     sensor_loader_tests.cpp

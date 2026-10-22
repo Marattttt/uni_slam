@@ -1,11 +1,13 @@
 #include "sensor_loader.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "assert.hpp"
 #include "common.hpp"
 #include "compute/compute.hpp"
+#include "cpu_model_input.hpp"
 #include "data/provider_base.hpp"
 
 using namespace wslam;
@@ -144,6 +146,20 @@ std::optional<std::string> v2::SensorLoaderPass::publish(
         auto frame = pending->load();
         if (!frame) {
             return "loading frame: " + std::move(frame).error();
+        }
+
+        // Only camera 0 feeds the model, and only the CPU path publishes this
+        // buffer. It is inserted by the ORT pass, which is initialised after
+        // this pass, so look it up per frame; a missing key means the GPU path
+        if (i == 0) {
+            if (auto stored = storage_.getPtr<std::shared_ptr<CpuModelInput>>(
+                    ResourceIdentifier::CpuModelInputName)) {
+                const auto& input = **stored;
+                if (auto err = input->writeFrame(*frame)) {
+                    return "packing the model input: "
+                           + std::move(err).value();
+                }
+            }
         }
 
         const auto name
