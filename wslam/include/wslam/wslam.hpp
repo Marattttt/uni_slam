@@ -1,5 +1,8 @@
 #pragma once
 
+#include <format>
+#include <utility>
+
 #include "common.hpp"
 #include "compute/compute.hpp"
 #include "data/provider_base.hpp"
@@ -26,6 +29,20 @@ template <size_t CamCnt>
 
     spdlog::info("Sensor params: {}", sensor_params.value());
 
+    // Buffers, pyramid and model input are sized at compile time
+    if (!sensor_params->cams.empty()) {
+        const auto [width, height] = sensor_params->cams.front().resolution;
+        if (std::cmp_not_equal(width, GPUConst::frame_width)
+            || std::cmp_not_equal(height, GPUConst::frame_height)) {
+            return std::format(
+                "the camera is {}x{} but the pipeline is compiled for {}x{}; "
+                "use a build configured with -DWSLAM_FRAME_WIDTH={} "
+                "-DWSLAM_FRAME_HEIGHT={}",
+                width, height, GPUConst::frame_width, GPUConst::frame_height,
+                width, height);
+        }
+    }
+
     for (uint32_t i = 0; i < sensor_params->cams.size(); ++i) {
         const auto& cam = sensor_params->cams[i];
         comp.getStorage().set(ResourceIdentifier::GetCameraIntrinsicsName(i),
@@ -45,6 +62,18 @@ template <size_t CamCnt>
     data::ProviderBase<CamCnt>& provider, const WslamConfig& config) {
     if (auto err = impl::SetSensorIntrinsics(compute, provider)) {
         return "getting sensor intrinsics: " + std::move(err).value();
+    }
+
+    // The v1 passes undistort with the radial-tangential model only
+    const auto camera = compute.getStorage().get<data::CamSensorParams>(
+        ResourceIdentifier::GetCameraIntrinsicsName(0));
+    if (camera
+        && camera->distortion_model
+               != data::DistortionModel::RadialTangential) {
+        return std::format(
+            "the v1 pipeline supports radial-tangential distortion only, the "
+            "camera is {}; use -v2",
+            data::ToString(camera->distortion_model));
     }
 
     impl::CreateWslamPipelineImpl(compute, shared,

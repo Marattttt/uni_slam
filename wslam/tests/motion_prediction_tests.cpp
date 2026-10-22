@@ -35,7 +35,7 @@ data::CamSensorParams Camera() {
         .resolution = {752, 480},
         .camera_model = "pinhole",
         .intrinsics = {458.654, 457.296, 367.215, 248.375},
-        .distortion_model = "radial-tangential",
+        .distortion_model = data::DistortionModel::RadialTangential,
         .distortion_coefficients = Eigen::Vector4d::Zero(),
     };
 }

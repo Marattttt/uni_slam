@@ -460,8 +460,7 @@ std::expected<AcceptedLoop, std::string> LoopClosureWorker::verify(
         correspondences.push_back(PnpCorrespondence{
             .point_candidate = point_candidate,
             .query_ray = map::util::PixelToNormalised(
-                match->right_px, camera_.intrinsics,
-                camera_.distortion_coefficients, kUndistortIterations,
+                match->right_px, camera_, kUndistortIterations,
                 kUndistortTolerance),
         });
     }

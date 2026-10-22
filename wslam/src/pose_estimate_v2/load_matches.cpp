@@ -2,7 +2,10 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <format>
+#include <limits>
+#include <numbers>
 #include <span>
 #include <utility>
 #include <vector>
@@ -87,14 +90,19 @@ std::optional<std::string> v2::LoadMatchesPass::execute() {
                  "keypoints");
 
     size_t dropped = 0;
-    KeypointMatches correspondences
-        = buildCorrespondences(*matches, *scores, *keypoints, camera, dropped);
+    size_t out_of_view = 0;
+    KeypointMatches correspondences = buildCorrespondences(
+        *matches, *scores, *keypoints, camera, dropped, out_of_view);
 
     if (dropped > 0) {
         spdlog::warn(LOG_ID
                      " Dropped {} of {} matches with a keypoint outside "
                      "the image",
                      dropped, matches->size());
+    }
+    if (out_of_view > 0) {
+        spdlog::debug(LOG_ID " Dropped {} of {} matches with a ray past {} deg",
+                      out_of_view, matches->size(), opts_.max_incidence_deg);
     }
 
     spdlog::info(LOG_ID " {} correspondences", correspondences.size());
@@ -109,7 +117,8 @@ v2::KeypointMatches v2::LoadMatchesPass::buildCorrespondences(
     std::span<const model::KeypointMatch> matches,
     std::span<const float> scores,
     std::span<const model::KeypointPosition> keypoints,
-    const data::CamSensorParams& camera, size_t& dropped) const {
+    const data::CamSensorParams& camera, size_t& dropped,
+    size_t& out_of_view) const {
     const int64_t keypoint_count = bindings_->getKeypointCount();
     WSLAM_ASSERT(keypoints.size() == model::PairKeypointsCount(keypoint_count),
                  "{} keypoints published, expected {}", keypoints.size(),
@@ -132,8 +141,17 @@ v2::KeypointMatches v2::LoadMatchesPass::buildCorrespondences(
 
     const auto to_ray = [&](const Eigen::Vector2d& px) {
         return map::util::PixelToNormalised(
-            px, camera.intrinsics, camera.distortion_coefficients,
-            opts_.undistort_iterations, opts_.undistort_tolerance);
+            px, camera, opts_.undistort_iterations, opts_.undistort_tolerance);
+    };
+
+    // A ray at the incidence limit has |ray| = tan(limit); NaN rays (past
+    // 90 degrees) fail the comparison
+    const double max_ray_norm
+        = opts_.max_incidence_deg >= 90.0
+              ? std::numeric_limits<double>::infinity()
+              : std::tan(opts_.max_incidence_deg * std::numbers::pi / 180.0);
+    const auto in_field_of_view = [max_ray_norm](const Eigen::Vector2d& ray) {
+        return ray.allFinite() && ray.norm() <= max_ray_norm;
     };
 
     const auto is_keypoint_index = [keypoint_count](int64_t index) {
@@ -167,14 +185,21 @@ v2::KeypointMatches v2::LoadMatchesPass::buildCorrespondences(
             continue;
         }
 
+        const Eigen::Vector2d prev_ray = to_ray(prev_px);
+        const Eigen::Vector2d curr_ray = to_ray(curr_px);
+        if (!in_field_of_view(prev_ray) || !in_field_of_view(curr_ray)) {
+            ++out_of_view;
+            continue;
+        }
+
         correspondences.push_back(KeypointCorrespondence{
             .prev_index = static_cast<uint32_t>(prev_index),
             .curr_index = static_cast<uint32_t>(curr_index),
             .score = scores[i],
             .prev_px = prev_px,
             .curr_px = curr_px,
-            .prev_ray = to_ray(prev_px),
-            .curr_ray = to_ray(curr_px),
+            .prev_ray = prev_ray,
+            .curr_ray = curr_ray,
         });
     }
 

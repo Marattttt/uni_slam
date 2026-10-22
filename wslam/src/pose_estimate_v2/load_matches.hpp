@@ -32,6 +32,13 @@ class LoadMatchesPass : public compute::Pass {
         uint32_t undistort_iterations = 20;
         double undistort_tolerance = 1e-9;
 
+        // Matches with a keypoint whose ray is farther than this from the
+        // optical axis are dropped. A fisheye sees past the angles the
+        // normalised image plane holds well: there a pixel of noise is many
+        // pixels of the pinhole errors downstream. 90 degrees keeps every
+        // ray the plane can hold (WSLAM_MAX_INCIDENCE_DEG)
+        double max_incidence_deg = 90.0;
+
         uint32_t camera_index = 0;
     };
 
@@ -53,13 +60,15 @@ class LoadMatchesPass : public compute::Pass {
     // Set by initialize()
     std::optional<data::CamSensorParams> camera_;
 
-    // Correspondences of the matches whose keypoints both lie in the image;
-    // counts the others in `dropped`
+    // Correspondences of the matches whose keypoints both lie in the image
+    // within max_incidence_deg; counts the others outside the image in
+    // `dropped`, the rest in `out_of_view`
     [[nodiscard]] KeypointMatches buildCorrespondences(
         std::span<const raco_lightglue::KeypointMatch> matches,
         std::span<const float> scores,
         std::span<const raco_lightglue::KeypointPosition> keypoints,
-        const data::CamSensorParams& camera, size_t& dropped) const;
+        const data::CamSensorParams& camera, size_t& dropped,
+        size_t& out_of_view) const;
 };
 
 }  // namespace wslam::v2

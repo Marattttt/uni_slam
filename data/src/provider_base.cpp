@@ -5,11 +5,34 @@
 #include <Eigen/Core>
 #include <algorithm>
 #include <cstdio>
+#include <format>
 #include <memory>
 
 #include "stb_image.h"
 
 namespace wslam::data {
+std::expected<DistortionModel, std::string> ParseDistortionModel(
+    std::string_view name) {
+    if (name == "radial-tangential" || name == "radtan") {
+        return DistortionModel::RadialTangential;
+    }
+    if (name == "equidistant") {
+        return DistortionModel::Equidistant;
+    }
+    return std::unexpected(
+        std::format("unsupported distortion model '{}'", name));
+}
+
+std::string_view ToString(DistortionModel model) {
+    switch (model) {
+        case DistortionModel::RadialTangential:
+            return "radial-tangential";
+        case DistortionModel::Equidistant:
+            return "equidistant";
+    }
+    return "unknown";
+}
+
 IMUReading interpolateIMU(std::span<IMUReading> readings, uint64_t image_ts) {
     if (readings.empty()) {
         return {};

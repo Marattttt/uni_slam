@@ -11,7 +11,8 @@
 #include "data/provider_base.hpp"
 #include "map/map_helpers_lods.hpp"
 
-// Pinhole + radial-tangential camera helpers for the v2 pose estimate passes
+// Pinhole camera helpers (radial-tangential or equidistant distortion) for the
+// v2 pose estimate passes
 namespace wslam::v2::util {
 
 // Camera parameters the sensor intrinsics were published under at pipeline
@@ -43,8 +44,8 @@ ReadCameraParams(const AnyBag& storage, uint32_t camera_index) {
         return Eigen::Vector2d::Constant(
             std::numeric_limits<double>::quiet_NaN());
     }
-    const Eigen::Vector2d distorted = map::util::DistortNormalised(
-        point.head<2>() / point.z(), camera.distortion_coefficients);
+    const Eigen::Vector2d distorted
+        = map::util::DistortNormalised(point.head<2>() / point.z(), camera);
     return NormalisedToPixel(distorted, camera);
 }
 

@@ -2,6 +2,7 @@ add_library(wslam_data
     src/euroc_provider.cpp
     src/provider_base.cpp
     src/stb.cpp
+    src/uzh_fpv_provider.cpp
 )
 
 add_library(wslam::data ALIAS wslam_data)

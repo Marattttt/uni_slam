@@ -99,7 +99,7 @@ json cameraToJson(const data::CamSensorParams& cam) {
         {"p1", cam.distortion_coefficients(2)},
         {"p2", cam.distortion_coefficients(3)},
         {"width", cam.resolution.at(0)},  {"height", cam.resolution.at(1)},
-        {"model", cam.camera_model},      {"distortion_model", cam.distortion_model},
+        {"model", cam.camera_model},      {"distortion_model", data::ToString(cam.distortion_model)},
     };
 }
 

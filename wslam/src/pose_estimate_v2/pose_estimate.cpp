@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "load_matches.hpp"
+#include "map/utils.hpp"
 #include "ransac.hpp"
 #include "triangulate.hpp"
 
@@ -19,8 +20,11 @@ std::unique_ptr<compute::Stage> v2::CreatePoseEstimateStage(
     auto stage = std::make_unique<compute::Stage>("Pose Estimate v2",
                                                   &compute.getPerf());
 
-    stage->add_pass(std::make_unique<LoadMatchesPass>(std::move(bindings),
-                                                      compute.getStorage()));
+    LoadMatchesPass::Opts load_options;
+    load_options.max_incidence_deg = map::utils::EnvDouble(
+        "WSLAM_MAX_INCIDENCE_DEG", load_options.max_incidence_deg);
+    stage->add_pass(std::make_unique<LoadMatchesPass>(
+        std::move(bindings), compute.getStorage(), load_options));
 
     stage->add_pass(std::make_unique<RansacPass>(compute.getStorage()));
 

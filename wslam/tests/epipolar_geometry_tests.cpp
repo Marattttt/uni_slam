@@ -486,3 +486,75 @@ TEST(CameraModelTest, UndistortionInvertsProjection) {
     EXPECT_FALSE(util::ProjectToPixel(Eigen::Vector3d(0.0, 0.0, -1.0), camera)
                      .allFinite());
 }
+
+namespace {
+// UZH-FPV indoor_45 Snapdragon cam0 (Kalibr), a ~170 degree fisheye
+data::CamSensorParams UzhFpvCamera() {
+    data::CamSensorParams camera{};
+    camera.resolution = {640, 480};
+    camera.intrinsics = {275.46015578667294, 274.9948095922592,
+                         315.958384100568, 242.7123497822731};
+    camera.distortion_model = data::DistortionModel::Equidistant;
+    camera.distortion_coefficients
+        = {-6.545154718304953e-06, -0.010379525898159981, 0.014935312423953146,
+           -0.005639061406567785};
+    return camera;
+}
+}  // namespace
+
+TEST(CameraModelTest, EquidistantUndistortionInvertsProjection) {
+    const auto camera = UzhFpvCamera();
+
+    // Out to ~80 degrees off the axis (|xy| = 5.7), the image corners
+    for (const double x : {-4.0, -1.5, -0.3, 0.0, 0.6, 2.0, 4.0}) {
+        for (const double y : {-4.0, -1.0, 0.0, 0.4, 4.0}) {
+            const Eigen::Vector3d point(x, y, 1.0);
+            const Eigen::Vector2d px = util::ProjectToPixel(point, camera);
+            ASSERT_TRUE(px.allFinite());
+
+            const Eigen::Vector2d ray
+                = map::util::PixelToNormalised(px, camera, 20, 1e-12);
+            EXPECT_LT((ray - point.head<2>()).norm(), 1e-6 * point.norm())
+                << "at (" << x << ", " << y << ")";
+        }
+    }
+}
+
+TEST(CameraModelTest, EquidistantMatchesTheKalibrModel) {
+    const auto camera = UzhFpvCamera();
+    const Eigen::Vector4d& d = camera.distortion_coefficients;
+
+    // theta_d = theta (1 + k1 theta^2 + k2 theta^4 + k3 theta^6 + k4 theta^8)
+    const Eigen::Vector2d xy(0.8, -0.6);
+    const double theta = std::atan(xy.norm());
+    const double theta_d
+        = theta
+          * (1 + d[0] * std::pow(theta, 2) + d[1] * std::pow(theta, 4)
+             + d[2] * std::pow(theta, 6) + d[3] * std::pow(theta, 8));
+    const Eigen::Vector2d expected = xy.normalized() * theta_d;
+
+    const Eigen::Vector2d distorted = map::util::DistortNormalised(xy, camera);
+    EXPECT_LT((distorted - expected).norm(), 1e-12);
+    // The radial-tangential overload must not be picked for this camera
+    EXPECT_GT((map::util::DistortNormalised(xy, camera.distortion_coefficients)
+               - expected)
+                  .norm(),
+              1e-3);
+
+    // The principal point maps to the optical axis
+    const Eigen::Vector2d centre = map::util::PixelToNormalised(
+        camera.intrinsics.tail<2>(), camera, 20, 1e-12);
+    EXPECT_LT(centre.norm(), 1e-12);
+}
+
+TEST(CameraModelTest, ParsesDistortionModelNames) {
+    EXPECT_EQ(data::ParseDistortionModel("radial-tangential"),
+              data::DistortionModel::RadialTangential);
+    EXPECT_EQ(data::ParseDistortionModel("radtan"),
+              data::DistortionModel::RadialTangential);
+    EXPECT_EQ(data::ParseDistortionModel("equidistant"),
+              data::DistortionModel::Equidistant);
+    EXPECT_FALSE(data::ParseDistortionModel("omni").has_value());
+    EXPECT_EQ(data::ToString(data::DistortionModel::Equidistant),
+              "equidistant");
+}

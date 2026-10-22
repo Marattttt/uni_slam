@@ -96,7 +96,7 @@ wslam::data::CamSensorParams Camera() {
         .resolution = {752, 480},
         .camera_model = "pinhole",
         .intrinsics = {450.0, 450.0, 376.0, 240.0},
-        .distortion_model = "radial-tangential",
+        .distortion_model = wslam::data::DistortionModel::RadialTangential,
         .distortion_coefficients = Eigen::Vector4d::Zero(),
     };
 }

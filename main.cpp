@@ -8,6 +8,7 @@
 #include <charconv>
 #include <csignal>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "compute/compute.hpp"
 #include "data/euroc_provider.hpp"
 #include "data/provider_base.hpp"
+#include "data/uzh_fpv_provider.hpp"
 #include "wslam/common.hpp"
 #include "wslam/wslam.hpp"
 
@@ -22,6 +24,47 @@ using namespace wslam;
 using namespace std::chrono_literals;
 
 #define LOG_ID "[MAIN]"
+
+namespace {
+// Dataset format the sensor readings come from
+enum class Dataset : uint8_t {
+    Euroc,   // EUROC_DIR: a EuRoC MAV mav0/ directory
+    UzhFpv,  // UZH_FPV_DIR + UZH_FPV_CALIB_DIR: a UZH-FPV text sequence
+};
+
+// --dataset=euroc|uzh-fpv, EuRoC by default
+std::optional<Dataset> parseDataset(std::span<char*> args) {
+    constexpr std::string_view kDatasetFlag = "--dataset=";
+    Dataset dataset = Dataset::Euroc;
+    for (std::string_view arg : args) {
+        if (!arg.starts_with(kDatasetFlag)) {
+            continue;
+        }
+        const auto value = arg.substr(kDatasetFlag.size());
+        if (value == "euroc") {
+            dataset = Dataset::Euroc;
+        } else if (value == "uzh-fpv") {
+            dataset = Dataset::UzhFpv;
+        } else {
+            spdlog::critical(LOG_ID " unknown --dataset value '{}'", value);
+            return std::nullopt;
+        }
+    }
+    return dataset;
+}
+
+std::unique_ptr<data::ProviderBase<2U>> createProvider(Dataset dataset) {
+    switch (dataset) {
+        case Dataset::UzhFpv:
+            return std::make_unique<data::UzhFpvProvider>(
+                data::CreateUzhFpvProviderOpts());
+        case Dataset::Euroc:
+            break;
+    }
+    return std::make_unique<data::EurocProvider>(
+        data::CreateEurocProviderOpts());
+}
+}  // namespace
 
 WslamConfig parseArgs(std::span<char*> args) {
     constexpr std::string_view kIterFlag = "--max-iters=";
@@ -91,7 +134,7 @@ extern "C" void handleShutdownSignal(int signal) {
 }
 }  // namespace
 
-int main_test(WslamConfig config) {
+int main_test(WslamConfig config, Dataset dataset) {
     compute::PerfRecorder::setThreadId("main");
 
     compute::Compute comp;
@@ -107,14 +150,11 @@ int main_test(WslamConfig config) {
         std::terminate();
     }
 
-    std::unique_ptr<data::ProviderBase<2U>> euroc_data
-        = std::make_unique<data::EurocProvider>(
-            data::CreateEurocProviderOpts());
+    std::unique_ptr<data::ProviderBase<2U>> provider = createProvider(dataset);
 
-    if (auto err
-        = config.use_pipeline_v2
-              ? CreateWslamPipelineV2(comp, *euroc_data, config)
-              : CreateWslamPipeline(comp, shared, *euroc_data, config)) {
+    if (auto err = config.use_pipeline_v2
+                       ? CreateWslamPipelineV2(comp, *provider, config)
+                       : CreateWslamPipeline(comp, shared, *provider, config)) {
         spdlog::critical(LOG_ID " creating wslam pipeline: {}",
                          std::move(err).value());
         std::terminate();
@@ -319,8 +359,12 @@ int main(int argc, char* argv[]) {
         return ort_main(argc, argv);
     }
 
-    const WslamConfig config
-        = parseArgs(std::span{argv + 1, static_cast<size_t>(argc - 1)});
+    const std::span args{argv + 1, static_cast<size_t>(argc - 1)};
+    const WslamConfig config = parseArgs(args);
+    const std::optional<Dataset> dataset = parseDataset(args);
+    if (!dataset) {
+        return 1;
+    }
 
     // The v1 mapping stage selects keyframes itself from every frame
     if (!config.keyframes_path.empty() && !config.use_pipeline_v2) {
@@ -342,5 +386,5 @@ int main(int argc, char* argv[]) {
                      : std::to_string(config.max_iterations),
                  config.map_out_path.empty() ? std::string("(none)")
                                              : config.map_out_path.string());
-    return main_test(config);
+    return main_test(config, *dataset);
 }

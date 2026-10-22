@@ -4,6 +4,7 @@ add_executable(wslam_tests
     keyframe_schedule_tests.cpp
     match_scores_tests.cpp
     sensor_loader_tests.cpp
+    uzh_fpv_provider_tests.cpp
     local_smoother_tests.cpp
     loop_closure_tests.cpp
     loop_closure_dataset_tests.cpp

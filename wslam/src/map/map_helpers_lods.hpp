@@ -1,9 +1,13 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <cmath>
+#include <limits>
+#include <numbers>
 #include <ranges>
 
 #include "common.hpp"
+#include "data/provider_base.hpp"
 #include "models.hpp"
 
 namespace wslam::map::util {
@@ -75,6 +79,101 @@ inline Eigen::Vector2d UndistortNormalised(const Eigen::Vector2d& dist,
     return xy;
 }
 
+// Forward equidistant (Kannala-Brandt / OpenCV fisheye) distortion, as Kalibr
+// defines it: the incidence angle theta = atan(r) of the ideal point maps to
+//   theta_d = theta (1 + k1 theta^2 + k2 theta^4 + k3 theta^6 + k4 theta^8)
+// and the distorted point keeps the ideal one's direction at radius theta_d
+inline Eigen::Vector2d DistortEquidistant(const Eigen::Vector2d& xy,
+                                          const Eigen::Vector4d& d) {
+    const double r = xy.norm();
+    if (r < std::numeric_limits<double>::epsilon()) {
+        return xy;
+    }
+    const double theta = std::atan(r);
+    const double theta2 = theta * theta;
+    const double theta_d
+        = theta
+          * (1.0
+             + theta2
+                   * (d[0]
+                      + theta2 * (d[1] + theta2 * (d[2] + theta2 * d[3]))));
+    return xy * (theta_d / r);
+}
+
+// Inverse of DistortEquidistant: Newton on theta_d(theta), from theta =
+// theta_d. NaN when the solution reaches 90 degrees, a ray the normalised
+// image plane can't hold
+inline Eigen::Vector2d UndistortEquidistant(const Eigen::Vector2d& dist,
+                                            const Eigen::Vector4d& d,
+                                            uint32_t max_iters
+                                            = kDefaultUndistortMaxIters,
+                                            double tol
+                                            = kDefaultUndistortTolerance) {
+    const double theta_d = dist.norm();
+    if (theta_d < std::numeric_limits<double>::epsilon()) {
+        return dist;
+    }
+    double theta = theta_d;
+    for (uint32_t i = 0; i < max_iters; ++i) {
+        const double theta2 = theta * theta;
+        const double value
+            = theta
+                  * (1.0
+                     + theta2
+                           * (d[0]
+                              + theta2
+                                    * (d[1] + theta2 * (d[2] + theta2 * d[3]))))
+              - theta_d;
+        const double slope
+            = 1.0
+              + theta2
+                    * (3.0 * d[0]
+                       + theta2
+                             * (5.0 * d[1]
+                                + theta2 * (7.0 * d[2] + theta2 * 9.0 * d[3])));
+        const double step = value / slope;
+        theta -= step;
+        if (std::abs(step) < tol) {
+            break;
+        }
+    }
+    if (!(theta >= 0.0 && theta < std::numbers::pi / 2.0)) {
+        return Eigen::Vector2d::Constant(
+            std::numeric_limits<double>::quiet_NaN());
+    }
+    return dist * (std::tan(theta) / theta_d);
+}
+
+// The camera's distortion model applied to an ideal normalised point
+inline Eigen::Vector2d DistortNormalised(const Eigen::Vector2d& xy,
+                                         const data::CamSensorParams& camera) {
+    switch (camera.distortion_model) {
+        case data::DistortionModel::Equidistant:
+            return DistortEquidistant(xy, camera.distortion_coefficients);
+        case data::DistortionModel::RadialTangential:
+            break;
+    }
+    return DistortNormalised(xy, camera.distortion_coefficients);
+}
+
+// Inverse of the camera's distortion model
+inline Eigen::Vector2d UndistortNormalised(const Eigen::Vector2d& dist,
+                                           const data::CamSensorParams& camera,
+                                           uint32_t max_iters
+                                           = kDefaultUndistortMaxIters,
+                                           double tol
+                                           = kDefaultUndistortTolerance) {
+    switch (camera.distortion_model) {
+        case data::DistortionModel::Equidistant:
+            return UndistortEquidistant(dist, camera.distortion_coefficients,
+                                        max_iters, tol);
+        case data::DistortionModel::RadialTangential:
+            break;
+    }
+    return UndistortNormalised(dist, camera.distortion_coefficients, max_iters,
+                               tol);
+}
+
 constexpr double LodScale(std::unsigned_integral auto lod) {
     static constinit auto lod_factors = std::invoke([]() {
         const auto factors = std::views::iota(0)
@@ -114,5 +213,15 @@ inline Eigen::Vector2d PixelToNormalised(const Eigen::Vector2d& pixel,
     const double cv = intrinsics[3];
     const Eigen::Vector2d dist((pixel.x() - cu) / fu, (pixel.y() - cv) / fv);
     return UndistortNormalised(dist, distortion, max_iters, tol);
+}
+
+// PixelToNormalised under the camera's own distortion model
+inline Eigen::Vector2d PixelToNormalised(const Eigen::Vector2d& pixel,
+                                         const data::CamSensorParams& camera,
+                                         uint32_t max_iters, double tol) {
+    const Eigen::Vector4d& k = camera.intrinsics;
+    const Eigen::Vector2d dist((pixel.x() - k[2]) / k[0],
+                               (pixel.y() - k[3]) / k[1]);
+    return UndistortNormalised(dist, camera, max_iters, tol);
 }
 }  // namespace wslam::map::util

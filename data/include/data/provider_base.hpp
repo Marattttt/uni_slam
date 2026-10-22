@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Eigen {
@@ -28,6 +29,23 @@ struct IMUSensorParams {
     double accelerometer_random_walk;
 };
 
+// Lens distortion models of the normalised image plane, named as in Kalibr
+// and EuRoC sensor files
+enum class DistortionModel : uint8_t {
+    // OpenCV / EuRoC radial-tangential: coefficients [k1, k2, p1, p2]
+    RadialTangential,
+    // Kannala-Brandt / OpenCV fisheye on the incidence angle theta:
+    // theta_d = theta (1 + k1 theta^2 + k2 theta^4 + k3 theta^6 + k4 theta^8),
+    // coefficients [k1, k2, k3, k4]
+    Equidistant,
+};
+
+// "radial-tangential" (or "radtan") / "equidistant"
+std::expected<DistortionModel, std::string> ParseDistortionModel(
+    std::string_view name);
+
+std::string_view ToString(DistortionModel model);
+
 struct CamSensorParams {
     Eigen::Matrix4d T_BS;
 
@@ -37,7 +55,7 @@ struct CamSensorParams {
     std::string camera_model;
     Eigen::Vector4d intrinsics;  // [fu, fv, cu, cv]
 
-    std::string distortion_model;
+    DistortionModel distortion_model;
     Eigen::Vector4d distortion_coefficients;
 };
 
@@ -253,7 +271,7 @@ struct formatter<CamSensorParams> {
                               "}}",
                               cam.T_BS, cam.rate_hz, cam.resolution[0],
                               cam.resolution[1], cam.camera_model,
-                              cam.intrinsics, cam.distortion_model,
+                              cam.intrinsics, ToString(cam.distortion_model),
                               cam.distortion_coefficients);
     }
 };

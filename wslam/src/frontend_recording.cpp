@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -60,7 +61,7 @@ json CameraToJson(const data::CamSensorParams& camera) {
         {"resolution", camera.resolution},
         {"camera_model", camera.camera_model},
         {"intrinsics", MatrixToJson(camera.intrinsics)},
-        {"distortion_model", camera.distortion_model},
+        {"distortion_model", data::ToString(camera.distortion_model)},
         {"distortion_coefficients",
          MatrixToJson(camera.distortion_coefficients)},
     };
@@ -73,7 +74,14 @@ data::CamSensorParams CameraFromJson(const json& value) {
         .resolution = value.at("resolution").get<std::array<int, 2>>(),
         .camera_model = value.at("camera_model").get<std::string>(),
         .intrinsics = MatrixFromJson<Eigen::Vector4d>(value.at("intrinsics")),
-        .distortion_model = value.at("distortion_model").get<std::string>(),
+        .distortion_model = std::invoke([&value] {
+            auto model = data::ParseDistortionModel(
+                value.at("distortion_model").get<std::string>());
+            if (!model) {
+                throw std::runtime_error(std::move(model).error());
+            }
+            return *model;
+        }),
         .distortion_coefficients
         = MatrixFromJson<Eigen::Vector4d>(value.at("distortion_coefficients")),
     };

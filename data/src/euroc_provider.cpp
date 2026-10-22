@@ -84,7 +84,12 @@ distortion_coefficients: [-0.28340811, 0.07395907, 0.00019359, 1.76187114e-05]
         params.resolution = sensor["resolution"].as<std::array<int, 2>>();
         params.camera_model = sensor["camera_model"].as<std::string>();
         params.intrinsics = parse1x4(sensor["intrinsics"]);
-        params.distortion_model = sensor["distortion_model"].as<std::string>();
+        auto distortion_model = ParseDistortionModel(
+            sensor["distortion_model"].as<std::string>());
+        if (!distortion_model) {
+            return std::unexpected(std::move(distortion_model).error());
+        }
+        params.distortion_model = *distortion_model;
         params.distortion_coefficients
             = parse1x4(sensor["distortion_coefficients"]);
 

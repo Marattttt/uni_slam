@@ -59,8 +59,7 @@ GridGeometry MakeGrid(const data::CamSensorParams& camera,
                 spread(column, options.grid_columns, width),
                 spread(row, options.grid_rows, height)};
             const Eigen::Vector2d ray = map::util::PixelToNormalised(
-                pixel, camera.intrinsics, camera.distortion_coefficients,
-                kUndistortIterations, kUndistortTolerance);
+                pixel, camera, kUndistortIterations, kUndistortTolerance);
             grid.rays.push_back(ray);
             grid.max_radius_px = std::max(
                 grid.max_radius_px,
