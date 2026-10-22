@@ -32,6 +32,13 @@ Dawn's `DEPS` (it fails if Dawn moves), configures Dawn with
 `DAWN_ENABLE_SWIFTSHADER=ON`, and installs `libvk_swiftshader.so` next to
 `libwebgpu_dawn.so`, which is where Dawn looks for it at run time. **FAISS** (loop closure) is the one FetchContent dependency with a native build:
 v1.15.1 by tarball hash, CPU only, linking the system BLAS/LAPACK and OpenMP.
+**The camera resolution is a compile-time constant**: `WSLAM_FRAME_WIDTH` /
+`WSLAM_FRAME_HEIGHT` (CMake cache, default 752×480 for EuRoC; PUBLIC definitions of
+`wslam_app`) size the GPU buffers, the pyramid and the model input
+(`GPUConst::frame_width`). UZH-FPV's Snapdragon cameras are 640×480, so they need their
+own build directory: `-DWSLAM_FRAME_WIDTH=640 -DWSLAM_FRAME_HEIGHT=480`
+(`build/release_640x480` for the benchmark scripts; `./run.sh 640x480` builds
+`build/640x480`). `SetSensorIntrinsics` refuses a camera of another size at startup.
 **Eigen is pinned to 3.4.0** in `cmake/configureDependencies.cmake`
 because GTSAM 4.3a1 bundles Eigen 3.4.0 and statically asserts the Eigen
 WORLD/MAJOR/MINOR version matches the consumer's at compile time.
@@ -62,6 +69,10 @@ Flags:
   types equally, so the default request lands on SwiftShader. `GPU::initAdapter` rejects an
   adapter whose type doesn't match the requested device either way.
 - `-no-mapping` — v2 only: drop the mapping stage; the model then pairs consecutive frames.
+- `--dataset=euroc|uzh-fpv` — the data provider (default `euroc`, `EUROC_DIR`).
+  `uzh-fpv` reads a UZH-FPV text sequence (`UZH_FPV_DIR`, `UZH_FPV_CALIB_DIR`; see Data
+  providers) and needs a 640×480 build. Its equidistant (fisheye) camera works with `-v2`
+  only: v1 undistorts with radial-tangential and refuses other models.
 - `-no-loop-closure` — v2 with mapping: run without the loop closure thread
   (`WslamConfig::enable_loop_closure`, default on).
 - `-no-frame-prefilter` — v2 with mapping: run the model on every frame instead of skipping
@@ -92,6 +103,17 @@ only when executing `pc_wslam` (or the helper run scripts, which do it for you).
 It sets:
 - `WSLAM_SHADER_SRC_DIR` — directory where `.wgsl` shaders are loaded from at runtime.
 - `EUROC_DIR` — path to EuRoC MAV dataset (`mav0/` root).
+- `UZH_FPV_CAMERA_TIME_SHIFT_S` — optional: replaces Kalibr's `timeshift_cam_imu` (an
+  experiment knob; the calibrated value is right, see `benchmarks/NOTE_UZH_FPV.md`).
+- `UZH_FPV_DIR`, `UZH_FPV_CALIB_DIR` — with `--dataset=uzh-fpv`: an unpacked UZH-FPV
+  `*_snapdragon_with_gt.zip` (`left_images.txt`, `right_images.txt`, `imu.txt`, `img/`)
+  and its Kalibr calibration zip (`camchain-imucam-*.yaml`, `imu.yaml`). Data:
+  `~/dev/proj/resources/res_uni_slam/uzh_fpv/` (`indoor_45_2_snapdragon_with_gt`,
+  `calib/indoor_45_calib_snapdragon`, `downloads/`; the note listing the sequences to
+  have is `NOTES_harder-dataset-comparison.md`, gitignored).
+- `WSLAM_MAX_INCIDENCE_DEG` (90) — v2: `LoadMatchesPass` drops matches whose ray is
+  farther off the optical axis (fisheye edges, where a pixel of noise is many pinhole
+  pixels downstream); 90 keeps every ray the normalised plane holds.
 - `WSLAM_ONNX_EXTRACTOR_MODEL`, `WSLAM_ONNX_MODEL` — the split RaCo-ALIKED-LightGlue models
   the v2 pipeline runs (both required with `-v2`; no default): the extractor
   (`resources/raco_aliked_lightglue_extractor_k512_boundary_cpu.onnx`, run once) and the
@@ -313,15 +335,30 @@ modifying it, remember the changes are tracked in this repo's history.
   `f_dataset-<SEQ>_monoi[_<N>f][_r<I>].txt`. ORB-SLAM3 is not deterministic: repeat it
   with a run index. The binary segfaults at shutdown *after* saving (known upstream
   viewer/GL teardown race) — the script tolerates it and validates the output files instead.
+- UZH-FPV (`benchmarks/NOTE_UZH_FPV.md` has the results): `benchmarks/uzh_fpv_to_euroc.py
+  SEQ CALIB OUT` mirrors a sequence into the EuRoC layout ORB-SLAM3's `mono_inertial_euroc`
+  reads (symlinked images named by ns timestamp, camera timestamps moved onto the IMU clock
+  by Kalibr's `timeshift_cam_imu`, which ORB-SLAM3 has no setting for) and writes its
+  settings (`KannalaBrandt8`, `T_b_c1` = `T_cam_imu`⁻¹, Kalibr IMU noise; `--orb-features`,
+  `--orb-fast`, `--settings-name` write variants; OpenCV needs reals written as `500.0`).
+  `benchmarks/run_orbslam3_uzh_fpv.sh MIRROR NAME [RUN]` (`ORB_SETTINGS=` picks a
+  variant) and `benchmarks/run_wslam_uzh_fpv.sh SEQ CALIB OUT_DIR [BUILD_DIR]` (default
+  `build/release_640x480`) are the runners. Score against `groundtruth.txt` (IMU pose)
+  with `--cam-to-body` set to the camchain yaml and **`--gt-time-offset -0.016`**: the
+  ground truth runs ~16 ms ahead of the IMU clock (about the raw camera clock), while
+  Kalibr's shift does put the camera on the IMU clock — both measured with
+  `benchmarks/gyro_time_offset.py` (trajectory rotation vs integrated gyro, no ground
+  truth or extrinsics needed). ORB-SLAM3 mono-inertial fails indoor_45_2 (6/6 runs).
 - `benchmarks/run_wslam_euroc.sh MAV0_DIR OUT_DIR [BUILD_DIR]` — a full v2 run
   (`--device=cpu`, mapping and loop closure on) over a sequence, `--max-iters` set to its
   cam0 frame count; `OUT_DIR` gets the maps, `run.log`, the perf yaml and `status.txt`.
   Don't edit it while a run uses it: bash reads scripts as it goes.
 - `benchmarks/compare.py` (run with `benchmarks/.venv/bin/python`; venv has
   `evo` + `numpy`) — converts wslam `map.json`, ORB-SLAM3 txt (ns
-  timestamps), and EuRoC GT csv to TUM format and runs `evo_ape`/`evo_rpe`.
-  `--cam-to-body mav0/cam0/sensor.yaml` converts wslam's camera poses to the body
-  frame (needed for a meaningful RPE); `--wslam` is repeatable (`map.json` and
+  timestamps, told from seconds by size: > 1e11), and EuRoC GT csv or UZH-FPV
+  `groundtruth.txt` to TUM format and runs `evo_ape`/`evo_rpe`.
+  `--cam-to-body mav0/cam0/sensor.yaml` (or a Kalibr camchain-imucam yaml) converts
+  wslam's camera poses to the body frame (needed for a meaningful RPE); `--wslam` is repeatable (`map.json` and
   `map_vio.json` of a loop closure run). `--report` adds `accuracy_report.py`
   (numpy/scipy, also standalone): coverage, Umeyama scale, APE under Sim(3) / SE(3) /
   4-DoF position+yaw (needs the map json's `gravity_world`), rotation APE, RPE over
@@ -357,10 +394,11 @@ keypoints/descriptors and zero-padded `[K, 3]` matches/`[K]` scores, `mscores > 
 real rows, `ParseMatches`). Features are never re-detected: each run's output is kept as
 *pending* and becomes the reference when its frame does, so the reference keypoints are
 exactly those the keyframe reported, under the same indices. All v2 code lives in
-`namespace wslam::v2` (the v2 `FillPyramidPass`/`SensorLoaderPass` share names with v1 and
-are compiled into the same library). Per frame: `SensorLoaderPass` → `FramePrefilterPass`
-(below; with mapping) → `FillPyramidPass` (the frame's pyramid) → `PackModelInputPass`
-(LoD0, centre-cropped to 736×480, gray → RGB, NCHW `[1, 3, H, W]` into the images buffer) →
+`namespace wslam::v2` (the v2 `SensorLoaderPass` shares its name with v1 and is
+compiled into the same library). Per frame: `SensorLoaderPass` → `FramePrefilterPass`
+(below; with mapping) → `PackModelInputPass` (uploads the frame into the source texture,
+then centre-crops it to 736×480, gray → RGB, NCHW `[1, 3, H, W]` into the images
+buffer) →
 `OrtCpuFeatureDetectPass` (`--device=cpu`: reads the images buffer back, CPU EP) or
 `OrtFeatureDetectPass` (GPU pass in the same wait batch, WebGPU EP reading the images buffer
 in place; blocked at startup until WebGPU exports exist). Both delegate to
@@ -562,7 +600,22 @@ ORT interop (`compute/onnx_interop.hpp`) facts that are easy to get wrong:
 
 ### Data providers (`data/`)
 
-Providers implement `ProviderBase<N>` and expose a `std::generator<std::expected<Reading<N>, std::string>> getReadings()` coroutine. A reading's frames are `PendingFrame`s (timestamp + `load()`), so nothing is read from disk for frames a consumer drops (e.g. cam1 under `AdaptProvider<1>`). `AdaptProvider<Requested, Available>` adapts an N-camera provider to an M-camera consumer. Currently only `EurocProvider` is provided; the earlier `TumProvider` has been removed.
+Providers implement `ProviderBase<N>` and expose a `std::generator<std::expected<Reading<N>, std::string>> getReadings()` coroutine. A reading's frames are `PendingFrame`s (timestamp + `load()`), so nothing is read from disk for frames a consumer drops (e.g. cam1 under `AdaptProvider<1>`). `AdaptProvider<Requested, Available>` adapts an N-camera provider to an M-camera consumer. Two providers exist (`main.cpp` picks one with `--dataset`); the earlier `TumProvider` has been removed:
+- `EurocProvider` — EuRoC MAV `mav0/` (csv + `sensor.yaml`).
+- `UzhFpvProvider` (`uzh_fpv_provider.*`) — UZH-FPV's text format: `id timestamp ...`
+  rows with timestamps in seconds (parsed exactly to ns, `ParseSecondsToNanoseconds`;
+  `imu.txt` has an id column its header leaves out), the Kalibr camchain for both cameras
+  (body = IMU, `T_BS` = `T_cam_imu`⁻¹) and `imu.yaml` (whose `imu0` block may lack its key)
+  for the noise. Camera timestamps are moved onto the IMU clock with cam0's
+  `timeshift_cam_imu` (−14.8 ms on indoor_45), shared by both cameras so the stereo pair
+  stays one reading; the frame rate comes from the median frame interval.
+
+`CamSensorParams::distortion_model` is a `data::DistortionModel` (`RadialTangential`
+[k1 k2 p1 p2] or `Equidistant` [k1..k4], Kannala-Brandt as Kalibr defines it), parsed by
+`ParseDistortionModel` and written back with `ToString`. The v2 camera helpers dispatch on
+it (`map::util::DistortNormalised` / `UndistortNormalised` / `PixelToNormalised` taking the
+`CamSensorParams`; `UndistortEquidistant` returns NaN past 90°, which `LoadMatchesPass`
+drops); the `Vector4d` overloads are radial-tangential only and stay for v1.
 
 Both `SensorLoaderPass`es take an optional `data::ReadingFilter`: it sees every frame and IMU sample (`ReadingCandidate`: kind, timestamp, per-kind index) *before* any file is read and returns `Keep`, `Skip` or `StopStream`. `MakeKeyframeFilter` (`wslam/src/keyframe_schedule.hpp`) keeps all IMU and only a schedule's frames; a lead-in skip would skip both kinds. The loaders return `kComputeStopExecution` at the end of the stream; `Compute::execute` reports that stop as success, so callers can't tell the stream ended (hence `--max-iters`).
 
